@@ -1,0 +1,20 @@
+{
+  "name": "showupp-backend",
+  "version": "1.0.0",
+  "description": "Backend for ShowUpp — accounts, Rounds, and real-time group messaging",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "better-sqlite3": "^11.3.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
