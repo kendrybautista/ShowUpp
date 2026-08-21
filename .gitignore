@@ -1,0 +1,5 @@
+node_modules/
+showupp.db
+showupp.db-wal
+showupp.dbshm
+.env
