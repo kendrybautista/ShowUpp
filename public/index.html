@@ -929,7 +929,19 @@ document.addEventListener('click',function(e){
 
 // ---- API layer ----
 const API=location.origin;
-let token=localStorage.getItem('su_token')||null;
+// Token persistence: if "Remember me" was on, token lives in localStorage (survives
+// closing the app). If off, it lives in sessionStorage (clears when the app/tab closes).
+function saveToken(tok,remember){
+  try{
+    if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
+    else{sessionStorage.setItem('su_token',tok);localStorage.removeItem('su_token');localStorage.removeItem('su_remember');}
+  }catch(e){}
+}
+function readToken(){
+  try{return localStorage.getItem('su_token')||sessionStorage.getItem('su_token')||null;}catch(e){return null;}
+}
+function clearToken(){try{localStorage.removeItem('su_token');sessionStorage.removeItem('su_token');}catch(e){}}
+let token=readToken();
 let me=null, ws=null, activeRound=null, signupInterests=[], selectedCats=['Food'], pactAgreed=false, allRounds=[];
 
 async function api(path,method,body){
@@ -985,13 +997,21 @@ function toggleInterest(n,el){if(signupInterests.includes(n))signupInterests=sig
 function togglePact(){pactAgreed=!pactAgreed;document.querySelector('#pactCheck .checkbox').classList.toggle('on',pactAgreed);document.getElementById('finishBtn').disabled=!pactAgreed;}
 function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),4000);}
 
-function validateSignup(){
+async function validateSignup(){
   const name=document.getElementById('suName').value.trim();
   const email=document.getElementById('suEmail').value.trim();
   const password=document.getElementById('suPass').value;
   if(!name){showErr('suErr','Please enter your first name.');return;}
   if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showErr('suErr','Please enter a valid email address.');return;}
   if(!password||password.length<6){showErr('suErr','Password must be at least 6 characters.');return;}
+  // Check the email isn't already taken before moving forward
+  try{
+    const r=await api('/api/check-email','POST',{email});
+    if(!r.available){
+      showErr('suErr','An account already exists with this email. Try logging in instead.');
+      return;
+    }
+  }catch(e){ /* if the check fails, allow through; signup will still guard */ }
   authStep('a-interests');
 }
 async function doSignup(){
@@ -1005,7 +1025,7 @@ async function doSignup(){
   if(!name||!email||!password){authStep('a-signup');showErr('suErr','Please fill in name, email, and password.');return;}
   try{
     const data=await api('/api/signup','POST',{name,email,password,city,origin:'',interests:signupInterests,lang:LANG});
-    token=data.token;localStorage.setItem('su_token',token);me=data.user;
+    token=data.token;saveToken(token,true);me=data.user;
     connectWS();enterApp();
   }catch(e){showErr('finalErr',e.message);}
 }
@@ -1015,7 +1035,7 @@ async function doLogin(){
   const remember=document.getElementById('rememberMe').checked;
   try{
     const data=await api('/api/login','POST',{email,password});
-    token=data.token;localStorage.setItem('su_token',token);me=data.user;
+    token=data.token;saveToken(token,remember);me=data.user;
     try{
       if(remember)localStorage.setItem('su_email',email);
       else localStorage.removeItem('su_email');
@@ -1030,7 +1050,7 @@ function prefillLogin(){
 function openForgot(){document.getElementById('forgotSheet').classList.add('open');}
 function closeForgot(){document.getElementById('forgotSheet').classList.remove('open');}
 function logout(){
-  localStorage.removeItem('su_token');token=null;me=null;
+  clearToken();token=null;me=null;
   if(ws){ws.close();ws=null;}
   signupInterests=[];pactAgreed=false;
   document.getElementById('finishBtn').disabled=true;
@@ -1046,8 +1066,16 @@ async function doDeleteAccount(){
 function applyAvatar(el){
   if(!el||!me)return;
   const initial=(me.name||'?')[0].toUpperCase();
-  if(me.avatar){el.textContent='';el.style.backgroundImage='url('+me.avatar+')';}
-  else{el.style.backgroundImage='';el.textContent=initial;}
+  if(me.avatar){
+    el.textContent='';
+    el.style.backgroundImage='url('+me.avatar+')';
+    el.style.backgroundSize='cover';
+    el.style.backgroundPosition='center';
+    el.style.backgroundRepeat='no-repeat';
+  }else{
+    el.style.backgroundImage='';
+    el.textContent=initial;
+  }
 }
 function refreshAvatars(){['homeAvatar','circAvatar','profAv'].forEach(idv=>applyAvatar(document.getElementById(idv)));}
 function enterApp(){
@@ -1395,7 +1423,7 @@ async function loadDMs(){
     const list=document.getElementById('dmList');
     if(!data.conversations.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px;font-size:14px">No direct chats yet.<br>Message a friend from the Circles → Friends tab, or start a group above.</p>';return;}
     list.innerHTML=data.conversations.map(c=>{
-      const av=c.is_group?'<div class="cav">👥</div>':(c.avatar?'<div class="cav" style="background-image:url('+c.avatar+');background-size:cover"></div>':'<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>');
+      const av=c.is_group?'<div class="cav">👥</div>':(c.avatar?'<div class="cav" style="background-image:url('+c.avatar+');background-size:cover;background-position:center;background-repeat:no-repeat"></div>':'<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>');
       const prev=c.last?((c.last.mine?'You: ':'')+esc(c.last.body||'')):'Tap to start chatting';
       const unread=c.unread?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px">'+c.unread+'</span>':'';
       return '<div class="chat-item" onclick="openDm(\''+c.id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(c.title)+'</b>'+unread+'</div><div class="prev">'+prev+'</div></div></div>';
@@ -1420,7 +1448,7 @@ async function openDm(convId){
     document.getElementById('dmSub').textContent=data.conversation.is_group?(data.conversation.members.length+1)+' members':'Direct message';
     const av=document.getElementById('dmAv');
     if(data.conversation.is_group){av.textContent='👥';av.style.backgroundImage='';}
-    else if(data.conversation.members[0]&&data.conversation.members[0].avatar){av.textContent='';av.style.backgroundImage='url('+data.conversation.members[0].avatar+')';av.style.backgroundSize='cover';}
+    else if(data.conversation.members[0]&&data.conversation.members[0].avatar){av.textContent='';av.style.backgroundImage='url('+data.conversation.members[0].avatar+')';av.style.backgroundSize='cover';av.style.backgroundPosition='center';av.style.backgroundRepeat='no-repeat';}
     else{av.textContent=(data.conversation.title||'?')[0].toUpperCase();av.style.backgroundImage='';}
     renderDmMsgs(data.messages);
     updateNotifBadge();
@@ -1883,7 +1911,7 @@ async function boot(){
   initCountryPicker('suCountry','Dominican Republic');
   if(token){
     try{const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();}connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
-    catch{token=null;localStorage.removeItem('su_token');}
+    catch{token=null;clearToken();}
   }
   document.getElementById('loading').style.display='none';
   go('s-auth');
