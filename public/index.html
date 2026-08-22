@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#1B1B3A">
 <link rel="manifest" href="/manifest.json">
 <title>ShowUpp</title>
@@ -32,6 +32,15 @@ html,body{background:#e9e4da;font-family:'Instrument Sans',system-ui,sans-serif;
 body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .phone{width:390px;max-width:100vw;height:844px;max-height:calc(100vh - 24px);background:var(--bone);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(27,27,58,.28),0 0 0 12px #0f0f1e,0 0 0 13px #2a2a3c}
 .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:30px;background:#0f0f1e;border-radius:0 0 20px 20px;z-index:60}
+/* On real phones (or installed as an app): drop the fake bezel, go full-screen, no bounce */
+@media (max-width:520px){
+  html,body{background:var(--bone);height:100%;overflow:hidden;position:fixed;width:100%;overscroll-behavior:none}
+  body{padding:0;display:block}
+  .phone{width:100%;max-width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0;box-shadow:none}
+  .notch{display:none}
+  .statusbar{height:env(safe-area-inset-top,0px)}
+  .nav{padding-bottom:env(safe-area-inset-bottom,0px);height:calc(84px + env(safe-area-inset-bottom,0px))}
+}
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:var(--bone);animation:fade .35s ease}
 .screen.active{display:flex}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -190,7 +199,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .send-btn svg{width:20px;height:20px;color:#fff}
 .safety-strip{background:#FFF8EC;color:#a5701a;font-size:11.5px;text-align:center;padding:7px;font-weight:600}
 .prof-head{display:flex;flex-direction:column;align-items:center;padding:20px 22px 10px;text-align:center}
-.prof-head .pa{width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--mango));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:34px;border:3px solid #fff;box-shadow:var(--shadow)}
+.prof-head .pa{width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--mango));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:34px;border:3px solid #fff;box-shadow:var(--shadow);overflow:hidden;background-size:cover;background-position:center}
+.cam-badge{position:absolute;bottom:0;right:0;width:30px;height:30px;border-radius:50%;background:var(--coral);border:3px solid var(--bone);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.avatar{overflow:hidden;background-size:cover;background-position:center}
 .prof-head h1{font-family:'Fraunces',serif;font-size:24px;color:var(--night);font-weight:600;margin-top:14px}
 .prof-head p{font-size:13.5px;color:var(--muted);margin-top:4px}
 .prof-tags{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:14px;padding:0 22px}
@@ -424,7 +435,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="statusbar"></div>
   <div class="scroll">
     <div style="padding:4px 22px 0"><button class="back" style="position:static;background:#fff;box-shadow:var(--shadow)" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button></div>
-    <div class="prof-head"><div class="pa" id="profAv">M</div><h1 id="profName">Mateo</h1><p id="profMeta">📍 —</p></div>
+    <div class="prof-head"><div style="position:relative" onclick="pickAvatar()"><div class="pa" id="profAv">M</div><div class="cam-badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div></div><h1 id="profName">Mateo</h1><p id="profMeta">📍 —</p></div>
+    <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="onAvatarChosen(event)">
     <div class="prof-tags" id="profTags"></div>
     <div class="settings">
       <div class="gp">Privacy & safety</div>
@@ -450,6 +462,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
     <div class="grabber"></div>
     <h3>Edit profile</h3>
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <button class="friend-btn add" onclick="pickAvatar()" style="flex:1">📷 Change photo</button>
+      <button class="friend-btn remove" onclick="removeAvatar()" style="flex:1">Remove photo</button>
+    </div>
     <div class="field"><label>First name</label><input type="text" id="edName"></div>
     <div class="field"><label>Username <span style="color:var(--muted);font-weight:400">(how friends find you)</span></label><input type="text" id="edUser" placeholder="@yourname"></div>
     <div class="field"><label>Country</label><div class="country-picker" id="edCountry"></div></div>
@@ -692,11 +708,50 @@ async function doDeleteAccount(){
   try{await api('/api/me/delete','POST',{});closeDelete();toast('Your account was deleted.');logout();}
   catch(e){toast(e.message);}
 }
+function applyAvatar(el){
+  if(!el||!me)return;
+  const initial=(me.name||'?')[0].toUpperCase();
+  if(me.avatar){el.textContent='';el.style.backgroundImage='url('+me.avatar+')';}
+  else{el.style.backgroundImage='';el.textContent=initial;}
+}
+function refreshAvatars(){['homeAvatar','circAvatar','profAv'].forEach(idv=>applyAvatar(document.getElementById(idv)));}
 function enterApp(){
   document.getElementById('homeGreet').textContent=me.name+' 👋';
-  const initial=me.name[0].toUpperCase();
-  ['homeAvatar','circAvatar','profAv'].forEach(idv=>{const el=document.getElementById(idv);if(el)el.textContent=initial;});
+  refreshAvatars();
   go('s-home');
+}
+// ---- Profile picture upload ----
+function pickAvatar(){document.getElementById('avatarInput').click();}
+function onAvatarChosen(e){
+  const file=e.target.files&&e.target.files[0];
+  if(!file)return;
+  if(!file.type.startsWith('image/')){toast('Please choose an image file.');return;}
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const img=new Image();
+    img.onload=async()=>{
+      // resize to max 400px square, center-cropped, for a small upload
+      const size=400,canvas=document.createElement('canvas');
+      canvas.width=size;canvas.height=size;
+      const ctx=canvas.getContext('2d');
+      const min=Math.min(img.width,img.height);
+      const sx=(img.width-min)/2, sy=(img.height-min)/2;
+      ctx.drawImage(img,sx,sy,min,min,0,0,size,size);
+      const dataUrl=canvas.toDataURL('image/jpeg',0.82);
+      try{
+        toast('Uploading photo…');
+        const data=await api('/api/me/avatar','POST',{avatar:dataUrl});
+        me=data.user;refreshAvatars();renderProfile();toast('Photo updated ✓');
+      }catch(err){toast(err.message);}
+    };
+    img.src=reader.result;
+  };
+  reader.readAsDataURL(file);
+  e.target.value=''; // allow re-picking same file
+}
+async function removeAvatar(){
+  try{const data=await api('/api/me/avatar/remove','POST',{});me=data.user;refreshAvatars();renderProfile();closeEdit();toast('Photo removed');}
+  catch(e){toast(e.message);}
 }
 
 // ---- Home / Rounds ----
@@ -992,7 +1047,7 @@ async function createRound(){
 // ---- Profile ----
 function renderProfile(){
   if(!me)return;
-  document.getElementById('profAv').textContent=me.name[0].toUpperCase();
+  applyAvatar(document.getElementById('profAv'));
   document.getElementById('profName').textContent=me.name+(me.username?'  ·  @'+me.username:'');
   document.getElementById('profMeta').textContent='📍 '+(me.city||'—');
   const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
