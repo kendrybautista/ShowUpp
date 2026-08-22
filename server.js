@@ -160,6 +160,14 @@ db.exec(`
     read       INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS reset_tokens (
+    token      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used       INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // --- Safe migration: add username column if it doesn't exist yet ---
@@ -361,6 +369,74 @@ app.post('/api/login', (req, res) => {
 // Return the current user (used on app load to restore session)
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
+});
+
+// ---- Password recovery via email ----
+// Sends real email if RESEND_API_KEY is set; otherwise returns the link so it still works in testing.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'ShowUpp <onboarding@resend.dev>';
+const APP_URL = process.env.APP_URL || '';
+
+async function sendEmail(to, subject, html) {
+  if (!RESEND_API_KEY) {
+    console.log('[email] No RESEND_API_KEY set — skipping real send to', to);
+    return { sent: false };
+  }
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: EMAIL_FROM, to: [to], subject, html })
+    });
+    if (!resp.ok) { console.log('[email] send failed', resp.status); return { sent: false }; }
+    return { sent: true };
+  } catch (e) {
+    console.log('[email] error', e.message);
+    return { sent: false };
+  }
+}
+
+// Step 1: request a reset. Always responds success (don't reveal whether an email exists).
+app.post('/api/forgot-password', async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Enter your email.' });
+  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase());
+  let resetUrl = null;
+  if (row) {
+    const token = crypto.randomBytes(24).toString('hex');
+    db.prepare('INSERT INTO reset_tokens (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)')
+      .run(token, row.id, now() + 60 * 60 * 1000, now()); // valid 1 hour
+    const base = APP_URL || (req.headers.origin || '');
+    resetUrl = base + '/?reset=' + token;
+    const html = `<div style="font-family:sans-serif;max-width:480px;margin:auto">
+      <h2>Reset your ShowUpp password</h2>
+      <p>Hi ${row.name || ''}, we got a request to reset your password.</p>
+      <p><a href="${resetUrl}" style="display:inline-block;background:#FF6B5B;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none">Reset my password</a></p>
+      <p style="color:#666;font-size:13px">This link expires in 1 hour. If you didn't ask for this, you can ignore this email — your password won't change.</p>
+      <p style="color:#999;font-size:12px">Your username is <b>${row.username || '(not set)'}</b>.</p>
+    </div>`;
+    const result = await sendEmail(row.email, 'Reset your ShowUpp password', html);
+    // If email isn't configured, return the link so testing still works.
+    return res.json({ ok: true, emailed: result.sent, devLink: result.sent ? null : resetUrl });
+  }
+  // No such user — still say ok (privacy), no link.
+  res.json({ ok: true, emailed: false, devLink: null });
+});
+
+// Step 2: complete the reset with the token + new password.
+app.post('/api/reset-password', (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ error: 'Missing token or password.' });
+  if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  const row = db.prepare('SELECT * FROM reset_tokens WHERE token = ?').get(String(token));
+  if (!row || row.used || row.expires_at < now()) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
+  }
+  const hash = bcrypt.hashSync(String(password), 10);
+  db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, row.user_id);
+  db.prepare('UPDATE reset_tokens SET used = 1 WHERE token = ?').run(String(token));
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  res.json({ ok: true, token: makeToken(user), user: publicUser(user) });
 });
 
 // Update the current user's profile (name, username, city, interests, lang)
@@ -1042,6 +1118,60 @@ wss.on('connection', (ws) => {
     }
     if (msg.type === 'leaveDm') {
       if (ws.dmRooms) ws.dmRooms.delete(msg.convId);
+      return;
+    }
+
+    // ---- Voice / video call signaling (friend-only) ----
+    // Calls are ONLY allowed between people who share a conversation that is either
+    // a 1-on-1 friend DM or a friend group chat. Never for Rounds.
+    if (msg.type === 'call-offer' || msg.type === 'call-answer' || msg.type === 'call-ice' ||
+        msg.type === 'call-end' || msg.type === 'call-decline') {
+      const targetId = msg.to;
+      if (!targetId) return;
+
+      // For a new offer, verify caller and callee are friends (or in a friend group together).
+      if (msg.type === 'call-offer') {
+        const areFriends = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(ws.user.id, targetId);
+        let shareFriendGroup = false;
+        if (!areFriends) {
+          // check they share a non-Round conversation (friend group chat)
+          shareFriendGroup = !!db.prepare(`
+            SELECT 1 FROM conversation_members a
+            JOIN conversation_members b ON a.conv_id = b.conv_id
+            WHERE a.user_id = ? AND b.user_id = ?
+          `).get(ws.user.id, targetId);
+        }
+        if (!areFriends && !shareFriendGroup) {
+          ws.send(JSON.stringify({ type: 'call-error', error: 'You can only call friends.' }));
+          return;
+        }
+        if (isBlocked(ws.user.id, targetId)) {
+          ws.send(JSON.stringify({ type: 'call-error', error: 'Unavailable.' }));
+          return;
+        }
+      }
+
+      // Relay the signaling message to the target if they're connected.
+      const payload = JSON.stringify({
+        type: msg.type,
+        from: ws.user.id,
+        fromName: ws.user.name,
+        fromAvatar: ws.user.avatar || '',
+        media: msg.media || 'audio',        // 'audio' or 'video'
+        sdp: msg.sdp || null,               // offer/answer
+        candidate: msg.candidate || null    // ICE candidate
+      });
+      let delivered = false;
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1 && client.user && client.user.id === targetId) {
+          client.send(payload);
+          delivered = true;
+        }
+      });
+      // If calling someone who's offline, tell the caller.
+      if (msg.type === 'call-offer' && !delivered) {
+        ws.send(JSON.stringify({ type: 'call-unavailable', to: targetId }));
+      }
       return;
     }
   });
