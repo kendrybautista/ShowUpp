@@ -156,6 +156,10 @@ try {
     db.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
     console.log('Added avatar column.');
   }
+  if (!cols.includes('lang')) {
+    db.exec("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'en'");
+    console.log('Added lang column.');
+  }
   if (!cols.includes('is_admin')) {
     db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
     console.log('Added is_admin column.');
@@ -238,7 +242,7 @@ function makeToken(user) {
 function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin FROM users WHERE id = ?').get(payload.uid);
+    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin, lang FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
@@ -263,7 +267,8 @@ function publicUser(u) {
     city: u.city,
     origin: u.origin,
     interests: u.interests ? JSON.parse(u.interests) : [],
-    isAdmin: !!u.is_admin
+    isAdmin: !!u.is_admin,
+    lang: u.lang || 'en'
   };
 }
 
@@ -278,7 +283,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ---- Auth ----
 app.post('/api/signup', (req, res) => {
-  const { email, password, name, city, origin, interests } = req.body || {};
+  const { email, password, name, city, origin, interests, lang } = req.body || {};
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
@@ -296,10 +301,11 @@ app.post('/api/signup', (req, res) => {
     city: city || '',
     origin: origin || '',
     interests: JSON.stringify(Array.isArray(interests) ? interests : []),
+    lang: (lang && ['en', 'es'].includes(lang)) ? lang : 'en',
     created_at: now()
   };
-  db.prepare(`INSERT INTO users (id,email,pass_hash,name,city,origin,interests,created_at)
-              VALUES (@id,@email,@pass_hash,@name,@city,@origin,@interests,@created_at)`).run(user);
+  db.prepare(`INSERT INTO users (id,email,pass_hash,name,city,origin,interests,lang,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@city,@origin,@interests,@lang,@created_at)`).run(user);
 
   res.json({ token: makeToken(user), user: publicUser(user) });
 });
@@ -322,9 +328,9 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-// Update the current user's profile (name, username, city, interests)
+// Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, (req, res) => {
-  const { name, username, city, interests } = req.body || {};
+  const { name, username, city, interests, lang } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -333,19 +339,22 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     const taken = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
     if (taken) return res.status(409).json({ error: 'That username is taken. Try another.' });
   }
+  const cleanLang = (lang && ['en', 'es'].includes(lang)) ? lang : null;
   db.prepare(`UPDATE users SET
       name = COALESCE(?, name),
       username = COALESCE(?, username),
       city = COALESCE(?, city),
-      interests = COALESCE(?, interests)
+      interests = COALESCE(?, interests),
+      lang = COALESCE(?, lang)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
     (city !== undefined && city !== null) ? String(city) : null,
     Array.isArray(interests) ? JSON.stringify(interests) : null,
+    cleanLang,
     req.user.id
   );
-  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, lang FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
