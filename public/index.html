@@ -23,6 +23,20 @@
 .phone[data-theme="dark"] .composer,.phone[data-theme="dark"] .thread-head{background:#20202e}
 .phone[data-theme="dark"] .msg.them{background:#2c2c3e;border-color:#2c2c3e;color:#EDEAF5}
 .phone[data-theme="dark"] .field input,.phone[data-theme="dark"] .field textarea,.phone[data-theme="dark"] .cp-button,.phone[data-theme="dark"] .cp-menu{background:#15151f;color:#EDEAF5}
+/* Extra dark-mode fixes for elements with hardcoded light backgrounds */
+.phone[data-theme="dark"] .ptag{background:#2c2c3e;color:#EDEAF5;border-color:#3a3a4e}
+.phone[data-theme="dark"] .circ-tab{background:#20202e;color:#8A86A0}
+.phone[data-theme="dark"] .circ-tab.on{background:#EDEAF5;color:#15151f}
+.phone[data-theme="dark"] .settings .gp{color:#B4B0C8}
+.phone[data-theme="dark"] .friend-btn.remove{background:#2c2c3e;color:#B4B0C8}
+.phone[data-theme="dark"] .catsearch,.phone[data-theme="dark"] #friendSearch,.phone[data-theme="dark"] .cp-search,.phone[data-theme="dark"] .cp-item{background:#15151f;color:#EDEAF5}
+.phone[data-theme="dark"] .cp-item:hover{background:#2c2c3e}
+.phone[data-theme="dark"] .theme-opt{background:#20202e}
+.phone[data-theme="dark"] .report-opt{background:#20202e;color:#EDEAF5}
+.phone[data-theme="dark"] .sicon{filter:brightness(.85)}
+.phone[data-theme="dark"] .pill{background:#20202e;color:#EDEAF5;border-color:#3a3a4e}
+.phone[data-theme="dark"] .vt.on{background:#EDEAF5;color:#15151f}
+.phone[data-theme="dark"] .toast{background:#2c2c3e}
 /* Ocean color theme (different accents) */
 .phone[data-theme="ocean"]{--coral:#3B82F6;--mango:#06B6D4;--turq:#14B8A6}
 /* Sunset color theme */
@@ -63,6 +77,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .theme-opt{flex:1;text-align:center;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;padding:8px 4px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
 .theme-opt.on{border-color:var(--coral);color:var(--night)}
 .theme-opt .tsw{width:100%;height:26px;border-radius:8px;margin-bottom:5px}
+.unit-opt{flex:1;text-align:center;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-size:13px;font-weight:700;color:var(--muted);cursor:pointer}
+.unit-opt.on{border-color:var(--coral);background:#FFF3F1;color:var(--night)}
+.phone[data-theme="dark"] .unit-opt{background:#20202e}
+.phone[data-theme="dark"] .unit-opt.on{background:#2c2c3e;color:#EDEAF5}
 .rounds{padding:8px 22px;display:flex;flex-direction:column;gap:16px}
 .round{background:var(--card);border-radius:24px;box-shadow:var(--shadow);overflow:hidden;cursor:pointer;transition:transform .2s;border:1px solid rgba(0,0,0,.02)}
 .round:active{transform:scale(.98)}
@@ -316,7 +334,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="chips" id="homeChips"></div>
     <div id="distanceBar" style="display:none;padding:6px 22px 4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> km</span>
+        <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
         <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
       </div>
       <input type="range" id="distSlider" min="1" max="100" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
@@ -375,7 +393,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         </div>
         <div id="friendResults" style="margin-top:12px"></div>
       </div>
-      <p style="padding:6px 22px 8px;font-size:13.5px;color:var(--muted);font-weight:600">Your saved friends</p>
+      <div id="requestsSection" style="display:none">
+        <p style="padding:6px 22px 8px;font-size:13.5px;color:var(--coral);font-weight:700">Friend requests</p>
+        <div id="requestsList" style="padding:0 22px"></div>
+      </div>
+      <p style="padding:6px 22px 8px;font-size:13.5px;color:var(--muted);font-weight:600">Your friends</p>
       <div id="friendsList" style="padding:0 22px"></div>
     </div>
   </div>
@@ -442,6 +464,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="gp">Privacy & safety</div>
       <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
       <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="srow" onclick="openBlocked()"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg></div><div class="st"><b>Blocked users</b><span>Manage people you've blocked</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="gp">Appearance</div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div class="theme-opt on" data-theme-val="light" onclick="setTheme('light')"><div class="tsw" style="background:#FBF7F0;border:1px solid #EDE6DA"></div>Light</div>
@@ -470,6 +493,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><label>Username <span style="color:var(--muted);font-weight:400">(how friends find you)</span></label><input type="text" id="edUser" placeholder="@yourname"></div>
     <div class="field"><label>Country</label><div class="country-picker" id="edCountry"></div></div>
     <div class="field"><label>City / area</label><input type="text" id="edCity" placeholder="Santo Domingo"></div>
+    <div class="field"><label>Distance unit</label>
+      <div style="display:flex;gap:8px">
+        <div class="unit-opt" id="unit-km" onclick="setUnit('km')">Kilometers (km)</div>
+        <div class="unit-opt" id="unit-mi" onclick="setUnit('mi')">Miles (mi)</div>
+      </div>
+    </div>
     <div class="field"><label>Your interests <span style="color:var(--muted);font-weight:400">(tap to toggle)</span></label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
     <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px">Save changes</button>
     <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closeEdit()">Cancel</div>
@@ -486,11 +515,33 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<div class="sheet" id="blockedSheet" onclick="if(event.target===this)closeBlocked()">
+  <div class="sheet-inner" style="max-height:80%;overflow-y:auto"><div class="grabber"></div>
+    <h3>Blocked users</h3>
+    <p>Blocked people can't find you, friend you, or message you.</p>
+    <div id="blockedList"></div>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none" onclick="closeBlocked()">Done</div>
+  </div>
+</div>
+
+<div class="sheet" id="friendActionsSheet" onclick="if(event.target===this)closeFriendActions()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3 id="faName">Friend</h3>
+    <p>Manage this connection.</p>
+    <div class="report-opt" onclick="doReportUser()">🚩 Report</div>
+    <div class="report-opt" onclick="doBlockUser()" style="color:#d94b3b">⛔ Block this person</div>
+    <div class="report-opt" onclick="doRemoveFriend()">Remove friend</div>
+    <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeFriendActions()">Cancel</div>
+  </div>
+</div>
+
 <div class="sheet" id="reportSheet" onclick="if(event.target===this)closeReport()">
-  <div class="sheet-inner"><div class="grabber"></div><h3>Report or block</h3><p>Your safety comes first. The other person is never told who reported them.</p>
-    <div class="report-opt" onclick="doReport()">🚩 Report inappropriate behavior</div>
-    <div class="report-opt" onclick="doReport()">🔇 Mute this chat</div>
-    <div class="report-opt" onclick="doReport()">⛔ Block & leave</div>
+  <div class="sheet-inner"><div class="grabber"></div><h3>Report</h3><p>Your safety comes first. The person is never told who reported them, and our team reviews every report.</p>
+    <div class="report-opt" onclick="sendReport('Harassment or bullying')">🚫 Harassment or bullying</div>
+    <div class="report-opt" onclick="sendReport('Unwanted romantic/sexual advances')">💔 Unwanted advances</div>
+    <div class="report-opt" onclick="sendReport('Inappropriate or offensive content')">⚠️ Inappropriate content</div>
+    <div class="report-opt" onclick="sendReport('Spam or scam')">🎣 Spam or scam</div>
+    <div class="report-opt" onclick="sendReport('Safety concern')">🛡️ Safety concern</div>
     <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeReport()">Cancel</div>
   </div>
 </div>
@@ -766,9 +817,16 @@ function haversine(a,b){ // km between two {lat,lng}
   const s=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));
 }
+let distUnit='km'; // 'km' or 'mi'
+function kmToUnit(km){return distUnit==='mi'?km*0.621371:km;}
+function unitLabel(){return distUnit;}
 function distLabel(r){
   if(!userLoc||r.lat==null||r.lng==null)return '';
   const km=haversine(userLoc,{lat:r.lat,lng:r.lng});
+  if(distUnit==='mi'){
+    const mi=km*0.621371;
+    return mi<0.19?Math.round(mi*5280)+' ft away':mi.toFixed(mi<10?1:0)+' mi away';
+  }
   return km<1?Math.round(km*1000)+' m away':km.toFixed(km<10?1:0)+' km away';
 }
 function requestLocation(){
@@ -810,7 +868,12 @@ function filteredRounds(){
   }
   return list;
 }
-function onDistChange(v){maxDistKm=+v;document.getElementById('distVal').textContent=v;renderRoundsList();}
+function updateDistLabel(){
+  const val=distUnit==='mi'?Math.round(maxDistKm*0.621371):maxDistKm;
+  const el=document.getElementById('distVal');if(el)el.textContent=val;
+  const unitEl=document.getElementById('distUnitLabel');if(unitEl)unitEl.textContent=distUnit;
+}
+function onDistChange(v){maxDistKm=+v;updateDistLabel();renderRoundsList();}
 function renderRoundsList(){
   const list=filteredRounds();
   const box=document.getElementById('roundsList');
@@ -915,6 +978,11 @@ async function openThreadById(rid){
 
 // ---- Friends ----
 let searchTimer;
+function friendAvatar(u){
+  const initial=(u.name||'?')[0].toUpperCase();
+  if(u.avatar)return '<div class="fav" style="background-image:url('+u.avatar+');background-size:cover;background-position:center"></div>';
+  return '<div class="fav">'+initial+'</div>';
+}
 function searchFriends(q){
   clearTimeout(searchTimer);
   searchTimer=setTimeout(async()=>{
@@ -923,33 +991,61 @@ function searchFriends(q){
     try{
       const data=await api('/api/users/search?q='+encodeURIComponent(q.trim()));
       if(!data.users.length){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:6px 2px">No one found. They may not have set a username yet.</p>';return;}
-      box.innerHTML=data.users.map(u=>friendRow(u,u.isFriend?'added':'add')).join('');
+      box.innerHTML=data.users.map(u=>searchRow(u)).join('');
     }catch(e){toast(e.message);}
   },300);
 }
-function friendRow(u,mode){
-  const initial=(u.name||'?')[0].toUpperCase();
+function searchRow(u){
   let btn='';
-  if(mode==='add')btn='<button class="friend-btn add" onclick="addFriend(\''+u.id+'\',this)">+ Add</button>';
-  else if(mode==='added')btn='<button class="friend-btn added">✓ Friend</button>';
-  else if(mode==='remove')btn='<button class="friend-btn remove" onclick="removeFriend(\''+u.id+'\')">Remove</button>';
-  return '<div class="friend-row"><div class="fav">'+initial+'</div><div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+(u.city?' · '+esc(u.city):'')+'</span></div>'+btn+'</div>';
+  if(u.status==='friend')btn='<button class="friend-btn added">✓ Friend</button>';
+  else if(u.status==='pending')btn='<button class="friend-btn added">⏳ Pending</button>';
+  else btn='<button class="friend-btn add" onclick="requestFriend(\''+u.id+'\',this)">+ Add</button>';
+  return '<div class="friend-row">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+(u.city?' · '+esc(u.city):'')+'</span></div>'+btn+'</div>';
 }
-async function addFriend(fid,btn){
-  try{await api('/api/friends/add','POST',{friendId:fid});btn.className='friend-btn added';btn.textContent='✓ Friend';toast('Friend added ✓');}
-  catch(e){toast(e.message);}
-}
-async function removeFriend(fid){
-  try{await api('/api/friends/remove','POST',{friendId:fid});loadFriends();toast('Removed');}
-  catch(e){toast(e.message);}
+async function requestFriend(uid,btn){
+  try{
+    const r=await api('/api/friends/request','POST',{toId:uid});
+    if(r.status==='friend'){btn.className='friend-btn added';btn.textContent='✓ Friend';toast('You\'re now friends! 🎉');}
+    else{btn.className='friend-btn added';btn.textContent='⏳ Pending';toast('Friend request sent');}
+  }catch(e){toast(e.message);}
 }
 async function loadFriends(){
+  // incoming requests
+  try{
+    const rq=await api('/api/friends/requests');
+    const sec=document.getElementById('requestsSection'),list=document.getElementById('requestsList');
+    if(rq.requests.length){
+      sec.style.display='block';
+      list.innerHTML=rq.requests.map(u=>'<div class="friend-row">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+'</span></div><div style="display:flex;gap:6px"><button class="friend-btn add" onclick="acceptFriend(\''+u.id+'\')">Accept</button><button class="friend-btn remove" onclick="declineFriend(\''+u.id+'\')">Decline</button></div></div>').join('');
+    }else{sec.style.display='none';list.innerHTML='';}
+  }catch(e){}
+  // friends list
   try{
     const data=await api('/api/friends');
     const box=document.getElementById('friendsList');
-    if(!data.friends.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">No friends saved yet. Search above to find people by their username.</p>';return;}
-    box.innerHTML=data.friends.map(u=>friendRow(u,'remove')).join('');
+    if(!data.friends.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">No friends yet. Search above to find people by their username.</p>';return;}
+    box.innerHTML=data.friends.map(u=>'<div class="friend-row">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+(u.city?' · '+esc(u.city):'')+'</span></div><button class="friend-btn remove" onclick="openFriendActions(\''+u.id+'\',\''+esc(u.name).replace(/'/g,"")+'\')">•••</button></div>').join('');
   }catch(e){toast(e.message);}
+}
+async function acceptFriend(fid){try{await api('/api/friends/accept','POST',{fromId:fid});toast('Friend added 🎉');loadFriends();}catch(e){toast(e.message);}}async function declineFriend(fid){try{await api('/api/friends/decline','POST',{fromId:fid});loadFriends();}catch(e){toast(e.message);}}
+
+// Friend actions sheet (remove / block / report)
+let actionTargetId=null,actionTargetName='';
+function openFriendActions(uid,name){
+  actionTargetId=uid;actionTargetName=name;
+  document.getElementById('faName').textContent=name;
+  document.getElementById('friendActionsSheet').classList.add('open');
+}
+function closeFriendActions(){document.getElementById('friendActionsSheet').classList.remove('open');}
+async function doRemoveFriend(){try{await api('/api/friends/remove','POST',{friendId:actionTargetId});closeFriendActions();toast('Removed');loadFriends();}catch(e){toast(e.message);}}
+async function doBlockUser(){
+  if(!confirm('Block '+actionTargetName+'? They won\'t be able to find you, friend you, or message you.'))return;
+  try{await api('/api/block','POST',{userId:actionTargetId});closeFriendActions();toast('Blocked. You\'re protected. 🛡️');loadFriends();}catch(e){toast(e.message);}
+}
+function doReportUser(){
+  closeFriendActions();
+  reportContext='user:'+actionTargetId;reportedUserId=actionTargetId;
+  openReport();
 }
 
 // ---- Chats list ----
@@ -1066,6 +1162,7 @@ function openEdit(){
   initCountryPicker('edCountry',countryGuess);
   document.getElementById('edCity').value=cityPart;
   renderEditInterests();
+  setUnit(distUnit);
   document.getElementById('editSheet').classList.add('open');
 }
 function closeEdit(){document.getElementById('editSheet').classList.remove('open');}
@@ -1086,9 +1183,27 @@ async function saveProfile(){
 }
 
 // ---- Report / toast ----
+let reportContext='',reportedUserId=null;
 function openReport(){document.getElementById('reportSheet').classList.add('open');}
 function closeReport(){document.getElementById('reportSheet').classList.remove('open');}
-function doReport(){closeReport();toast('Thanks — our team will review this. 🛡️');}
+async function sendReport(reason){
+  closeReport();
+  try{await api('/api/report','POST',{reportedId:reportedUserId,context:reportContext,reason});toast('Thanks — our team will review this. 🛡️');}
+  catch(e){toast('Report received. 🛡️');}
+  reportContext='';reportedUserId=null;
+}
+function doReport(){reportContext='chat';reportedUserId=null;openReport();}
+async function openBlocked(){
+  document.getElementById('blockedSheet').classList.add('open');
+  try{
+    const data=await api('/api/blocks');
+    const box=document.getElementById('blockedList');
+    if(!data.blocked.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">You haven\'t blocked anyone.</p>';return;}
+    box.innerHTML=data.blocked.map(u=>'<div class="friend-row">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+'</span></div><button class="friend-btn add" onclick="doUnblock(\''+u.id+'\')">Unblock</button></div>').join('');
+  }catch(e){toast(e.message);}
+}
+function closeBlocked(){document.getElementById('blockedSheet').classList.remove('open');}
+async function doUnblock(uid){try{await api('/api/unblock','POST',{userId:uid});toast('Unblocked');openBlocked();}catch(e){toast(e.message);}}
 let toastT;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function setTheme(t){
@@ -1101,11 +1216,24 @@ function loadTheme(){
   let t='light';try{t=localStorage.getItem('su_theme')||'light';}catch(e){}
   setTheme(t);
 }
+function setUnit(u){
+  distUnit=(u==='mi')?'mi':'km';
+  try{localStorage.setItem('su_unit',distUnit);}catch(e){}
+  const km=document.getElementById('unit-km'),mi=document.getElementById('unit-mi');
+  if(km)km.classList.toggle('on',distUnit==='km');
+  if(mi)mi.classList.toggle('on',distUnit==='mi');
+  updateDistLabel();renderRoundsList();
+}
+function loadUnit(){
+  let u='km';try{u=localStorage.getItem('su_unit')||'km';}catch(e){}
+  distUnit=u;
+}
 
 // ---- Boot ----
 async function boot(){
   renderCats('');
   loadTheme();
+  loadUnit();
   initCountryPicker('suCountry','Dominican Republic');
   if(token){
     try{const data=await api('/api/me');me=data.user;connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
