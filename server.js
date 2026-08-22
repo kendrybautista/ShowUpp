@@ -130,7 +130,17 @@ try {
   }
 } catch (e) { console.log('Migration note:', e.message); }
 
-// --- Seed / refresh the admin account every boot (survives free-tier resets) ---
+// --- Safe migration: add messaging feature columns ---
+try {
+  const mcols = db.prepare("PRAGMA table_info(messages)").all().map(c => c.name);
+  if (!mcols.includes('reactions')) { db.exec("ALTER TABLE messages ADD COLUMN reactions TEXT"); console.log('Added messages.reactions'); }
+  if (!mcols.includes('reply_to')) { db.exec("ALTER TABLE messages ADD COLUMN reply_to TEXT"); console.log('Added messages.reply_to'); }
+  if (!mcols.includes('reply_preview')) { db.exec("ALTER TABLE messages ADD COLUMN reply_preview TEXT"); console.log('Added messages.reply_preview'); }
+  if (!mcols.includes('kind')) { db.exec("ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'text'"); console.log('Added messages.kind'); }
+  if (!mcols.includes('media_url')) { db.exec("ALTER TABLE messages ADD COLUMN media_url TEXT"); console.log('Added messages.media_url'); }
+  if (!mcols.includes('ephemeral')) { db.exec("ALTER TABLE messages ADD COLUMN ephemeral INTEGER DEFAULT 0"); console.log('Added messages.ephemeral'); }
+  if (!mcols.includes('seen_by')) { db.exec("ALTER TABLE messages ADD COLUMN seen_by TEXT"); console.log('Added messages.seen_by'); }
+} catch (e) { console.log('Migration note:', e.message); }
 function seedAdmin() {
   try {
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL.toLowerCase());
@@ -630,12 +640,53 @@ app.get('/api/rounds/:id/messages', requireAuth, (req, res) => {
   const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
     .get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Join this Round to see its chat.' });
-  const msgs = db.prepare(`
-    SELECT m.id, m.body, m.created_at, m.user_id, u.name AS sender
+  const rows = db.prepare(`
+    SELECT m.id, m.body, m.created_at, m.user_id, u.name AS sender,
+           m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by
     FROM messages m JOIN users u ON u.id = m.user_id
     WHERE m.round_id = ? ORDER BY m.created_at ASC LIMIT 200
   `).all(req.params.id);
-  res.json({ messages: msgs });
+  // For ephemeral messages the current user has already seen (and isn't the sender), delete + hide
+  const out = [];
+  for (const m of rows) {
+    if (m.ephemeral && m.user_id !== req.user.id) {
+      const seen = m.seen_by ? JSON.parse(m.seen_by) : [];
+      if (seen.includes(req.user.id)) {
+        db.prepare('DELETE FROM messages WHERE id = ?').run(m.id); // it's been read once by this viewer
+        continue;
+      } else {
+        seen.push(req.user.id);
+        db.prepare('UPDATE messages SET seen_by = ? WHERE id = ?').run(JSON.stringify(seen), m.id);
+      }
+    }
+    out.push({
+      id: m.id, body: m.body, created_at: m.created_at, user_id: m.user_id, sender: m.sender,
+      reactions: m.reactions ? JSON.parse(m.reactions) : {},
+      reply_to: m.reply_to || null, reply_preview: m.reply_preview || null,
+      kind: m.kind || 'text', media_url: m.media_url || null, ephemeral: !!m.ephemeral
+    });
+  }
+  res.json({ messages: out });
+});
+
+// React to a message (toggle emoji)
+app.post('/api/messages/:id/react', requireAuth, (req, res) => {
+  const { emoji } = req.body || {};
+  if (!emoji) return res.status(400).json({ error: 'No emoji.' });
+  const m = db.prepare('SELECT id, round_id, reactions FROM messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message gone.' });
+  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(m.round_id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Not a member.' });
+  const reactions = m.reactions ? JSON.parse(m.reactions) : {};
+  const users = reactions[emoji] || [];
+  const idx = users.indexOf(req.user.id);
+  if (idx >= 0) users.splice(idx, 1); else users.push(req.user.id);
+  if (users.length) reactions[emoji] = users; else delete reactions[emoji];
+  db.prepare('UPDATE messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
+  // broadcast the reaction update
+  const payload = JSON.stringify({ type: 'reaction', roundId: m.round_id, messageId: req.params.id, reactions });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
+  res.json({ ok: true, reactions });
 });
 
 // --- HTTP + WebSocket server share one port ---
@@ -676,21 +727,35 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'message') {
+      const kind = (msg.kind === 'gif') ? 'gif' : 'text';
       const body = String(msg.body || '').trim();
-      if (!body) return;
+      const mediaUrl = kind === 'gif' ? String(msg.mediaUrl || '').slice(0, 500) : null;
+      if (kind === 'text' && !body) return;
+      if (kind === 'gif' && !mediaUrl) return;
       const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
         .get(msg.roundId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not a member' })); return; }
 
-      const record = { id: id(), round_id: msg.roundId, user_id: ws.user.id, body, created_at: now() };
-      db.prepare('INSERT INTO messages (id,round_id,user_id,body,created_at) VALUES (@id,@round_id,@user_id,@body,@created_at)').run(record);
+      const replyTo = msg.replyTo ? String(msg.replyTo) : null;
+      const replyPreview = msg.replyPreview ? String(msg.replyPreview).slice(0, 120) : null;
+      const ephemeral = msg.ephemeral ? 1 : 0;
+
+      const record = {
+        id: id(), round_id: msg.roundId, user_id: ws.user.id, body, created_at: now(),
+        reply_to: replyTo, reply_preview: replyPreview, kind, media_url: mediaUrl,
+        ephemeral, seen_by: JSON.stringify([])
+      };
+      db.prepare(`INSERT INTO messages (id,round_id,user_id,body,created_at,reply_to,reply_preview,kind,media_url,ephemeral,seen_by)
+        VALUES (@id,@round_id,@user_id,@body,@created_at,@reply_to,@reply_preview,@kind,@media_url,@ephemeral,@seen_by)`).run(record);
 
       const outbound = JSON.stringify({
         type: 'message',
         roundId: msg.roundId,
-        message: { id: record.id, body, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name }
+        message: {
+          id: record.id, body, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name,
+          reply_to: replyTo, reply_preview: replyPreview, kind, media_url: mediaUrl, ephemeral: !!ephemeral, reactions: {}
+        }
       });
-      // Broadcast to everyone currently connected who is in that room
       wss.clients.forEach((client) => {
         if (client.readyState === 1 && client.rooms && client.rooms.has(msg.roundId)) {
           client.send(outbound);
