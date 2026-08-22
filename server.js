@@ -89,6 +89,10 @@ try {
     db.exec("ALTER TABLE users ADD COLUMN username TEXT");
     console.log('Added username column.');
   }
+  if (!cols.includes('avatar')) {
+    db.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
+    console.log('Added avatar column.');
+  }
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Safe migration: add location columns to rounds ---
@@ -134,7 +138,7 @@ function makeToken(user) {
 function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return db.prepare('SELECT id, email, name, username, city, origin, interests FROM users WHERE id = ?').get(payload.uid);
+    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
@@ -155,6 +159,7 @@ function publicUser(u) {
     id: u.id,
     name: u.name,
     username: u.username || '',
+    avatar: u.avatar || '',
     city: u.city,
     origin: u.origin,
     interests: u.interests ? JSON.parse(u.interests) : []
@@ -163,7 +168,7 @@ function publicUser(u) {
 
 // --- App ---
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 // Serve the front-end (index.html) from /public
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -236,7 +241,29 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     Array.isArray(interests) ? JSON.stringify(interests) : null,
     req.user.id
   );
-  const updated = db.prepare('SELECT id, email, name, username, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
+});
+
+// Upload / change profile picture (stored as a data URL; kept small)
+app.post('/api/me/avatar', requireAuth, (req, res) => {
+  const { avatar } = req.body || {};
+  if (typeof avatar !== 'string' || !avatar.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Please choose a valid image.' });
+  }
+  // ~700KB cap on the encoded string to protect the free-tier database
+  if (avatar.length > 700000) {
+    return res.status(413).json({ error: 'That image is too large. Please pick a smaller one.' });
+  }
+  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatar, req.user.id);
+  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
+});
+
+// Remove profile picture (revert to initial)
+app.post('/api/me/avatar/remove', requireAuth, (req, res) => {
+  db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
+  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
