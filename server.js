@@ -75,6 +75,15 @@ db.exec(`
   );
 `);
 
+// --- Safe migration: add username column if it doesn't exist yet ---
+try {
+  const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!cols.includes('username')) {
+    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
+    console.log('Added username column.');
+  }
+} catch (e) { console.log('Migration note:', e.message); }
+
 // --- Seed a few starter Rounds so the app isn't empty on first run ---
 function seedRounds() {
   const count = db.prepare('SELECT COUNT(*) AS c FROM rounds').get().c;
@@ -110,7 +119,7 @@ function makeToken(user) {
 function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return db.prepare('SELECT id, email, name, city, origin, interests FROM users WHERE id = ?').get(payload.uid);
+    return db.prepare('SELECT id, email, name, username, city, origin, interests FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
@@ -130,6 +139,7 @@ function publicUser(u) {
   return {
     id: u.id,
     name: u.name,
+    username: u.username || '',
     city: u.city,
     origin: u.origin,
     interests: u.interests ? JSON.parse(u.interests) : []
@@ -186,6 +196,33 @@ app.post('/api/login', (req, res) => {
 // Return the current user (used on app load to restore session)
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
+});
+
+// Update the current user's profile (name, username, city, interests)
+app.post('/api/me/update', requireAuth, (req, res) => {
+  const { name, username, city, interests } = req.body || {};
+  // If a username is provided, enforce simple rules + uniqueness
+  let cleanUser = null;
+  if (username && String(username).trim()) {
+    cleanUser = String(username).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (cleanUser.length < 3) return res.status(400).json({ error: 'Username needs at least 3 letters/numbers.' });
+    const taken = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
+    if (taken) return res.status(409).json({ error: 'That username is taken. Try another.' });
+  }
+  db.prepare(`UPDATE users SET
+      name = COALESCE(?, name),
+      username = COALESCE(?, username),
+      city = COALESCE(?, city),
+      interests = COALESCE(?, interests)
+    WHERE id = ?`).run(
+    name ? String(name).trim() : null,
+    cleanUser,
+    (city !== undefined && city !== null) ? String(city) : null,
+    Array.isArray(interests) ? JSON.stringify(interests) : null,
+    req.user.id
+  );
+  const updated = db.prepare('SELECT id, email, name, username, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
 });
 
 // ---- Rounds ----
