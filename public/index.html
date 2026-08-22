@@ -15,6 +15,18 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#FBF7F0;--ink:#2A2A3C;--muted:#8A8699;--line:#EDE6DA;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
+/* Dark theme */
+.phone[data-theme="dark"]{--bone:#15151f;--card:#20202e;--ink:#EDEAF5;--muted:#8A86A0;--line:#2C2C3E;--night:#EDEAF5;--shadow:0 8px 30px rgba(0,0,0,.4)}
+.phone[data-theme="dark"] .round,.phone[data-theme="dark"] .circle-card,.phone[data-theme="dark"] .friend-row,.phone[data-theme="dark"] .chip,.phone[data-theme="dark"] .srow,.phone[data-theme="dark"] .catpill{background:#20202e}
+.phone[data-theme="dark"] .nav{background:rgba(21,21,31,.92)}
+.phone[data-theme="dark"] .sheet-inner{background:#20202e}
+.phone[data-theme="dark"] .composer,.phone[data-theme="dark"] .thread-head{background:#20202e}
+.phone[data-theme="dark"] .msg.them{background:#2c2c3e;border-color:#2c2c3e;color:#EDEAF5}
+.phone[data-theme="dark"] .field input,.phone[data-theme="dark"] .field textarea,.phone[data-theme="dark"] .cp-button,.phone[data-theme="dark"] .cp-menu{background:#15151f;color:#EDEAF5}
+/* Ocean color theme (different accents) */
+.phone[data-theme="ocean"]{--coral:#3B82F6;--mango:#06B6D4;--turq:#14B8A6}
+/* Sunset color theme */
+.phone[data-theme="sunset"]{--coral:#F43F5E;--mango:#FB923C;--turq:#F59E0B}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{background:#e9e4da;font-family:'Instrument Sans',system-ui,sans-serif;color:var(--ink)}
 body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
@@ -39,6 +51,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .chip.on{background:var(--night);color:#fff;border-color:var(--night)}
 .vt{padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer}
 .vt.on{background:var(--night);color:#fff}
+.theme-opt{flex:1;text-align:center;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;padding:8px 4px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
+.theme-opt.on{border-color:var(--coral);color:var(--night)}
+.theme-opt .tsw{width:100%;height:26px;border-radius:8px;margin-bottom:5px}
 .rounds{padding:8px 22px;display:flex;flex-direction:column;gap:16px}
 .round{background:var(--card);border-radius:24px;box-shadow:var(--shadow);overflow:hidden;cursor:pointer;transition:transform .2s;border:1px solid rgba(0,0,0,.02)}
 .round:active{transform:scale(.98)}
@@ -288,6 +303,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="scroll">
     <div class="topbar"><div class="hi">¡Hola,<b id="homeGreet">👋</b></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div>
     <div class="chips" id="homeChips"></div>
+    <div id="distanceBar" style="display:none;padding:6px 22px 4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> km</span>
+        <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
+      </div>
+      <input type="range" id="distSlider" min="1" max="100" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
+    </div>
     <div class="sec"><h2>Rounds near you</h2>
       <div style="display:flex;gap:6px;align-items:center">
         <div id="viewToggle" style="display:flex;background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden">
@@ -408,6 +430,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="gp">Privacy & safety</div>
       <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
       <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="gp">Appearance</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div class="theme-opt on" data-theme-val="light" onclick="setTheme('light')"><div class="tsw" style="background:#FBF7F0;border:1px solid #EDE6DA"></div>Light</div>
+        <div class="theme-opt" data-theme-val="dark" onclick="setTheme('dark')"><div class="tsw" style="background:#20202e"></div>Dark</div>
+        <div class="theme-opt" data-theme-val="ocean" onclick="setTheme('ocean')"><div class="tsw" style="background:linear-gradient(135deg,#3B82F6,#06B6D4)"></div>Ocean</div>
+        <div class="theme-opt" data-theme-val="sunset" onclick="setTheme('sunset')"><div class="tsw" style="background:linear-gradient(135deg,#F43F5E,#FB923C)"></div>Sunset</div>
+      </div>
       <div class="gp">Account</div>
       <div class="srow" onclick="openEdit()"><div class="sicon" style="background:#FFF3F1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF6B5B" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><div class="st"><b>Edit profile & interests</b><span>Name, username, location, interests</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="srow" onclick="logout()"><div class="sicon" style="background:#f0eee9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8699" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></div><div class="st"><b>Log out</b></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
@@ -467,14 +496,56 @@ function gradFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>
 
 // ---- Countries (ISO code + name). Flags render as images so they show on every device. ----
 const COUNTRIES=[
-  ['do','Dominican Republic'],['us','United States'],['mx','Mexico'],['ca','Canada'],
-  ['es','Spain'],['pr','Puerto Rico'],['co','Colombia'],['ve','Venezuela'],['ar','Argentina'],
-  ['au','Australia'],['br','Brazil'],['cl','Chile'],['cr','Costa Rica'],['cu','Cuba'],
-  ['ec','Ecuador'],['sv','El Salvador'],['fr','France'],['de','Germany'],['gt','Guatemala'],
-  ['hn','Honduras'],['in','India'],['ie','Ireland'],['it','Italy'],['jm','Jamaica'],
-  ['jp','Japan'],['nl','Netherlands'],['ni','Nicaragua'],['ng','Nigeria'],['pa','Panama'],
-  ['py','Paraguay'],['pe','Peru'],['ph','Philippines'],['pl','Poland'],['pt','Portugal'],
-  ['gb','United Kingdom'],['uy','Uruguay'],['xx','Other']
+  ['do',"Dominican Republic"],['us',"United States"],['mx',"Mexico"],['ca',"Canada"],
+  ['es',"Spain"],['pr',"Puerto Rico"],['co',"Colombia"],['ve',"Venezuela"],
+  ['ar',"Argentina"],['af',"Afghanistan"],['al',"Albania"],['dz',"Algeria"],
+  ['ad',"Andorra"],['ao',"Angola"],['ag',"Antigua and Barbuda"],['am',"Armenia"],
+  ['au',"Australia"],['at',"Austria"],['az',"Azerbaijan"],['bs',"Bahamas"],
+  ['bh',"Bahrain"],['bd',"Bangladesh"],['bb',"Barbados"],['by',"Belarus"],
+  ['be',"Belgium"],['bz',"Belize"],['bj',"Benin"],['bt',"Bhutan"],
+  ['bo',"Bolivia"],['ba',"Bosnia and Herzegovina"],['bw',"Botswana"],['br',"Brazil"],
+  ['bn',"Brunei"],['bg',"Bulgaria"],['bf',"Burkina Faso"],['bi',"Burundi"],
+  ['cv',"Cabo Verde"],['kh',"Cambodia"],['cm',"Cameroon"],['cf',"Central African Republic"],
+  ['td',"Chad"],['cl',"Chile"],['cn',"China"],['km',"Comoros"],
+  ['cg',"Congo"],['cd',"Congo (DRC)"],['cr',"Costa Rica"],['hr',"Croatia"],
+  ['cu',"Cuba"],['cy',"Cyprus"],['cz',"Czechia"],['ci',"Côte d'Ivoire"],
+  ['dk',"Denmark"],['dj',"Djibouti"],['dm',"Dominica"],['ec',"Ecuador"],
+  ['eg',"Egypt"],['sv',"El Salvador"],['gq',"Equatorial Guinea"],['er',"Eritrea"],
+  ['ee',"Estonia"],['sz',"Eswatini"],['et',"Ethiopia"],['fj',"Fiji"],
+  ['fi',"Finland"],['fr',"France"],['ga',"Gabon"],['gm',"Gambia"],
+  ['ge',"Georgia"],['de',"Germany"],['gh',"Ghana"],['gr',"Greece"],
+  ['gd',"Grenada"],['gt',"Guatemala"],['gn',"Guinea"],['gw',"Guinea-Bissau"],
+  ['gy',"Guyana"],['ht',"Haiti"],['hn',"Honduras"],['hu',"Hungary"],
+  ['is',"Iceland"],['in',"India"],['id',"Indonesia"],['ir',"Iran"],
+  ['iq',"Iraq"],['ie',"Ireland"],['il',"Israel"],['it',"Italy"],
+  ['jm',"Jamaica"],['jp',"Japan"],['jo',"Jordan"],['kz',"Kazakhstan"],
+  ['ke',"Kenya"],['ki',"Kiribati"],['kw',"Kuwait"],['kg',"Kyrgyzstan"],
+  ['la',"Laos"],['lv',"Latvia"],['lb',"Lebanon"],['ls',"Lesotho"],
+  ['lr',"Liberia"],['ly',"Libya"],['li',"Liechtenstein"],['lt',"Lithuania"],
+  ['lu',"Luxembourg"],['mg',"Madagascar"],['mw',"Malawi"],['my',"Malaysia"],
+  ['mv',"Maldives"],['ml',"Mali"],['mt',"Malta"],['mh',"Marshall Islands"],
+  ['mr',"Mauritania"],['mu',"Mauritius"],['fm',"Micronesia"],['md',"Moldova"],
+  ['mc',"Monaco"],['mn',"Mongolia"],['me',"Montenegro"],['ma',"Morocco"],
+  ['mz',"Mozambique"],['mm',"Myanmar"],['na',"Namibia"],['nr',"Nauru"],
+  ['np',"Nepal"],['nl',"Netherlands"],['nz',"New Zealand"],['ni',"Nicaragua"],
+  ['ne',"Niger"],['ng',"Nigeria"],['kp',"North Korea"],['mk',"North Macedonia"],
+  ['no',"Norway"],['om',"Oman"],['pk',"Pakistan"],['pw',"Palau"],
+  ['ps',"Palestine"],['pa',"Panama"],['pg',"Papua New Guinea"],['py',"Paraguay"],
+  ['pe',"Peru"],['ph',"Philippines"],['pl',"Poland"],['pt',"Portugal"],
+  ['qa',"Qatar"],['ro',"Romania"],['ru',"Russia"],['rw',"Rwanda"],
+  ['kn',"Saint Kitts and Nevis"],['lc',"Saint Lucia"],['vc',"Saint Vincent and the Grenadines"],['ws',"Samoa"],
+  ['sm',"San Marino"],['sa',"Saudi Arabia"],['sn',"Senegal"],['rs',"Serbia"],
+  ['sc',"Seychelles"],['sl',"Sierra Leone"],['sg',"Singapore"],['sk',"Slovakia"],
+  ['si',"Slovenia"],['sb',"Solomon Islands"],['so',"Somalia"],['za',"South Africa"],
+  ['kr',"South Korea"],['ss',"South Sudan"],['lk',"Sri Lanka"],['sd',"Sudan"],
+  ['sr',"Suriname"],['se',"Sweden"],['ch',"Switzerland"],['sy',"Syria"],
+  ['st',"São Tomé and Príncipe"],['tw',"Taiwan"],['tj',"Tajikistan"],['tz',"Tanzania"],
+  ['th',"Thailand"],['tl',"Timor-Leste"],['tg',"Togo"],['to',"Tonga"],
+  ['tt',"Trinidad and Tobago"],['tn',"Tunisia"],['tr',"Turkey"],['tm',"Turkmenistan"],
+  ['tv',"Tuvalu"],['ug',"Uganda"],['ua',"Ukraine"],['ae',"United Arab Emirates"],
+  ['gb',"United Kingdom"],['uy',"Uruguay"],['uz',"Uzbekistan"],['vu',"Vanuatu"],
+  ['va',"Vatican City"],['vn',"Vietnam"],['ye',"Yemen"],['zm',"Zambia"],
+  ['zw',"Zimbabwe"],['xx',"Other"]
 ];
 function flagImg(code,size){
   size=size||20;
@@ -615,8 +686,7 @@ function logout(){
   document.querySelector('#pactCheck .checkbox').classList.remove('on');
   authStep('a-intro');go('s-auth');
 }
-function openDelete(){document.getElementById('delConfirm').value='';checkDelete('');document.getElementById('deleteSheet').classList.add('open');}
-function closeDelete(){document.getElementById('deleteSheet').classList.remove('open');}
+function openDelete(){document.getElementById('delConfirm').value='';checkDelete('');document.getElementById('deleteSheet').classList.add('open');}function closeDelete(){document.getElementById('deleteSheet').classList.remove('open');}
 function checkDelete(v){const ok=v.trim()==='DELETE';const b=document.getElementById('delBtn');b.disabled=!ok;b.style.opacity=ok?'1':'.5';}
 async function doDeleteAccount(){
   try{await api('/api/me/delete','POST',{});closeDelete();toast('Your account was deleted.');logout();}
@@ -670,22 +740,29 @@ async function loadHome(){
     renderRoundsList();
   }catch(e){toast(e.message);}
 }
+let maxDistKm=25;
 function filteredRounds(){
   let list=allRounds.slice();
   if(currentFilter==='📍 Near me'){
     list=list.filter(r=>r.lat!=null&&r.lng!=null);
-    if(userLoc)list.sort((a,b)=>haversine(userLoc,{lat:a.lat,lng:a.lng})-haversine(userLoc,{lat:b.lat,lng:b.lng}));
+    if(userLoc){
+      list=list.filter(r=>haversine(userLoc,{lat:r.lat,lng:r.lng})<=maxDistKm);
+      list.sort((a,b)=>haversine(userLoc,{lat:a.lat,lng:a.lng})-haversine(userLoc,{lat:b.lat,lng:b.lng}));
+    }
   }else if(currentFilter!=='✨ For you'){
     const cat=currentFilter.replace(/^[^\sA-Za-z]+\s*/,'').trim();
     list=list.filter(r=>(r.category||'').toLowerCase()===cat.toLowerCase());
   }
   return list;
 }
+function onDistChange(v){maxDistKm=+v;document.getElementById('distVal').textContent=v;renderRoundsList();}
 function renderRoundsList(){
   const list=filteredRounds();
   const box=document.getElementById('roundsList');
+  // show distance slider only in Near me mode
+  document.getElementById('distanceBar').style.display=(currentFilter==='📍 Near me'&&userLoc)?'block':'none';
   if(currentView==='map'){renderMap(list);return;}
-  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds with a location yet.<br>New Rounds you host can add a place!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
+  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds within '+maxDistKm+' km.<br>Try widening the range, or host one!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
   box.innerHTML=list.map(r=>{
     const emoji=r.emoji||'✨';
     const d=distLabel(r);
@@ -959,10 +1036,21 @@ function closeReport(){document.getElementById('reportSheet').classList.remove('
 function doReport(){closeReport();toast('Thanks — our team will review this. 🛡️');}
 let toastT;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function setTheme(t){
+  const phone=document.querySelector('.phone');
+  if(t==='light')phone.removeAttribute('data-theme');else phone.setAttribute('data-theme',t);
+  try{localStorage.setItem('su_theme',t);}catch(e){}
+  document.querySelectorAll('.theme-opt').forEach(o=>o.classList.toggle('on',o.getAttribute('data-theme-val')===t));
+}
+function loadTheme(){
+  let t='light';try{t=localStorage.getItem('su_theme')||'light';}catch(e){}
+  setTheme(t);
+}
 
 // ---- Boot ----
 async function boot(){
   renderCats('');
+  loadTheme();
   initCountryPicker('suCountry','Dominican Republic');
   if(token){
     try{const data=await api('/api/me');me=data.user;connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
