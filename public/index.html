@@ -37,10 +37,16 @@
 .phone[data-theme="dark"] .pill{background:#20202e;color:#EDEAF5;border-color:#3a3a4e}
 .phone[data-theme="dark"] .vt.on{background:#EDEAF5;color:#15151f}
 .phone[data-theme="dark"] .toast{background:#2c2c3e}
-/* Ocean color theme (different accents) */
+/* Ocean color theme */
 .phone[data-theme="ocean"]{--coral:#3B82F6;--mango:#06B6D4;--turq:#14B8A6}
+.phone[data-theme="ocean"] .navbtn.fab .fabc,.phone[data-theme="ocean"] .avatar,.phone[data-theme="ocean"] .prof-head .pa,.phone[data-theme="ocean"] .send-btn{background:linear-gradient(135deg,#3B82F6,#06B6D4)}
+.phone[data-theme="ocean"] .btn-mango{background:linear-gradient(135deg,#3B82F6,#06B6D4)}
+.phone[data-theme="ocean"] .fav{background:linear-gradient(135deg,#06B6D4,#0f4c81)}
 /* Sunset color theme */
 .phone[data-theme="sunset"]{--coral:#F43F5E;--mango:#FB923C;--turq:#F59E0B}
+.phone[data-theme="sunset"] .navbtn.fab .fabc,.phone[data-theme="sunset"] .avatar,.phone[data-theme="sunset"] .prof-head .pa,.phone[data-theme="sunset"] .send-btn{background:linear-gradient(135deg,#F43F5E,#FB923C)}
+.phone[data-theme="sunset"] .btn-mango{background:linear-gradient(135deg,#F43F5E,#FB923C)}
+.phone[data-theme="sunset"] .fav{background:linear-gradient(135deg,#FB923C,#F43F5E)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{background:#e9e4da;font-family:'Instrument Sans',system-ui,sans-serif;color:var(--ink)}
 body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
@@ -302,7 +308,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="country-picker" id="suCountry"></div>
         <div class="ilabel">City / area</div><input class="ain" id="suCity" placeholder="Santo Domingo">
         <div class="err" id="suErr"></div>
-        <div class="auth-foot"><button class="btn btn-mango" onclick="authStep('a-interests')">Continue</button><div class="small-link"><a onclick="authStep('a-intro')">← Back</a></div></div>
+        <div class="auth-foot"><button class="btn btn-mango" onclick="validateSignup()">Continue</button><div class="small-link"><a onclick="authStep('a-intro')">← Back</a></div></div>
       </div>
 
       <div class="astep" id="a-interests">
@@ -453,6 +459,28 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 </div>
 
 <!-- PROFILE -->
+<div class="screen" id="s-admin">
+  <div class="statusbar"></div>
+  <div class="scroll">
+    <div style="padding:4px 22px 0;display:flex;justify-content:space-between;align-items:center">
+      <button class="back" style="position:static;background:var(--card);box-shadow:var(--shadow)" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
+    </div>
+    <div style="padding:6px 22px 4px"><h1 style="font-family:'Fraunces',serif;font-size:24px;color:var(--night);font-weight:600">🛠️ Manager</h1><p style="font-size:13px;color:var(--muted);margin-top:4px">Owner tools. Handle with care.</p></div>
+    <div style="display:flex;gap:8px;padding:10px 22px 8px">
+      <div class="circ-tab on" id="adm-tab-users" onclick="switchAdminTab('users')">Users</div>
+      <div class="circ-tab" id="adm-tab-reports" onclick="switchAdminTab('reports')">Reports</div>
+    </div>
+    <div id="adm-users-pane">
+      <div style="padding:0 22px 8px"><input id="adminSearch" placeholder="🔍 Search users…" oninput="loadAdminUsers(this.value)" style="width:100%;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div id="adminUsersList" style="padding:0 22px"></div>
+    </div>
+    <div id="adm-reports-pane" style="display:none">
+      <div id="adminReportsList" style="padding:0 22px"></div>
+    </div>
+  </div>
+  <div class="nav" data-nav></div>
+</div>
+
 <div class="screen" id="s-profile">
   <div class="statusbar"></div>
   <div class="scroll">
@@ -461,6 +489,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="onAvatarChosen(event)">
     <div class="prof-tags" id="profTags"></div>
     <div class="settings">
+      <div class="srow" id="adminEntry" style="display:none;border-color:var(--mango)" onclick="openAdmin()"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H8a1.65 1.65 0 001-1.51V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V8a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div><div class="st"><b>🛠️ Manager panel</b><span>Owner tools — manage users & reports</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="gp">Privacy & safety</div>
       <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
       <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
@@ -721,6 +750,15 @@ function toggleInterest(n,el){if(signupInterests.includes(n))signupInterests=sig
 function togglePact(){pactAgreed=!pactAgreed;document.querySelector('#pactCheck .checkbox').classList.toggle('on',pactAgreed);document.getElementById('finishBtn').disabled=!pactAgreed;}
 function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),4000);}
 
+function validateSignup(){
+  const name=document.getElementById('suName').value.trim();
+  const email=document.getElementById('suEmail').value.trim();
+  const password=document.getElementById('suPass').value;
+  if(!name){showErr('suErr','Please enter your first name.');return;}
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showErr('suErr','Please enter a valid email address.');return;}
+  if(!password||password.length<6){showErr('suErr','Password must be at least 6 characters.');return;}
+  authStep('a-interests');
+}
 async function doSignup(){
   const name=document.getElementById('suName').value.trim();
   const email=document.getElementById('suEmail').value.trim();
@@ -1148,6 +1186,56 @@ function renderProfile(){
   document.getElementById('profMeta').textContent='📍 '+(me.city||'—');
   const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
   document.getElementById('profTags').innerHTML=(me.interests||[]).map(i=>'<div class="ptag">'+(emap[i]||'•')+' '+i+'</div>').join('')||'<span style="color:var(--muted);font-size:13px">No interests yet</span>';
+  document.getElementById('adminEntry').style.display=me.isAdmin?'flex':'none';
+}
+
+// ---- Admin / Manager ----
+function openAdmin(){if(!me||!me.isAdmin){toast('Not authorized');return;}switchAdminTab('users');go('s-admin');}
+function switchAdminTab(which){
+  document.getElementById('adm-tab-users').classList.toggle('on',which==='users');
+  document.getElementById('adm-tab-reports').classList.toggle('on',which==='reports');
+  document.getElementById('adm-users-pane').style.display=which==='users'?'block':'none';
+  document.getElementById('adm-reports-pane').style.display=which==='reports'?'block':'none';
+  if(which==='users')loadAdminUsers('');else loadAdminReports();
+}
+let admSearchTimer;
+function loadAdminUsers(q){
+  clearTimeout(admSearchTimer);
+  admSearchTimer=setTimeout(async()=>{
+    try{
+      const data=await api('/api/admin/users'+(q?'?q='+encodeURIComponent(q):''));
+      const box=document.getElementById('adminUsersList');
+      if(!data.users.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No users found.</p>';return;}
+      box.innerHTML=data.users.map(u=>{
+        const badge=u.is_admin?'<span style="font-size:10px;background:#FFF8EC;color:#a5701a;padding:2px 6px;border-radius:6px;font-weight:700">ADMIN</span>':(u.suspended?'<span style="font-size:10px;background:#FDECEA;color:#d94b3b;padding:2px 6px;border-radius:6px;font-weight:700">SUSPENDED</span>':'');
+        const actions=u.is_admin?'<span style="font-size:11px;color:var(--muted)">protected</span>':
+          '<button class="friend-btn remove" onclick="admSuspend(\''+u.id+'\','+(u.suspended?0:1)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
+          '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="admDelete(\''+u.id+'\',\''+esc(u.name).replace(/'/g,"")+'\')">Delete</button>';
+        return '<div class="friend-row"><div class="fi"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px">'+actions+'</div></div>';
+      }).join('');
+    }catch(e){toast(e.message);}
+  },250);
+}
+async function admSuspend(uid,suspend){
+  try{await api('/api/admin/suspend','POST',{userId:uid,suspend});toast(suspend?'User suspended':'User unsuspended');loadAdminUsers(document.getElementById('adminSearch').value);}
+  catch(e){toast(e.message);}
+}
+async function admDelete(uid,name){
+  if(!confirm('Permanently delete '+name+'\'s account and all their data? This cannot be undone.'))return;
+  try{await api('/api/admin/delete','POST',{userId:uid});toast('Account deleted');loadAdminUsers(document.getElementById('adminSearch').value);}
+  catch(e){toast(e.message);}
+}
+async function loadAdminReports(){
+  try{
+    const data=await api('/api/admin/reports');
+    const box=document.getElementById('adminReportsList');
+    if(!data.reports.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No reports yet.</p>';return;}
+    box.innerHTML=data.reports.map(r=>{
+      const when=new Date(r.created_at).toLocaleDateString();
+      const against=r.reported_name?('@'+(r.reported_username||'')+' ('+esc(r.reported_name)+')'):'(general)';
+      return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:4px"><b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b><span style="font-size:12px;color:var(--muted)">Against: '+against+' · by @'+esc(r.reporter_username||'?')+' · '+when+'</span></div>';
+    }).join('');
+  }catch(e){toast(e.message);}
 }
 
 // ---- Edit profile ----
