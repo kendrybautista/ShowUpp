@@ -22,6 +22,7 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const Database = require('better-sqlite3');
@@ -38,7 +39,23 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
 
 // --- Database setup ---
-const db = new Database(path.join(__dirname, 'showupp.db'));
+// IMPORTANT for data persistence:
+// On hosts with an ephemeral filesystem (like Render's free tier), a database file
+// stored inside the app folder is WIPED on every deploy/restart — which deletes all
+// accounts. To keep data, set DATA_DIR to a mounted persistent disk (e.g. /data on Render)
+// and the DB will live there and survive restarts.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+let dbPath = path.join(DATA_DIR, 'showupp.db');
+try {
+  // make sure the directory exists and is writable; otherwise fall back to app dir
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.accessSync(DATA_DIR, fs.constants.W_OK);
+} catch (e) {
+  console.log('DATA_DIR not writable (' + DATA_DIR + '), falling back to app folder. Set a persistent disk to keep data across restarts.');
+  dbPath = path.join(__dirname, 'showupp.db');
+}
+console.log('Using database at:', dbPath);
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -282,6 +299,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ---- Auth ----
+// Quick check whether an email is already registered (used during signup)
+app.post('/api/check-email', (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase());
+  res.json({ available: !existing });
+});
+
 app.post('/api/signup', (req, res) => {
   const { email, password, name, city, origin, interests, lang } = req.body || {};
   if (!email || !password || !name) {
