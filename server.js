@@ -30,8 +30,12 @@ const jwt = require('jsonwebtoken');
 
 // --- Config ---
 const PORT = process.env.PORT || 3000;
-// In production, set JWT_SECRET as an environment variable on your host.
+// In production, set these as environment variables on your host.
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
+// Admin / owner account — seeded on boot so it survives free-tier DB resets.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@showupp.app';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
+const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
 
 // --- Database setup ---
 const db = new Database(path.join(__dirname, 'showupp.db'));
@@ -116,7 +120,34 @@ try {
     db.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
     console.log('Added avatar column.');
   }
+  if (!cols.includes('is_admin')) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
+    console.log('Added is_admin column.');
+  }
+  if (!cols.includes('suspended')) {
+    db.exec("ALTER TABLE users ADD COLUMN suspended INTEGER DEFAULT 0");
+    console.log('Added suspended column.');
+  }
 } catch (e) { console.log('Migration note:', e.message); }
+
+// --- Seed / refresh the admin account every boot (survives free-tier resets) ---
+function seedAdmin() {
+  try {
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL.toLowerCase());
+    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    if (existing) {
+      // keep password in sync with env and ensure admin flag
+      db.prepare('UPDATE users SET pass_hash = ?, is_admin = 1 WHERE id = ?').run(hash, existing.id);
+    } else {
+      db.prepare(`INSERT INTO users (id,email,pass_hash,name,username,city,origin,interests,created_at,is_admin)
+                  VALUES (?,?,?,?,?,?,?,?,?,1)`).run(
+        crypto.randomUUID(), ADMIN_EMAIL.toLowerCase(), hash, ADMIN_NAME, 'admin',
+        '', '', JSON.stringify([]), Date.now());
+      console.log('Seeded admin account:', ADMIN_EMAIL);
+    }
+  } catch (e) { console.log('Admin seed note:', e.message); }
+}
+seedAdmin();
 
 // --- Safe migration: add location columns to rounds ---
 try {
@@ -161,7 +192,7 @@ function makeToken(user) {
 function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(payload.uid);
+    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
@@ -185,7 +216,8 @@ function publicUser(u) {
     avatar: u.avatar || '',
     city: u.city,
     origin: u.origin,
-    interests: u.interests ? JSON.parse(u.interests) : []
+    interests: u.interests ? JSON.parse(u.interests) : [],
+    isAdmin: !!u.is_admin
   };
 }
 
@@ -232,6 +264,9 @@ app.post('/api/login', (req, res) => {
   const row = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase());
   if (!row || !bcrypt.compareSync(String(password), row.pass_hash)) {
     return res.status(401).json({ error: 'Wrong email or password.' });
+  }
+  if (row.suspended) {
+    return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
   }
   res.json({ token: makeToken(row), user: publicUser(row) });
 });
@@ -447,6 +482,80 @@ app.post('/api/report', requireAuth, (req, res) => {
   db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
     .run(id(), req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), now());
   res.json({ ok: true });
+});
+
+// ---- Admin (owner-only) ----
+// Requires: logged-in user with is_admin = 1
+function requireAdmin(req, res, next) {
+  if (!req.user || !req.user.is_admin) return res.status(403).json({ error: 'Not authorized.' });
+  next();
+}
+
+// Confirm whether current user is an admin (used by the app to show/hide the panel)
+app.get('/api/admin/check', requireAuth, (req, res) => {
+  res.json({ isAdmin: !!req.user.is_admin });
+});
+
+// List all users (admin only)
+app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  let rows;
+  if (q) {
+    rows = db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,created_at
+      FROM users WHERE LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?
+      ORDER BY created_at DESC LIMIT 200`).all('%'+q+'%','%'+q+'%','%'+q+'%');
+  } else {
+    rows = db.prepare('SELECT id,name,username,email,city,suspended,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+  }
+  res.json({ users: rows });
+});
+
+// Suspend / unsuspend a user (admin only)
+app.post('/api/admin/suspend', requireAuth, requireAdmin, (req, res) => {
+  const { userId, suspend } = req.body || {};
+  const target = db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (target.is_admin) return res.status(400).json({ error: 'You cannot suspend an admin account.' });
+  db.prepare('UPDATE users SET suspended = ? WHERE id = ?').run(suspend ? 1 : 0, userId);
+  res.json({ ok: true });
+});
+
+// Permanently delete a user and their data (admin only)
+app.post('/api/admin/delete', requireAuth, requireAdmin, (req, res) => {
+  const { userId } = req.body || {};
+  const target = db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (target.is_admin) return res.status(400).json({ error: 'You cannot delete an admin account.' });
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
+    db.prepare('DELETE FROM friend_requests WHERE from_id = ? OR to_id = ?').run(userId, userId);
+    db.prepare('DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?').run(userId, userId);
+    const hosted = db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(userId);
+    for (const r of hosted) {
+      db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
+      db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
+      db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
+    }
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  });
+  tx();
+  res.json({ ok: true });
+});
+
+// View reports (admin only)
+app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT r.id, r.context, r.reason, r.created_at,
+      reporter.name AS reporter_name, reporter.username AS reporter_username,
+      reported.id AS reported_id, reported.name AS reported_name, reported.username AS reported_username
+    FROM reports r
+    LEFT JOIN users reporter ON reporter.id = r.reporter_id
+    LEFT JOIN users reported ON reported.id = r.reported_id
+    ORDER BY r.created_at DESC LIMIT 100
+  `).all();
+  res.json({ reports: rows });
 });
 
 
