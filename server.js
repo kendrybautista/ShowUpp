@@ -73,6 +73,13 @@ db.exec(`
     body      TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS friendships (
+    user_id    TEXT NOT NULL,
+    friend_id  TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, friend_id)
+  );
 `);
 
 // --- Safe migration: add username column if it doesn't exist yet ---
@@ -82,6 +89,14 @@ try {
     db.exec("ALTER TABLE users ADD COLUMN username TEXT");
     console.log('Added username column.');
   }
+} catch (e) { console.log('Migration note:', e.message); }
+
+// --- Safe migration: add location columns to rounds ---
+try {
+  const rcols = db.prepare("PRAGMA table_info(rounds)").all().map(c => c.name);
+  if (!rcols.includes('lat')) { db.exec("ALTER TABLE rounds ADD COLUMN lat REAL"); console.log('Added rounds.lat'); }
+  if (!rcols.includes('lng')) { db.exec("ALTER TABLE rounds ADD COLUMN lng REAL"); console.log('Added rounds.lng'); }
+  if (!rcols.includes('place')) { db.exec("ALTER TABLE rounds ADD COLUMN place TEXT"); console.log('Added rounds.place'); }
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Seed a few starter Rounds so the app isn't empty on first run ---
@@ -225,31 +240,113 @@ app.post('/api/me/update', requireAuth, (req, res) => {
   res.json({ user: publicUser(updated) });
 });
 
+// Permanently delete the current user's account and all their data
+app.post('/api/me/delete', requireAuth, (req, res) => {
+  const uid = req.user.id;
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM messages WHERE user_id = ?').run(uid);
+    db.prepare('DELETE FROM memberships WHERE user_id = ?').run(uid);
+    db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(uid, uid);
+    // Rounds they host: remove the round and its data
+    const hosted = db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(uid);
+    for (const r of hosted) {
+      db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
+      db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
+      db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
+    }
+    db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+  });
+  tx();
+  res.json({ ok: true });
+});
+
+// ---- Friends ----
+// Search users by username (or name), excluding yourself
+app.get('/api/users/search', requireAuth, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase().replace(/^@/, '');
+  if (q.length < 2) return res.json({ users: [] });
+  const rows = db.prepare(`
+    SELECT id, name, username, city FROM users
+    WHERE id != ? AND (LOWER(username) LIKE ? OR LOWER(name) LIKE ?)
+    LIMIT 20
+  `).all(req.user.id, '%' + q + '%', '%' + q + '%');
+  const friendIds = new Set(db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id).map(r => r.friend_id));
+  res.json({ users: rows.filter(u => u.username).map(u => ({
+    id: u.id, name: u.name, username: u.username, city: u.city,
+    isFriend: friendIds.has(u.id)
+  })) });
+});
+
+// Add a friend (one-directional save, like following)
+app.post('/api/friends/add', requireAuth, (req, res) => {
+  const { friendId } = req.body || {};
+  if (!friendId || friendId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(friendId);
+  if (!exists) return res.status(404).json({ error: 'User not found.' });
+  db.prepare('INSERT OR IGNORE INTO friendships (user_id, friend_id, created_at) VALUES (?,?,?)')
+    .run(req.user.id, friendId, now());
+  res.json({ ok: true });
+});
+
+// Remove a friend
+app.post('/api/friends/remove', requireAuth, (req, res) => {
+  const { friendId } = req.body || {};
+  db.prepare('DELETE FROM friendships WHERE user_id = ? AND friend_id = ?').run(req.user.id, friendId);
+  res.json({ ok: true });
+});
+
+// List my saved friends
+app.get('/api/friends', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.name, u.username, u.city
+    FROM friendships f JOIN users u ON u.id = f.friend_id
+    WHERE f.user_id = ? ORDER BY f.created_at DESC
+  `).all(req.user.id);
+  res.json({ friends: rows });
+});
+
 // ---- Rounds ----
 app.get('/api/rounds', requireAuth, (req, res) => {
   const rounds = db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
-      EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined
+      EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
+      (r.host_id = ?) AS is_host
     FROM rounds r ORDER BY r.created_at DESC
-  `).all(req.user.id);
+  `).all(req.user.id, req.user.id);
   res.json({ rounds });
 });
 
 app.post('/api/rounds', requireAuth, (req, res) => {
-  const { title, emoji, category, blurb } = req.body || {};
+  const { title, emoji, category, blurb, lat, lng, place } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Give your Round a name.' });
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
     category: category || 'General', blurb: blurb || '',
-    host_id: req.user.id, created_at: now()
+    host_id: req.user.id, created_at: now(),
+    lat: (typeof lat === 'number') ? lat : null,
+    lng: (typeof lng === 'number') ? lng : null,
+    place: place || null
   };
-  db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at)
-              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at)`).run(round);
-  // Host auto-joins their own Round
+  db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place)`).run(round);
   db.prepare('INSERT OR IGNORE INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?)')
     .run(round.id, req.user.id, now());
   res.json({ round });
+});
+
+// Delete a Round — only the host (creator) can do this
+app.post('/api/rounds/:id/delete', requireAuth, (req, res) => {
+  const round = db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can delete this Round.' });
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
+  });
+  tx();
+  res.json({ ok: true });
 });
 
 app.post('/api/rounds/:id/join', requireAuth, (req, res) => {
@@ -264,12 +361,13 @@ app.post('/api/rounds/:id/join', requireAuth, (req, res) => {
 app.get('/api/my-rounds', requireAuth, (req, res) => {
   const rounds = db.prepare(`
     SELECT r.*,
-      (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count
+      (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
+      (r.host_id = ?) AS is_host
     FROM rounds r
     JOIN memberships mm ON mm.round_id = r.id
     WHERE mm.user_id = ?
     ORDER BY r.created_at DESC
-  `).all(req.user.id);
+  `).all(req.user.id, req.user.id);
   res.json({ rounds });
 });
 
