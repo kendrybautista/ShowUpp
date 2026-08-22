@@ -80,6 +80,29 @@ db.exec(`
     created_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, friend_id)
   );
+
+  CREATE TABLE IF NOT EXISTS friend_requests (
+    from_id    TEXT NOT NULL,
+    to_id      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS blocks (
+    user_id    TEXT NOT NULL,
+    blocked_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, blocked_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS reports (
+    id          TEXT PRIMARY KEY,
+    reporter_id TEXT NOT NULL,
+    reported_id TEXT,
+    context     TEXT,
+    reason      TEXT,
+    created_at  INTEGER NOT NULL
+  );
 `);
 
 // --- Safe migration: add username column if it doesn't exist yet ---
@@ -287,50 +310,145 @@ app.post('/api/me/delete', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Friends ----
-// Search users by username (or name), excluding yourself
+// ---- Friends, requests, blocks, reports ----
+// Helper: are two users friends (either direction stored both ways on accept)
+function areFriends(a, b) {
+  return !!db.prepare('SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b);
+}
+function isBlocked(a, b) { // has a blocked b OR b blocked a
+  return !!db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(a, b, b, a);
+}
+
+// Search users by username or name, excluding yourself and anyone blocked
 app.get('/api/users/search', requireAuth, (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase().replace(/^@/, '');
   if (q.length < 2) return res.json({ users: [] });
   const rows = db.prepare(`
-    SELECT id, name, username, city FROM users
+    SELECT id, name, username, avatar, city FROM users
     WHERE id != ? AND (LOWER(username) LIKE ? OR LOWER(name) LIKE ?)
     LIMIT 20
   `).all(req.user.id, '%' + q + '%', '%' + q + '%');
   const friendIds = new Set(db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id).map(r => r.friend_id));
-  res.json({ users: rows.filter(u => u.username).map(u => ({
-    id: u.id, name: u.name, username: u.username, city: u.city,
-    isFriend: friendIds.has(u.id)
-  })) });
+  const sentIds = new Set(db.prepare('SELECT to_id FROM friend_requests WHERE from_id = ?').all(req.user.id).map(r => r.to_id));
+  const out = rows
+    .filter(u => u.username && !isBlocked(req.user.id, u.id))
+    .map(u => ({
+      id: u.id, name: u.name, username: u.username, avatar: u.avatar || '', city: u.city,
+      status: friendIds.has(u.id) ? 'friend' : (sentIds.has(u.id) ? 'pending' : 'none')
+    }));
+  res.json({ users: out });
 });
 
-// Add a friend (one-directional save, like following)
-app.post('/api/friends/add', requireAuth, (req, res) => {
-  const { friendId } = req.body || {};
-  if (!friendId || friendId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
-  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(friendId);
+// Send a friend request
+app.post('/api/friends/request', requireAuth, (req, res) => {
+  const { toId } = req.body || {};
+  if (!toId || toId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  if (isBlocked(req.user.id, toId)) return res.status(403).json({ error: 'Unavailable.' });
+  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(toId);
   if (!exists) return res.status(404).json({ error: 'User not found.' });
-  db.prepare('INSERT OR IGNORE INTO friendships (user_id, friend_id, created_at) VALUES (?,?,?)')
-    .run(req.user.id, friendId, now());
+  if (areFriends(req.user.id, toId)) return res.json({ ok: true, status: 'friend' });
+  // If they already sent YOU a request, accept it instead
+  const incoming = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(toId, req.user.id);
+  if (incoming) {
+    const t = db.transaction(() => {
+      db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(req.user.id, toId, now());
+      db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(toId, req.user.id, now());
+      db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(toId, req.user.id);
+    });
+    t();
+    return res.json({ ok: true, status: 'friend' });
+  }
+  db.prepare('INSERT OR IGNORE INTO friend_requests (from_id,to_id,created_at) VALUES (?,?,?)').run(req.user.id, toId, now());
+  res.json({ ok: true, status: 'pending' });
+});
+
+// Incoming friend requests (people who want to add me)
+app.get('/api/friends/requests', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.name, u.username, u.avatar, u.city
+    FROM friend_requests fr JOIN users u ON u.id = fr.from_id
+    WHERE fr.to_id = ? ORDER BY fr.created_at DESC
+  `).all(req.user.id);
+  res.json({ requests: rows });
+});
+
+// Accept a request
+app.post('/api/friends/accept', requireAuth, (req, res) => {
+  const { fromId } = req.body || {};
+  const pending = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(fromId, req.user.id);
+  if (!pending) return res.status(404).json({ error: 'No such request.' });
+  const t = db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(req.user.id, fromId, now());
+    db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(fromId, req.user.id, now());
+    db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
+  });
+  t();
   res.json({ ok: true });
 });
 
-// Remove a friend
+// Decline a request
+app.post('/api/friends/decline', requireAuth, (req, res) => {
+  const { fromId } = req.body || {};
+  db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
+  res.json({ ok: true });
+});
+
+// Remove a friend (both directions)
 app.post('/api/friends/remove', requireAuth, (req, res) => {
   const { friendId } = req.body || {};
-  db.prepare('DELETE FROM friendships WHERE user_id = ? AND friend_id = ?').run(req.user.id, friendId);
+  db.prepare('DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)')
+    .run(req.user.id, friendId, friendId, req.user.id);
   res.json({ ok: true });
 });
 
-// List my saved friends
+// List my friends
 app.get('/api/friends', requireAuth, (req, res) => {
   const rows = db.prepare(`
-    SELECT u.id, u.name, u.username, u.city
+    SELECT u.id, u.name, u.username, u.avatar, u.city
     FROM friendships f JOIN users u ON u.id = f.friend_id
     WHERE f.user_id = ? ORDER BY f.created_at DESC
   `).all(req.user.id);
   res.json({ friends: rows });
 });
+
+// Block a user (also removes friendship + pending requests both ways)
+app.post('/api/block', requireAuth, (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId || userId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  const t = db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO blocks (user_id,blocked_id,created_at) VALUES (?,?,?)').run(req.user.id, userId, now());
+    db.prepare('DELETE FROM friendships WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)').run(req.user.id, userId, userId, req.user.id);
+    db.prepare('DELETE FROM friend_requests WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)').run(req.user.id, userId, userId, req.user.id);
+  });
+  t();
+  res.json({ ok: true });
+});
+
+// Unblock
+app.post('/api/unblock', requireAuth, (req, res) => {
+  const { userId } = req.body || {};
+  db.prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(req.user.id, userId);
+  res.json({ ok: true });
+});
+
+// List people I've blocked
+app.get('/api/blocks', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.name, u.username, u.avatar
+    FROM blocks b JOIN users u ON u.id = b.blocked_id
+    WHERE b.user_id = ? ORDER BY b.created_at DESC
+  `).all(req.user.id);
+  res.json({ blocked: rows });
+});
+
+// Report a user / content
+app.post('/api/report', requireAuth, (req, res) => {
+  const { reportedId, context, reason } = req.body || {};
+  db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
+    .run(id(), req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), now());
+  res.json({ ok: true });
+});
+
 
 // ---- Rounds ----
 app.get('/api/rounds', requireAuth, (req, res) => {
