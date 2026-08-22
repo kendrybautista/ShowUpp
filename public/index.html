@@ -105,6 +105,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .theme-opt.on{border-color:var(--coral);color:var(--night)}
 .theme-opt .tsw{width:100%;height:26px;border-radius:8px;margin-bottom:5px}
 .unit-opt{flex:1;text-align:center;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-size:13px;font-weight:700;color:var(--muted);cursor:pointer}
+.lang-opt{flex:1;text-align:center;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-size:13px;font-weight:700;color:var(--muted);cursor:pointer}
+.lang-opt.on{border-color:var(--coral);background:#FFF3F1;color:var(--night)}
+.phone[data-theme="dark"] .lang-opt,.phone[data-theme="midnight"] .lang-opt{background:#20202e}
+.phone[data-theme="dark"] .lang-opt.on,.phone[data-theme="midnight"] .lang-opt.on{background:#2c2c3e;color:#EDEAF5}
+.auth-scroll .lang-opt{background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.2)}
+.auth-scroll .lang-opt.on{background:var(--mango);color:var(--night);border-color:var(--mango)}
 .unit-opt.on{border-color:var(--coral);background:#FFF3F1;color:var(--night)}
 .phone[data-theme="dark"] .unit-opt{background:#20202e}
 .phone[data-theme="dark"] .unit-opt.on{background:#2c2c3e;color:#EDEAF5}
@@ -333,39 +339,41 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="astep" id="a-login">
         <img src="/icons/showupp-mark-300.png" alt="ShowUpp" width="60" height="60" style="display:block;margin-bottom:6px;border-radius:14px">
         <div class="logo" style="font-size:30px">Show<span>Upp</span></div>
-        <h2 style="margin-top:20px">Welcome back</h2>
+        <h2 style="margin-top:20px" data-i18n="welcome_back">Welcome back</h2>
         <div class="ilabel">Email</div><input class="ain" id="loginEmail" type="email" placeholder="you@email.com">
         <div class="ilabel">Password</div><input class="ain" id="loginPass" type="password" placeholder="••••••••">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,.85)"><input type="checkbox" id="rememberMe" checked style="width:16px;height:16px;accent-color:var(--mango)"> Remember me</label>
-          <a onclick="openForgot()" style="font-size:13px;color:var(--mango);cursor:pointer">Forgot password?</a>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,.85)"><input type="checkbox" id="rememberMe" checked style="width:16px;height:16px;accent-color:var(--mango)"> <span data-i18n="remember_me">Remember me</span></label>
+          <a onclick="openForgot()" style="font-size:13px;color:var(--mango);cursor:pointer" data-i18n="forgot_pw">Forgot password?</a>
         </div>
         <div class="err" id="loginErr"></div>
         <div class="auth-foot"><button class="btn btn-mango" onclick="doLogin()">Log in</button><div class="small-link">New here? <a onclick="authStep('a-signup')">Create an account</a></div></div>
       </div>
 
       <div class="astep" id="a-signup">
-        <h2 style="margin-top:10px">Create your account</h2>
+        <h2 style="margin-top:10px" data-i18n="create_account">Create your account</h2>
         <p class="lead">Just an email and password to start. Real name keeps the community friendly.</p>
-        <div class="ilabel">First name</div><input class="ain" id="suName" placeholder="Mateo">
-        <div class="ilabel">Email</div><input class="ain" id="suEmail" type="email" placeholder="you@email.com">
-        <div class="ilabel">Password <span style="opacity:.6;font-weight:400">(6+ characters)</span></div><input class="ain" id="suPass" type="password" placeholder="••••••••">
-        <div class="ilabel">What country are you in?</div>
+        <div class="ilabel" data-i18n="language">Language</div>
+        <div id="suLang" class="lang-picker" style="display:flex;gap:8px"></div>
+        <div class="ilabel" data-i18n="first_name">First name</div><input class="ain" id="suName" placeholder="Mateo">
+        <div class="ilabel" data-i18n="email">Email</div><input class="ain" id="suEmail" type="email" placeholder="you@email.com">
+        <div class="ilabel" data-i18n="password">Password</div><input class="ain" id="suPass" type="password" placeholder="••••••••">
+        <div class="ilabel" data-i18n="country_q">What country are you in?</div>
         <div class="country-picker" id="suCountry"></div>
-        <div class="ilabel">City / area</div><input class="ain" id="suCity" placeholder="Santo Domingo">
+        <div class="ilabel" data-i18n="city_area">City / area</div><input class="ain" id="suCity" placeholder="Santo Domingo">
         <div class="err" id="suErr"></div>
-        <div class="auth-foot"><button class="btn btn-mango" onclick="validateSignup()">Continue</button><div class="small-link"><a onclick="authStep('a-intro')">← Back</a></div></div>
+        <div class="auth-foot"><button class="btn btn-mango" onclick="validateSignup()" data-i18n="continue">Continue</button><div class="small-link"><a onclick="authStep('a-intro')" data-i18n="back">← Back</a></div></div>
       </div>
 
       <div class="astep" id="a-interests">
-        <h2 style="margin-top:10px">What are you into?</h2>
+        <h2 style="margin-top:10px" data-i18n="interests_title">What are you into?</h2>
         <p class="lead">Pick a few — you can change these anytime.</p>
         <div class="interest-grid" id="interestGrid"></div>
         <div class="auth-foot"><button class="btn btn-mango" onclick="authStep('a-safety')">Continue</button><div class="small-link"><a onclick="authStep('a-signup')">← Back</a></div></div>
       </div>
 
       <div class="astep" id="a-safety">
-        <h2 style="margin-top:10px">Our community pact</h2>
+        <h2 style="margin-top:10px" data-i18n="pact_title">Our community pact</h2>
         <p class="lead">ShowUpp only works if everyone feels safe.</p>
         <div class="safety-card"><svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg><div><b>Be real & kind</b><p>Use your real first name. Treat everyone with respect.</p></div></div>
         <div class="safety-card"><svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/></svg><div><b>Meet smart</b><p>First meetups in public places. Tell a friend where you're going.</p></div></div>
@@ -589,11 +597,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="prof-tags" id="profTags"></div>
     <div class="settings">
       <div class="srow" id="adminEntry" style="display:none;border-color:var(--mango)" onclick="openAdmin()"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H8a1.65 1.65 0 001-1.51V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V8a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div><div class="st"><b>🛠️ Manager panel</b><span>Owner tools — manage users & reports</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="gp">Privacy & safety</div>
+      <div class="gp" data-i18n="privacy_safety">Privacy & safety</div>
       <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
       <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="srow" onclick="openBlocked()"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg></div><div class="st"><b>Blocked users</b><span>Manage people you've blocked</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="gp">Appearance</div>
+      <div class="gp" data-i18n="appearance">Appearance</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
         <div class="theme-opt on" data-theme-val="light" onclick="setTheme('light')"><div class="tsw" style="background:#FBF7F0;border:1px solid #EDE6DA"></div>Light</div>
         <div class="theme-opt" data-theme-val="dark" onclick="setTheme('dark')"><div class="tsw" style="background:#20202e"></div>Dark</div>
@@ -608,10 +616,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="theme-opt" data-theme-val="cocoa" onclick="setTheme('cocoa')"><div class="tsw" style="background:linear-gradient(135deg,#78350F,#B45309)"></div>Cocoa</div>
         <div class="theme-opt" data-theme-val="mint" onclick="setTheme('mint')"><div class="tsw" style="background:linear-gradient(135deg,#0D9488,#2DD4BF)"></div>Mint</div>
       </div>
-      <div class="gp">Account</div>
-      <div class="srow" onclick="openEdit()"><div class="sicon" style="background:#FFF3F1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF6B5B" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><div class="st"><b>Edit profile & interests</b><span>Name, username, location, interests</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="srow" onclick="logout()"><div class="sicon" style="background:#f0eee9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8699" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></div><div class="st"><b>Log out</b></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="srow" onclick="openDelete()" style="border-color:#f3d0cb"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div><div class="st"><b style="color:#d94b3b">Delete my account</b><span>Permanently erase your account and data</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="gp" data-i18n="account">Account</div>
+      <div class="srow" onclick="openEdit()"><div class="sicon" style="background:#FFF3F1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF6B5B" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><div class="st"><b data-i18n="edit_profile_row">Edit profile & interests</b><span data-i18n="edit_profile_sub">Name, username, location, interests</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="srow" onclick="logout()"><div class="sicon" style="background:#f0eee9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8699" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></div><div class="st"><b data-i18n="log_out">Log out</b></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="srow" onclick="openDelete()" style="border-color:#f3d0cb"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div><div class="st"><b style="color:#d94b3b" data-i18n="delete_account">Delete my account</b><span>Permanently erase your account and data</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
     </div>
   </div>
   <div class="nav" data-nav></div>
@@ -620,7 +628,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <div class="sheet" id="editSheet" onclick="if(event.target===this)closeEdit()">
   <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
     <div class="grabber"></div>
-    <h3>Edit profile</h3>
+    <h3 data-i18n="edit_profile">Edit profile</h3>
     <div style="display:flex;gap:10px;margin-bottom:16px">
       <button class="friend-btn add" onclick="pickAvatar()" style="flex:1">📷 Change photo</button>
       <button class="friend-btn remove" onclick="removeAvatar()" style="flex:1">Remove photo</button>
@@ -629,15 +637,18 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><label>Username <span style="color:var(--muted);font-weight:400">(how friends find you)</span></label><input type="text" id="edUser" placeholder="@yourname"></div>
     <div class="field"><label>Country</label><div class="country-picker" id="edCountry"></div></div>
     <div class="field"><label>City / area</label><input type="text" id="edCity" placeholder="Santo Domingo"></div>
-    <div class="field"><label>Distance unit</label>
+    <div class="field"><label data-i18n="language">Language</label>
+      <div id="edLang" class="lang-picker" style="display:flex;gap:8px"></div>
+    </div>
+    <div class="field"><label data-i18n="distance_unit">Distance unit</label>
       <div style="display:flex;gap:8px">
         <div class="unit-opt" id="unit-km" onclick="setUnit('km')">Kilometers (km)</div>
         <div class="unit-opt" id="unit-mi" onclick="setUnit('mi')">Miles (mi)</div>
       </div>
     </div>
-    <div class="field"><label>Your interests <span style="color:var(--muted);font-weight:400">(tap to toggle)</span></label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
-    <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px">Save changes</button>
-    <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closeEdit()">Cancel</div>
+    <div class="field"><label data-i18n="your_interests">Your interests</label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
+    <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px" data-i18n="save_changes">Save changes</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closeEdit()" data-i18n="cancel">Cancel</div>
   </div>
 </div>
 
@@ -736,6 +747,99 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 </div>
 
 <script>
+// ---- Internationalization (i18n) ----
+// Add more languages by adding a key block. t('id') looks up the current language.
+const I18N={
+  en:{
+    lang_name:'English',
+    // nav
+    nav_discover:'Discover',nav_circles:'Circles',nav_chats:'Chats',nav_you:'You',
+    // intro / auth
+    intro_tag:'MEET PEOPLE. MAKE MEMORIES.',
+    create_account:'Create your account',already_here:'Already here?',log_in:'Log in',
+    welcome_back:'Welcome back',new_here:'New here?',
+    remember_me:'Remember me',forgot_pw:'Forgot password?',
+    first_name:'First name',email:'Email',password:'Password',
+    country_q:'What country are you in?',city_area:'City / area',
+    continue:'Continue',back:'← Back',
+    interests_title:'What are you into?',interests_lead:'Pick a few — you can change these anytime.',
+    pact_title:'Our community pact',pact_lead:'ShowUpp only works if everyone feels safe.',
+    join:'Join ShowUpp 🎉',
+    language:'Language',
+    // profile
+    edit_profile:'Edit profile',save_changes:'Save changes',cancel:'Cancel',
+    edit_profile_row:'Edit profile & interests',edit_profile_sub:'Name, username, location, interests',
+    appearance:'Appearance',account:'Account',privacy_safety:'Privacy & safety',
+    log_out:'Log out',delete_account:'Delete my account',
+    distance_unit:'Distance unit',your_interests:'Your interests',
+    username:'Username',change_photo:'📷 Change photo',remove_photo:'Remove photo',
+    // home
+    rounds_near:'Rounds near you',for_you:'✨ For you',near_me:'📍 Near me',
+    host_one:'+ Host one',
+    // chats/friends
+    round_chats:'Round chats',direct:'Direct',friends:'Friends',requests:'Requests',blocked:'Blocked',
+    new_group:'+ New group chat',message:'💬 Message',notifications:'Notifications',
+    search_people:'🔍 Search by username or name…',
+    message_ph:'Message…'
+  },
+  es:{
+    lang_name:'Español',
+    nav_discover:'Explorar',nav_circles:'Círculos',nav_chats:'Chats',nav_you:'Tú',
+    intro_tag:'CONOCE GENTE. CREA RECUERDOS.',
+    create_account:'Crea tu cuenta',already_here:'¿Ya tienes cuenta?',log_in:'Iniciar sesión',
+    welcome_back:'Bienvenido de nuevo',new_here:'¿Nuevo aquí?',
+    remember_me:'Recuérdame',forgot_pw:'¿Olvidaste tu contraseña?',
+    first_name:'Nombre',email:'Correo',password:'Contraseña',
+    country_q:'¿En qué país estás?',city_area:'Ciudad / zona',
+    continue:'Continuar',back:'← Atrás',
+    interests_title:'¿Qué te gusta?',interests_lead:'Elige algunos — puedes cambiarlos cuando quieras.',
+    pact_title:'Nuestro pacto comunitario',pact_lead:'ShowUpp solo funciona si todos se sienten seguros.',
+    join:'Únete a ShowUpp 🎉',
+    language:'Idioma',
+    edit_profile:'Editar perfil',save_changes:'Guardar cambios',cancel:'Cancelar',
+    edit_profile_row:'Editar perfil e intereses',edit_profile_sub:'Nombre, usuario, ubicación, intereses',
+    appearance:'Apariencia',account:'Cuenta',privacy_safety:'Privacidad y seguridad',
+    log_out:'Cerrar sesión',delete_account:'Eliminar mi cuenta',
+    distance_unit:'Unidad de distancia',your_interests:'Tus intereses',
+    username:'Nombre de usuario',change_photo:'📷 Cambiar foto',remove_photo:'Quitar foto',
+    rounds_near:'Rounds cerca de ti',for_you:'✨ Para ti',near_me:'📍 Cerca de mí',
+    host_one:'+ Crear uno',
+    round_chats:'Chats de Rounds',direct:'Directo',friends:'Amigos',requests:'Solicitudes',blocked:'Bloqueados',
+    new_group:'+ Nuevo grupo',message:'💬 Mensaje',notifications:'Notificaciones',
+    search_people:'🔍 Busca por usuario o nombre…',
+    message_ph:'Mensaje…'
+  }
+};
+let LANG='en';
+function t(key){const l=I18N[LANG]||I18N.en;return (l[key]!==undefined?l[key]:(I18N.en[key]!==undefined?I18N.en[key]:key));}
+const LANGUAGES=[['en','🇬🇧','English'],['es','🇩🇴','Español']];
+function loadLang(){
+  try{LANG=localStorage.getItem('su_lang')||'en';}catch(e){LANG='en';}
+  if(!I18N[LANG])LANG='en';
+}
+function setLang(code){
+  LANG=I18N[code]?code:'en';
+  try{localStorage.setItem('su_lang',LANG);}catch(e){}
+  applyTranslations();
+  renderLangPickers();
+  // save to server if logged in
+  if(token){try{api('/api/me/update','POST',{lang:LANG});}catch(e){}}
+}
+function renderLangPickers(){
+  document.querySelectorAll('.lang-picker').forEach(box=>{
+    box.innerHTML=LANGUAGES.map(l=>'<div class="lang-opt'+(l[0]===LANG?' on':'')+'" data-lang-val="'+l[0]+'" onclick="setLang(\''+l[0]+'\')">'+l[1]+' '+l[2]+'</div>').join('');
+  });
+}
+// Apply translations to any element carrying a data-i18n attribute
+function applyTranslations(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.getAttribute('data-i18n'));});
+  document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.setAttribute('placeholder',t(el.getAttribute('data-i18n-ph')));});
+  // rebuild nav labels + dynamic bits that are generated in JS
+  if(typeof buildNav==='function')buildNav();
+  // refresh language button labels if present
+  document.querySelectorAll('.lang-opt').forEach(o=>o.classList.toggle('on',o.getAttribute('data-lang-val')===LANG));
+}
+
 const CATEGORIES=[
   {e:'🍽️',n:'Food'},{e:'💃',n:'Dance'},{e:'⚽',n:'Sports'},{e:'🎵',n:'Music'},
   {e:'🎬',n:'Movies'},{e:'🙏',n:'Religion'},{e:'📖',n:'Book Reviews'},{e:'📚',n:'Book Club'},
@@ -880,11 +984,11 @@ function buildNav(){
   if(!activeEl)return;
   const active=activeEl.id;
   const items=[
-    {id:'s-home',label:'Discover',icon:'<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>'},
-    {id:'s-circles',label:'Circles',icon:'<circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="17" cy="9" r="2.5"/>'},
+    {id:'s-home',label:t('nav_discover'),icon:'<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>'},
+    {id:'s-circles',label:t('nav_circles'),icon:'<circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="17" cy="9" r="2.5"/>'},
     {fab:true},
-    {id:'s-chats',label:'Chats',icon:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'},
-    {id:'s-profile',label:'You',icon:'<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>'}
+    {id:'s-chats',label:t('nav_chats'),icon:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'},
+    {id:'s-profile',label:t('nav_you'),icon:'<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>'}
   ];
   document.querySelectorAll('[data-nav]').forEach(nav=>{
     nav.innerHTML=items.map(it=>{
@@ -927,7 +1031,7 @@ async function doSignup(){
   const city=(cityRaw?cityRaw+', ':'')+country;
   if(!name||!email||!password){authStep('a-signup');showErr('suErr','Please fill in name, email, and password.');return;}
   try{
-    const data=await api('/api/signup','POST',{name,email,password,city,origin:'',interests:signupInterests});
+    const data=await api('/api/signup','POST',{name,email,password,city,origin:'',interests:signupInterests,lang:LANG});
     token=data.token;localStorage.setItem('su_token',token);me=data.user;
     connectWS();enterApp();
   }catch(e){showErr('finalErr',e.message);}
@@ -1727,6 +1831,7 @@ function openEdit(){
   document.getElementById('edCity').value=cityPart;
   renderEditInterests();
   setUnit(distUnit);
+  renderLangPickers();
   document.getElementById('editSheet').classList.add('open');
 }
 function closeEdit(){document.getElementById('editSheet').classList.remove('open');}
@@ -1798,9 +1903,12 @@ async function boot(){
   renderCats('');
   loadTheme();
   loadUnit();
+  loadLang();
+  renderLangPickers();
+  applyTranslations();
   initCountryPicker('suCountry','Dominican Republic');
   if(token){
-    try{const data=await api('/api/me');me=data.user;connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
+    try{const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyTranslations();renderLangPickers();}connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
     catch{token=null;localStorage.removeItem('su_token');}
   }
   document.getElementById('loading').style.display='none';
