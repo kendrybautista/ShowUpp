@@ -107,6 +107,42 @@ db.exec(`
     reason      TEXT,
     created_at  INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS conversations (
+    id         TEXT PRIMARY KEY,
+    is_group   INTEGER DEFAULT 0,
+    title      TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS conversation_members (
+    conv_id   TEXT NOT NULL,
+    user_id   TEXT NOT NULL,
+    last_read INTEGER DEFAULT 0,
+    PRIMARY KEY (conv_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS dm_messages (
+    id         TEXT PRIMARY KEY,
+    conv_id    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    kind       TEXT DEFAULT 'text',
+    media_url  TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    type       TEXT,
+    title      TEXT,
+    body       TEXT,
+    link       TEXT,
+    read       INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // --- Safe migration: add username column if it doesn't exist yet ---
@@ -404,6 +440,7 @@ app.post('/api/friends/request', requireAuth, (req, res) => {
     return res.json({ ok: true, status: 'friend' });
   }
   db.prepare('INSERT OR IGNORE INTO friend_requests (from_id,to_id,created_at) VALUES (?,?,?)').run(req.user.id, toId, now());
+  pushNotif(toId, 'friend_request', 'New friend request', (req.user.name || 'Someone') + ' wants to be friends', 'friends:requests');
   res.json({ ok: true, status: 'pending' });
 });
 
@@ -428,6 +465,7 @@ app.post('/api/friends/accept', requireAuth, (req, res) => {
     db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
   });
   t();
+  pushNotif(fromId, 'friend_accept', 'Friend request accepted', (req.user.name || 'Someone') + ' accepted your friend request 🎉', 'friends:friends');
   res.json({ ok: true });
 });
 
@@ -492,6 +530,130 @@ app.post('/api/report', requireAuth, (req, res) => {
   db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
     .run(id(), req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), now());
   res.json({ ok: true });
+});
+
+// ---- Notifications ----
+function pushNotif(userId, type, title, body, link) {
+  try {
+    db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
+      .run(id(), userId, type, title || '', body || '', link || '', now());
+    // live ping over WS if they're connected
+    const payload = JSON.stringify({ type: 'notify' });
+    wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) c.send(payload); });
+  } catch (e) { /* ignore */ }
+}
+
+app.get('/api/notifications', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(req.user.id);
+  res.json({ notifications: rows });
+});
+
+// Unread counts for the badge (notifications + unread DMs)
+app.get('/api/notifications/counts', requireAuth, (req, res) => {
+  const notif = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0').get(req.user.id).c;
+  const convs = db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
+  let unreadDms = 0;
+  for (const cm of convs) {
+    const c = db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
+      .get(cm.conv_id, cm.last_read || 0, req.user.id).c;
+    if (c > 0) unreadDms++;
+  }
+  res.json({ notifications: notif, dms: unreadDms, total: notif + unreadDms });
+});
+
+app.post('/api/notifications/read', requireAuth, (req, res) => {
+  db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+
+// ---- Direct messages / friend group chats ----
+// List my conversations with last message + unread flag
+app.get('/api/conversations', requireAuth, (req, res) => {
+  const convs = db.prepare(`
+    SELECT c.*, cm.last_read FROM conversations c
+    JOIN conversation_members cm ON cm.conv_id = c.id
+    WHERE cm.user_id = ? ORDER BY c.created_at DESC
+  `).all(req.user.id);
+  const out = convs.map(c => {
+    const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(c.id);
+    const others = members.filter(m => m.id !== req.user.id);
+    const last = db.prepare('SELECT body,kind,created_at,user_id FROM dm_messages WHERE conv_id=? ORDER BY created_at DESC LIMIT 1').get(c.id);
+    const unread = db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id=? AND created_at > ? AND user_id != ?').get(c.id, c.last_read || 0, req.user.id).c;
+    let title = c.title;
+    if (!c.is_group) title = others[0] ? others[0].name : 'Conversation';
+    return {
+      id: c.id, is_group: !!c.is_group, title,
+      members: others,
+      avatar: (!c.is_group && others[0]) ? (others[0].avatar || '') : '',
+      last: last ? { body: last.kind === 'gif' ? '📷 GIF' : last.body, created_at: last.created_at, mine: last.user_id === req.user.id } : null,
+      unread
+    };
+  });
+  res.json({ conversations: out });
+});
+
+// Open (or create) a 1-on-1 conversation with a friend
+app.post('/api/conversations/open', requireAuth, (req, res) => {
+  const { friendId } = req.body || {};
+  if (!friendId || friendId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  // must be friends
+  const friend = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, friendId);
+  if (!friend) return res.status(403).json({ error: 'You can only message friends.' });
+  if (isBlocked(req.user.id, friendId)) return res.status(403).json({ error: 'Unavailable.' });
+  // find an existing 1-on-1 between exactly these two
+  const existing = db.prepare(`
+    SELECT c.id FROM conversations c
+    WHERE c.is_group = 0
+      AND EXISTS(SELECT 1 FROM conversation_members m WHERE m.conv_id=c.id AND m.user_id=?)
+      AND EXISTS(SELECT 1 FROM conversation_members m WHERE m.conv_id=c.id AND m.user_id=?)
+      AND (SELECT COUNT(*) FROM conversation_members m WHERE m.conv_id=c.id)=2
+  `).get(req.user.id, friendId);
+  let convId = existing ? existing.id : null;
+  if (!convId) {
+    convId = id();
+    db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,0,?,?,?)').run(convId, '', req.user.id, now());
+    db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
+    db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, friendId);
+  }
+  res.json({ conversationId: convId });
+});
+
+// Create a friend group chat
+app.post('/api/conversations/group', requireAuth, (req, res) => {
+  const { title, memberIds } = req.body || {};
+  const ids = Array.isArray(memberIds) ? memberIds.filter(x => x && x !== req.user.id) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Pick at least one friend.' });
+  // all must be friends
+  for (const fid of ids) {
+    const ok = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, fid);
+    if (!ok) return res.status(403).json({ error: 'You can only add friends to a group.' });
+  }
+  const convId = id();
+  db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,1,?,?,?)')
+    .run(convId, String(title || 'Group chat').slice(0, 60), req.user.id, now());
+  db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
+  for (const fid of ids) {
+    db.prepare('INSERT OR IGNORE INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, fid);
+    pushNotif(fid, 'group', 'New group chat', (req.user.name || 'A friend') + ' added you to "' + (title || 'Group chat') + '"', 'dm:' + convId);
+  }
+  res.json({ conversationId: convId });
+});
+
+// Get messages in a conversation (and mark read)
+app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
+  const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
+  const msgs = db.prepare(`
+    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar
+    FROM dm_messages m JOIN users u ON u.id=m.user_id
+    WHERE m.conv_id=? ORDER BY m.created_at ASC LIMIT 300
+  `).all(req.params.id);
+  db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
+  const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
+  const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(req.params.id);
+  const others = members.filter(m => m.id !== req.user.id);
+  const title = conv.is_group ? conv.title : (others[0] ? others[0].name : 'Conversation');
+  res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others } });
 });
 
 // ---- Admin (owner-only) ----
@@ -761,6 +923,52 @@ wss.on('connection', (ws) => {
           client.send(outbound);
         }
       });
+    }
+
+    // Direct / group conversation messages
+    if (msg.type === 'dm') {
+      const kind = (msg.kind === 'gif') ? 'gif' : 'text';
+      const body = String(msg.body || '').trim();
+      const mediaUrl = kind === 'gif' ? String(msg.mediaUrl || '').slice(0, 500) : null;
+      if (kind === 'text' && !body) return;
+      if (kind === 'gif' && !mediaUrl) return;
+      const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
+      if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not in conversation' })); return; }
+
+      const record = { id: id(), conv_id: msg.convId, user_id: ws.user.id, body, kind, media_url: mediaUrl, created_at: now() };
+      db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,media_url,created_at) VALUES (@id,@conv_id,@user_id,@body,@kind,@media_url,@created_at)').run(record);
+
+      const outbound = JSON.stringify({
+        type: 'dm',
+        convId: msg.convId,
+        message: { id: record.id, body, kind, media_url: mediaUrl, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name, avatar: ws.user.avatar || '' }
+      });
+      // deliver to connected members in that conversation room; notify the rest
+      const members = db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=?').all(msg.convId).map(r => r.user_id);
+      const connectedUserIds = new Set();
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1 && client.dmRooms && client.dmRooms.has(msg.convId)) {
+          client.send(outbound);
+          if (client.user) connectedUserIds.add(client.user.id);
+        }
+      });
+      // notification for members not currently viewing the conversation
+      for (const uid of members) {
+        if (uid === ws.user.id) continue;
+        if (!connectedUserIds.has(uid)) {
+          pushNotif(uid, 'dm', ws.user.name || 'New message', kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80), 'dm:' + msg.convId);
+        }
+      }
+    }
+
+    if (msg.type === 'joinDm') {
+      const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
+      if (member) { ws.dmRooms = ws.dmRooms || new Set(); ws.dmRooms.add(msg.convId); }
+      return;
+    }
+    if (msg.type === 'leaveDm') {
+      if (ws.dmRooms) ws.dmRooms.delete(msg.convId);
+      return;
     }
   });
 });
