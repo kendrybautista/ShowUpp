@@ -198,6 +198,14 @@ try {
   if (!mcols.includes('ephemeral')) { db.exec("ALTER TABLE messages ADD COLUMN ephemeral INTEGER DEFAULT 0"); console.log('Added messages.ephemeral'); }
   if (!mcols.includes('seen_by')) { db.exec("ALTER TABLE messages ADD COLUMN seen_by TEXT"); console.log('Added messages.seen_by'); }
 } catch (e) { console.log('Migration note:', e.message); }
+
+// --- Safe migration: add DM messaging feature columns ---
+try {
+  const dcols = db.prepare("PRAGMA table_info(dm_messages)").all().map(c => c.name);
+  if (!dcols.includes('reactions')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reactions TEXT"); console.log('Added dm_messages.reactions'); }
+  if (!dcols.includes('reply_to')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reply_to TEXT"); console.log('Added dm_messages.reply_to'); }
+  if (!dcols.includes('reply_preview')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reply_preview TEXT"); console.log('Added dm_messages.reply_preview'); }
+} catch (e) { console.log('Migration note:', e.message); }
 function seedAdmin() {
   try {
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL.toLowerCase());
@@ -679,17 +687,42 @@ app.post('/api/conversations/group', requireAuth, (req, res) => {
 app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
-  const msgs = db.prepare(`
-    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar
+  const rows = db.prepare(`
+    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview
     FROM dm_messages m JOIN users u ON u.id=m.user_id
     WHERE m.conv_id=? ORDER BY m.created_at ASC LIMIT 300
   `).all(req.params.id);
+  const msgs = rows.map(m => ({
+    id: m.id, body: m.body, kind: m.kind || 'text', media_url: m.media_url || null,
+    created_at: m.created_at, user_id: m.user_id, sender: m.sender, avatar: m.avatar,
+    reactions: m.reactions ? JSON.parse(m.reactions) : {},
+    reply_to: m.reply_to || null, reply_preview: m.reply_preview || null
+  }));
   db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
   const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
   const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(req.params.id);
   const others = members.filter(m => m.id !== req.user.id);
   const title = conv.is_group ? conv.title : (others[0] ? others[0].name : 'Conversation');
   res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others } });
+});
+
+// React to a DM message
+app.post('/api/dm/:id/react', requireAuth, (req, res) => {
+  const { emoji } = req.body || {};
+  if (!emoji) return res.status(400).json({ error: 'No emoji.' });
+  const m = db.prepare('SELECT id, conv_id, reactions FROM dm_messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message gone.' });
+  const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(m.conv_id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
+  const reactions = m.reactions ? JSON.parse(m.reactions) : {};
+  const users = reactions[emoji] || [];
+  const idx = users.indexOf(req.user.id);
+  if (idx >= 0) users.splice(idx, 1); else users.push(req.user.id);
+  if (users.length) reactions[emoji] = users; else delete reactions[emoji];
+  db.prepare('UPDATE dm_messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
+  const payload = JSON.stringify({ type: 'dmReaction', convId: m.conv_id, messageId: req.params.id, reactions });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
+  res.json({ ok: true, reactions });
 });
 
 // ---- Admin (owner-only) ----
@@ -889,7 +922,7 @@ app.post('/api/messages/:id/react', requireAuth, (req, res) => {
 
 // --- HTTP + WebSocket server share one port ---
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 10 * 1024 * 1024 });
 
 /*
  * WebSocket protocol (simple JSON messages):
@@ -925,11 +958,13 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'message') {
-      const kind = (msg.kind === 'gif') ? 'gif' : 'text';
+      const MEDIA_KINDS = ['gif', 'image', 'video'];
+      const kind = MEDIA_KINDS.includes(msg.kind) ? msg.kind : 'text';
       const body = String(msg.body || '').trim();
-      const mediaUrl = kind === 'gif' ? String(msg.mediaUrl || '').slice(0, 500) : null;
+      // data URLs for images/videos can be large; allow up to ~8MB of characters
+      const mediaUrl = (kind !== 'text') ? String(msg.mediaUrl || '').slice(0, 8500000) : null;
       if (kind === 'text' && !body) return;
-      if (kind === 'gif' && !mediaUrl) return;
+      if (kind !== 'text' && !mediaUrl) return;
       const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
         .get(msg.roundId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not a member' })); return; }
@@ -963,21 +998,24 @@ wss.on('connection', (ws) => {
 
     // Direct / group conversation messages
     if (msg.type === 'dm') {
-      const kind = (msg.kind === 'gif') ? 'gif' : 'text';
+      const MEDIA_KINDS = ['gif', 'image', 'video'];
+      const kind = MEDIA_KINDS.includes(msg.kind) ? msg.kind : 'text';
       const body = String(msg.body || '').trim();
-      const mediaUrl = kind === 'gif' ? String(msg.mediaUrl || '').slice(0, 500) : null;
+      const mediaUrl = (kind !== 'text') ? String(msg.mediaUrl || '').slice(0, 8500000) : null;
       if (kind === 'text' && !body) return;
-      if (kind === 'gif' && !mediaUrl) return;
+      if (kind !== 'text' && !mediaUrl) return;
       const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not in conversation' })); return; }
 
-      const record = { id: id(), conv_id: msg.convId, user_id: ws.user.id, body, kind, media_url: mediaUrl, created_at: now() };
-      db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,media_url,created_at) VALUES (@id,@conv_id,@user_id,@body,@kind,@media_url,@created_at)').run(record);
+      const record = { id: id(), conv_id: msg.convId, user_id: ws.user.id, body, kind, media_url: mediaUrl, created_at: now(),
+        reply_to: msg.replyTo ? String(msg.replyTo) : null,
+        reply_preview: msg.replyPreview ? String(msg.replyPreview).slice(0, 120) : null };
+      db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,media_url,created_at,reply_to,reply_preview) VALUES (@id,@conv_id,@user_id,@body,@kind,@media_url,@created_at,@reply_to,@reply_preview)').run(record);
 
       const outbound = JSON.stringify({
         type: 'dm',
         convId: msg.convId,
-        message: { id: record.id, body, kind, media_url: mediaUrl, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name, avatar: ws.user.avatar || '' }
+        message: { id: record.id, body, kind, media_url: mediaUrl, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name, avatar: ws.user.avatar || '', reply_to: record.reply_to, reply_preview: record.reply_preview, reactions: {} }
       });
       // deliver to connected members in that conversation room; notify the rest
       const members = db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=?').all(msg.convId).map(r => r.user_id);
