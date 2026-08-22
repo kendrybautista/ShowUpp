@@ -11,6 +11,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#FBF7F0;--ink:#2A2A3C;--muted:#8A8699;--line:#EDE6DA;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -35,6 +37,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;padding:9px 15px;border-radius:20px;background:#fff;border:1.5px solid var(--line);font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;transition:.2s;white-space:nowrap}
 .chip.on{background:var(--night);color:#fff;border-color:var(--night)}
+.vt{padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer}
+.vt.on{background:var(--night);color:#fff}
 .rounds{padding:8px 22px;display:flex;flex-direction:column;gap:16px}
 .round{background:var(--card);border-radius:24px;box-shadow:var(--shadow);overflow:hidden;cursor:pointer;transition:transform .2s;border:1px solid rgba(0,0,0,.02)}
 .round:active{transform:scale(.98)}
@@ -125,6 +129,22 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .safebar svg{flex:none;width:18px;height:18px;margin-top:1px}
 .empty-hint{text-align:center;padding:40px 30px;color:var(--muted)}
 .circle-card{background:#fff;border-radius:20px;padding:16px;box-shadow:var(--shadow);margin:0 22px 14px;display:flex;gap:14px;align-items:center;cursor:pointer}
+.circ-tab{flex:1;text-align:center;padding:10px;border-radius:14px;background:#fff;border:1.5px solid var(--line);font-size:14px;font-weight:700;color:var(--muted);cursor:pointer;transition:.2s}
+.circ-tab.on{background:var(--night);color:#fff;border-color:var(--night)}
+.friend-row{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin-bottom:10px}
+.friend-row .fav{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--turq),var(--night));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;flex:none}
+.friend-row .fi{flex:1;min-width:0}
+.friend-row .fi b{font-size:14.5px;color:var(--night);display:block}
+.friend-row .fi span{font-size:12.5px;color:var(--muted)}
+.friend-btn{padding:8px 14px;border-radius:12px;border:none;font-family:'Instrument Sans';font-size:13px;font-weight:700;cursor:pointer;flex:none}
+.friend-btn.add{background:var(--coral);color:#fff}
+.friend-btn.added{background:#EAFBF7;color:#0d9488}
+.friend-btn.remove{background:#f0eee9;color:var(--muted)}
+/* swipe-to-delete for hosted rounds */
+.swipe-wrap{position:relative;margin:0 22px 14px;border-radius:20px;overflow:hidden}
+.swipe-wrap .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px}
+.swipe-wrap .circle-card{margin:0;transition:transform .2s;position:relative;z-index:2}
+.swipe-wrap.swiped .circle-card{transform:translateX(-96px)}
 .circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:#FFF3F1}
 .circle-card .ci{flex:1}
 .circle-card .ci b{font-family:'Fraunces',serif;font-size:16px;color:var(--night);display:block}
@@ -268,9 +288,17 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="scroll">
     <div class="topbar"><div class="hi">¡Hola,<b id="homeGreet">👋</b></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div>
     <div class="chips" id="homeChips"></div>
-    <div class="sec"><h2>Rounds near you</h2><a onclick="go('s-create')">+ Host one</a></div>
+    <div class="sec"><h2>Rounds near you</h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div id="viewToggle" style="display:flex;background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden">
+          <div id="vt-list" class="vt on" onclick="setView('list')">List</div>
+          <div id="vt-map" class="vt" onclick="setView('map')">Map</div>
+        </div>
+      </div>
+    </div>
     <p style="padding:2px 22px 4px;font-size:13px;color:var(--muted);line-height:1.5">A <b style="color:var(--night)">Round</b> is a small group that meets a few times — enough to actually become friends.</p>
     <div class="rounds" id="roundsList"></div>
+    <div id="mapView" style="display:none;height:420px;margin:8px 22px;border-radius:20px;overflow:hidden;border:1px solid var(--line)"></div>
   </div>
   <div class="nav" data-nav></div>
 </div>
@@ -298,9 +326,25 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="statusbar"></div>
   <div class="scroll">
     <div class="topbar"><div class="hi">Your<b>Circles</b></div><div class="avatar" onclick="go('s-profile')" id="circAvatar">M</div></div>
-    <p style="padding:0 22px 10px;font-size:13.5px;color:var(--muted);line-height:1.5">Rounds you've joined. Tap to open the group chat.</p>
-    <div id="circlesList"></div>
-    <div class="empty-hint"><div style="font-size:38px">🔍</div><p style="margin-top:10px;font-size:14px;line-height:1.5"><a onclick="go('s-home')" style="color:var(--coral);font-weight:700;text-decoration:none">Browse more Rounds →</a></p></div>
+    <div style="display:flex;gap:8px;padding:0 22px 12px">
+      <div class="circ-tab on" id="tab-rounds" onclick="switchCircTab('rounds')">Rounds</div>
+      <div class="circ-tab" id="tab-friends" onclick="switchCircTab('friends')">Friends</div>
+    </div>
+    <div id="circ-rounds-pane">
+      <p style="padding:0 22px 10px;font-size:13.5px;color:var(--muted);line-height:1.5">Rounds you've joined. Tap to open the group chat. Swipe a Round you host to delete it.</p>
+      <div id="circlesList"></div>
+      <div class="empty-hint"><div style="font-size:38px">🔍</div><p style="margin-top:10px;font-size:14px;line-height:1.5"><a onclick="go('s-home')" style="color:var(--coral);font-weight:700;text-decoration:none">Browse more Rounds →</a></p></div>
+    </div>
+    <div id="circ-friends-pane" style="display:none">
+      <div style="padding:0 22px 10px">
+        <div style="position:relative">
+          <input id="friendSearch" placeholder="🔍 Search by username or name…" oninput="searchFriends(this.value)" style="width:100%;padding:13px 14px;border-radius:14px;border:1.5px solid var(--line);background:#fff;font-family:'Instrument Sans';font-size:14px">
+        </div>
+        <div id="friendResults" style="margin-top:12px"></div>
+      </div>
+      <p style="padding:6px 22px 8px;font-size:13.5px;color:var(--muted);font-weight:600">Your saved friends</p>
+      <div id="friendsList" style="padding:0 22px"></div>
+    </div>
   </div>
   <div class="nav" data-nav></div>
 </div>
@@ -340,7 +384,14 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="field"><label>What are you gathering around?</label><input class="field" id="catSearch" placeholder="🔍 Search categories…" onkeyup="renderCats(this.value)" style="margin-bottom:10px"><div class="cat-scroll" id="catScroll"></div></div>
       <div class="field"><label>Name your Round</label><input type="text" id="newTitle" placeholder="e.g. Sunday Book Club"></div>
       <div class="field"><label>Tell people what to expect</label><textarea rows="3" id="newBlurb" placeholder="What will you do together? Who's it for?"></textarea></div>
-      <div class="privacy-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Your exact location only shows to members you approve.</span></div>
+      <div class="field"><label>Where does it meet? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="text" id="newPlace" placeholder="e.g. Riverside Park, or a neighborhood">
+        <div id="locStatus" style="font-size:12.5px;color:var(--muted);margin-top:8px;display:flex;align-items:center;gap:8px">
+          <button type="button" onclick="attachRoundLocation()" style="background:#EAFBF7;color:#0d9488;border:none;padding:8px 12px;border-radius:10px;font-weight:700;font-size:12.5px;cursor:pointer">📍 Use my current location</button>
+          <span id="locStatusText"></span>
+        </div>
+      </div>
+      <div class="privacy-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Adding a location lets nearby people find your Round on the map. Only the area shows — never your exact address.</span></div>
       <button class="btn btn-mango" onclick="createRound()">Create Round</button>
     </div>
   </div>
@@ -360,6 +411,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="gp">Account</div>
       <div class="srow" onclick="openEdit()"><div class="sicon" style="background:#FFF3F1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF6B5B" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><div class="st"><b>Edit profile & interests</b><span>Name, username, location, interests</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="srow" onclick="logout()"><div class="sicon" style="background:#f0eee9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8699" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></div><div class="st"><b>Log out</b></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="srow" onclick="openDelete()" style="border-color:#f3d0cb"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div><div class="st"><b style="color:#d94b3b">Delete my account</b><span>Permanently erase your account and data</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
     </div>
   </div>
   <div class="nav" data-nav></div>
@@ -376,6 +428,16 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><label>Your interests <span style="color:var(--muted);font-weight:400">(tap to toggle)</span></label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
     <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px">Save changes</button>
     <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closeEdit()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="deleteSheet" onclick="if(event.target===this)closeDelete()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3 style="color:#d94b3b">Delete your account?</h3>
+    <p>This permanently erases your profile, your messages, your friends list, and any Rounds you created. <b>This cannot be undone.</b></p>
+    <div class="field"><label>Type <b>DELETE</b> to confirm</label><input type="text" id="delConfirm" placeholder="DELETE" oninput="checkDelete(this.value)"></div>
+    <button class="btn" id="delBtn" disabled onclick="doDeleteAccount()" style="background:#d94b3b;color:#fff;opacity:.5">Permanently delete</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeDelete()">Cancel — keep my account</div>
   </div>
 </div>
 
@@ -484,7 +546,7 @@ function go(id){
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('.scroll').forEach(s=>s.scrollTop=0);
   if(id==='s-home')loadHome();
-  if(id==='s-circles')loadCircles();
+  if(id==='s-circles'){switchCircTab('rounds');loadCircles();}
   if(id==='s-chats')loadChats();
   if(id==='s-profile')renderProfile();
   buildNav();
@@ -553,6 +615,13 @@ function logout(){
   document.querySelector('#pactCheck .checkbox').classList.remove('on');
   authStep('a-intro');go('s-auth');
 }
+function openDelete(){document.getElementById('delConfirm').value='';checkDelete('');document.getElementById('deleteSheet').classList.add('open');}
+function closeDelete(){document.getElementById('deleteSheet').classList.remove('open');}
+function checkDelete(v){const ok=v.trim()==='DELETE';const b=document.getElementById('delBtn');b.disabled=!ok;b.style.opacity=ok?'1':'.5';}
+async function doDeleteAccount(){
+  try{await api('/api/me/delete','POST',{});closeDelete();toast('Your account was deleted.');logout();}
+  catch(e){toast(e.message);}
+}
 function enterApp(){
   document.getElementById('homeGreet').textContent=me.name+' 👋';
   const initial=me.name[0].toUpperCase();
@@ -562,34 +631,101 @@ function enterApp(){
 
 // ---- Home / Rounds ----
 let currentFilter='✨ For you';
+let userLoc=null;          // {lat,lng} once granted
+let currentView='list';
+let leafletMap=null, mapMarkers=[];
+
+function haversine(a,b){ // km between two {lat,lng}
+  const R=6371,toRad=x=>x*Math.PI/180;
+  const dLat=toRad(b.lat-a.lat),dLng=toRad(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));
+}
+function distLabel(r){
+  if(!userLoc||r.lat==null||r.lng==null)return '';
+  const km=haversine(userLoc,{lat:r.lat,lng:r.lng});
+  return km<1?Math.round(km*1000)+' m away':km.toFixed(km<10?1:0)+' km away';
+}
+function requestLocation(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){toast('Location not supported on this device');resolve(null);return;}
+    navigator.geolocation.getCurrentPosition(
+      p=>{userLoc={lat:p.coords.latitude,lng:p.coords.longitude};resolve(userLoc);},
+      ()=>{toast('Location permission denied');resolve(null);},
+      {enableHighAccuracy:false,timeout:8000,maximumAge:600000}
+    );
+  });
+}
+
 async function loadHome(){
   try{
     const data=await api('/api/rounds');
     allRounds=data.rounds;
-    // Personalized chips: user's interests first, then a few others
     const mine=(me&&me.interests&&me.interests.length)?me.interests:[];
     const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
     const others=CATEGORIES.map(c=>c.n).filter(n=>!mine.includes(n));
     const ordered=mine.concat(others).slice(0,10);
-    const chips=['✨ For you'].concat(ordered.map(n=>(emap[n]||'')+' '+n));
+    const chips=['✨ For you','📍 Near me'].concat(ordered.map(n=>(emap[n]||'')+' '+n));
     document.getElementById('homeChips').innerHTML=chips.map(c=>'<div class="chip '+(c===currentFilter?'on':'')+'" onclick="pickChip(this)">'+c+'</div>').join('');
     renderRoundsList();
   }catch(e){toast(e.message);}
 }
-function renderRoundsList(){
-  let list=allRounds;
-  if(currentFilter!=='✨ For you'){
-    const cat=currentFilter.replace(/^[^\sA-Za-z]+\s*/,'').trim(); // strip leading emoji
-    list=allRounds.filter(r=>(r.category||'').toLowerCase()===cat.toLowerCase());
+function filteredRounds(){
+  let list=allRounds.slice();
+  if(currentFilter==='📍 Near me'){
+    list=list.filter(r=>r.lat!=null&&r.lng!=null);
+    if(userLoc)list.sort((a,b)=>haversine(userLoc,{lat:a.lat,lng:a.lng})-haversine(userLoc,{lat:b.lat,lng:b.lng}));
+  }else if(currentFilter!=='✨ For you'){
+    const cat=currentFilter.replace(/^[^\sA-Za-z]+\s*/,'').trim();
+    list=list.filter(r=>(r.category||'').toLowerCase()===cat.toLowerCase());
   }
+  return list;
+}
+function renderRoundsList(){
+  const list=filteredRounds();
   const box=document.getElementById('roundsList');
-  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">No Rounds in this category yet.<br>Be the first — tap ➕ to host one!</p>';return;}
+  if(currentView==='map'){renderMap(list);return;}
+  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds with a location yet.<br>New Rounds you host can add a place!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
   box.innerHTML=list.map(r=>{
     const emoji=r.emoji||'✨';
-    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+(r.category||'Round')+'</div></div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta"><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span>'+(r.joined?'<span class="dot"></span><span style="color:var(--turq);font-weight:600">Joined</span>':'')+'</div></div></div>';
+    const d=distLabel(r);
+    const meta='<span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span>'+(d?'<span class="dot"></span><span>'+d+'</span>':'')+(r.joined?'<span class="dot"></span><span style="color:var(--turq);font-weight:600">Joined</span>':'');
+    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+(r.category||'Round')+'</div></div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div></div></div>';
   }).join('');
 }
-function pickChip(el){document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');currentFilter=el.textContent.trim();renderRoundsList();}
+async function pickChip(el){
+  document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');
+  currentFilter=el.textContent.trim();
+  if(currentFilter==='📍 Near me'&&!userLoc){toast('Finding Rounds near you…');await requestLocation();}
+  renderRoundsList();
+}
+async function setView(v){
+  currentView=v;
+  document.getElementById('vt-list').classList.toggle('on',v==='list');
+  document.getElementById('vt-map').classList.toggle('on',v==='map');
+  document.getElementById('roundsList').style.display=v==='list'?'flex':'none';
+  document.getElementById('mapView').style.display=v==='map'?'block':'none';
+  if(v==='map'&&!userLoc){await requestLocation();}
+  renderRoundsList();
+}
+function renderMap(list){
+  const el=document.getElementById('mapView');
+  if(typeof L==='undefined'){el.innerHTML='<p style="padding:20px;text-align:center;color:var(--muted)">Map couldn\'t load.</p>';return;}
+  const center=userLoc||{lat:18.4861,lng:-69.9312}; // default: Santo Domingo
+  if(!leafletMap){
+    leafletMap=L.map(el,{zoomControl:true}).setView([center.lat,center.lng],11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(leafletMap);
+  }else{leafletMap.setView([center.lat,center.lng],11);}
+  mapMarkers.forEach(m=>leafletMap.removeLayer(m));mapMarkers=[];
+  if(userLoc){const me2=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(leafletMap);me2.bindPopup('You are here');mapMarkers.push(me2);}
+  list.forEach(r=>{
+    if(r.lat==null||r.lng==null)return;
+    const mk=L.marker([r.lat,r.lng]).addTo(leafletMap);
+    mk.bindPopup('<b>'+esc(r.title)+'</b><br>'+(r.emoji||'')+' '+(r.category||'')+(r.place?'<br>'+esc(r.place):''));
+    mapMarkers.push(mk);
+  });
+  setTimeout(()=>leafletMap.invalidateSize(),100);
+}
 
 function openDetail(rid){
   activeRound=allRounds.find(r=>r.id===rid);if(!activeRound)return;
@@ -608,17 +744,80 @@ async function joinRound(){
 }
 
 // ---- Circles ----
+function switchCircTab(which){
+  const rp=document.getElementById('circ-rounds-pane'),fp=document.getElementById('circ-friends-pane');
+  document.getElementById('tab-rounds').classList.toggle('on',which==='rounds');
+  document.getElementById('tab-friends').classList.toggle('on',which==='friends');
+  rp.style.display=which==='rounds'?'block':'none';
+  fp.style.display=which==='friends'?'block':'none';
+  if(which==='friends')loadFriends();
+}
 async function loadCircles(){
   try{
     const data=await api('/api/my-rounds');
     const list=document.getElementById('circlesList');
     if(!data.rounds.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px;font-size:14px">You haven\'t joined any Rounds yet.</p>';return;}
-    list.innerHTML=data.rounds.map(r=>'<div class="circle-card" onclick="openThreadById(\''+r.id+'\')"><div class="cc">'+(r.emoji||'✨')+'</div><div class="ci"><b>'+esc(r.title)+'</b><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span></div></div>').join('');
+    list.innerHTML=data.rounds.map(r=>{
+      const inner='<div class="cc">'+(r.emoji||'✨')+'</div><div class="ci"><b>'+esc(r.title)+'</b><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+(r.is_host?' · you host':'')+'</span></div>';
+      if(r.is_host){
+        return '<div class="swipe-wrap" id="sw-'+r.id+'"><div class="del-bg" onclick="confirmDeleteRound(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</div><div class="circle-card" onclick="toggleSwipe(event,\''+r.id+'\')" ontouchstart="swipeStart(event)" ontouchend="swipeEnd(event,\''+r.id+'\')">'+inner+'</div></div>';
+      }
+      return '<div class="circle-card" onclick="openThreadById(\''+r.id+'\')" style="margin:0 22px 14px">'+inner+'</div>';
+    }).join('');
   }catch(e){toast(e.message);}
+}
+// swipe handling (touch on phones, click toggles on desktop)
+let swX=0;
+function swipeStart(e){swX=e.changedTouches[0].clientX;}
+function swipeEnd(e,rid){const dx=e.changedTouches[0].clientX-swX;const w=document.getElementById('sw-'+rid);if(dx<-40)w.classList.add('swiped');else if(dx>40)w.classList.remove('swiped');else openThreadById(rid);}
+function toggleSwipe(e,rid){/* desktop: click card opens chat unless already swiped */const w=document.getElementById('sw-'+rid);if(w.classList.contains('swiped')){w.classList.remove('swiped');}else{openThreadById(rid);}}
+function confirmDeleteRound(rid,title){
+  if(confirm('Delete "'+title+'"? This removes the Round and its chat for everyone. This cannot be undone.')){
+    api('/api/rounds/'+rid+'/delete','POST',{}).then(()=>{toast('Round deleted');loadCircles();}).catch(e=>toast(e.message));
+  }
 }
 async function openThreadById(rid){
   const data=await api('/api/my-rounds');
   const r=data.rounds.find(x=>x.id===rid);if(r)openThread(r);
+}
+
+// ---- Friends ----
+let searchTimer;
+function searchFriends(q){
+  clearTimeout(searchTimer);
+  searchTimer=setTimeout(async()=>{
+    const box=document.getElementById('friendResults');
+    if(q.trim().length<2){box.innerHTML='';return;}
+    try{
+      const data=await api('/api/users/search?q='+encodeURIComponent(q.trim()));
+      if(!data.users.length){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:6px 2px">No one found. They may not have set a username yet.</p>';return;}
+      box.innerHTML=data.users.map(u=>friendRow(u,u.isFriend?'added':'add')).join('');
+    }catch(e){toast(e.message);}
+  },300);
+}
+function friendRow(u,mode){
+  const initial=(u.name||'?')[0].toUpperCase();
+  let btn='';
+  if(mode==='add')btn='<button class="friend-btn add" onclick="addFriend(\''+u.id+'\',this)">+ Add</button>';
+  else if(mode==='added')btn='<button class="friend-btn added">✓ Friend</button>';
+  else if(mode==='remove')btn='<button class="friend-btn remove" onclick="removeFriend(\''+u.id+'\')">Remove</button>';
+  return '<div class="friend-row"><div class="fav">'+initial+'</div><div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+(u.city?' · '+esc(u.city):'')+'</span></div>'+btn+'</div>';
+}
+async function addFriend(fid,btn){
+  try{await api('/api/friends/add','POST',{friendId:fid});btn.className='friend-btn added';btn.textContent='✓ Friend';toast('Friend added ✓');}
+  catch(e){toast(e.message);}
+}
+async function removeFriend(fid){
+  try{await api('/api/friends/remove','POST',{friendId:fid});loadFriends();toast('Removed');}
+  catch(e){toast(e.message);}
+}
+async function loadFriends(){
+  try{
+    const data=await api('/api/friends');
+    const box=document.getElementById('friendsList');
+    if(!data.friends.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">No friends saved yet. Search above to find people by their username.</p>';return;}
+    box.innerHTML=data.friends.map(u=>friendRow(u,'remove')).join('');
+  }catch(e){toast(e.message);}
 }
 
 // ---- Chats list ----
@@ -689,12 +888,28 @@ function renderCats(filter){
   document.getElementById('catScroll').innerHTML=CATEGORIES.filter(c=>c.n.toLowerCase().includes(filter)).map(c=>'<div class="catpill '+(selectedCats.includes(c.n)?'on':'')+'" onclick="toggleCat(\''+c.n+'\',this)">'+c.e+' '+c.n+'</div>').join('');
 }
 function toggleCat(n,el){selectedCats=[n];document.querySelectorAll('#catScroll .catpill').forEach(p=>p.classList.remove('on'));el.classList.add('on');}
+let newRoundLoc=null;
+async function attachRoundLocation(){
+  document.getElementById('locStatusText').textContent='Finding your location…';
+  const loc=await requestLocation();
+  if(loc){newRoundLoc=loc;document.getElementById('locStatusText').textContent='✓ Location added';document.getElementById('locStatusText').style.color='#0d9488';}
+  else{document.getElementById('locStatusText').textContent='Couldn\'t get location';}
+}
 async function createRound(){
   const title=document.getElementById('newTitle').value.trim();
   const blurb=document.getElementById('newBlurb').value.trim();
+  const place=document.getElementById('newPlace').value.trim();
   if(!title){toast('Give your Round a name.');return;}
   const cat=CATEGORIES.find(c=>c.n===selectedCats[0])||{e:'✨',n:'General'};
-  try{await api('/api/rounds','POST',{title,blurb,category:cat.n,emoji:cat.e});toast('Round created! 🎉');document.getElementById('newTitle').value='';document.getElementById('newBlurb').value='';go('s-home');}catch(e){toast(e.message);}
+  const body={title,blurb,category:cat.n,emoji:cat.e,place};
+  if(newRoundLoc){body.lat=newRoundLoc.lat;body.lng=newRoundLoc.lng;}
+  try{
+    await api('/api/rounds','POST',body);toast('Round created! 🎉');
+    document.getElementById('newTitle').value='';document.getElementById('newBlurb').value='';
+    document.getElementById('newPlace').value='';newRoundLoc=null;
+    document.getElementById('locStatusText').textContent='';
+    go('s-home');
+  }catch(e){toast(e.message);}
 }
 
 // ---- Profile ----
