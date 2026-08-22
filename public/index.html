@@ -15,8 +15,8 @@
 :root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#FBF7F0;--ink:#2A2A3C;--muted:#8A8699;--line:#EDE6DA;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{background:#e9e4da;font-family:'Instrument Sans',system-ui,sans-serif;color:var(--ink)}
-body{display:flex;justify-content:center;padding:24px 0;min-height:100vh}
-.phone{width:390px;max-width:100vw;height:844px;background:var(--bone);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(27,27,58,.28),0 0 0 12px #0f0f1e,0 0 0 13px #2a2a3c}
+body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
+.phone{width:390px;max-width:100vw;height:844px;max-height:calc(100vh - 24px);background:var(--bone);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(27,27,58,.28),0 0 0 12px #0f0f1e,0 0 0 13px #2a2a3c}
 .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:30px;background:#0f0f1e;border-radius:0 0 20px 20px;z-index:60}
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:var(--bone);animation:fade .35s ease}
 .screen.active{display:flex}
@@ -220,7 +220,9 @@ body{display:flex;justify-content:center;padding:24px 0;min-height:100vh}
         <div class="ilabel">First name</div><input class="ain" id="suName" placeholder="Mateo">
         <div class="ilabel">Email</div><input class="ain" id="suEmail" type="email" placeholder="you@email.com">
         <div class="ilabel">Password <span style="opacity:.6;font-weight:400">(6+ characters)</span></div><input class="ain" id="suPass" type="password" placeholder="••••••••">
-        <div class="ilabel">Where are you based?</div><input class="ain" id="suCity" placeholder="Santo Domingo, DR">
+        <div class="ilabel">What country are you in?</div>
+        <select class="ain" id="suCountry" style="appearance:none;-webkit-appearance:none"></select>
+        <div class="ilabel">City / area</div><input class="ain" id="suCity" placeholder="Santo Domingo">
         <div class="err" id="suErr"></div>
         <div class="auth-foot"><button class="btn btn-mango" onclick="authStep('a-interests')">Continue</button><div class="small-link"><a onclick="authStep('a-intro')">← Back</a></div></div>
       </div>
@@ -342,10 +344,25 @@ body{display:flex;justify-content:center;padding:24px 0;min-height:100vh}
       <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
       <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="gp">Account</div>
+      <div class="srow" onclick="openEdit()"><div class="sicon" style="background:#FFF3F1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF6B5B" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><div class="st"><b>Edit profile & interests</b><span>Name, username, location, interests</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       <div class="srow" onclick="logout()"><div class="sicon" style="background:#f0eee9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8699" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></div><div class="st"><b>Log out</b></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
     </div>
   </div>
   <div class="nav" data-nav></div>
+</div>
+
+<div class="sheet" id="editSheet" onclick="if(event.target===this)closeEdit()">
+  <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
+    <div class="grabber"></div>
+    <h3>Edit profile</h3>
+    <div class="field"><label>First name</label><input type="text" id="edName"></div>
+    <div class="field"><label>Username <span style="color:var(--muted);font-weight:400">(how friends find you)</span></label><input type="text" id="edUser" placeholder="@yourname"></div>
+    <div class="field"><label>Country</label><select id="edCountry" style="width:100%;padding:14px;border-radius:14px;border:1.5px solid var(--line);background:#fff;font-family:'Instrument Sans';font-size:15px;appearance:none;-webkit-appearance:none"></select></div>
+    <div class="field"><label>City / area</label><input type="text" id="edCity" placeholder="Santo Domingo"></div>
+    <div class="field"><label>Your interests <span style="color:var(--muted);font-weight:400">(tap to toggle)</span></label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
+    <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px">Save changes</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closeEdit()">Cancel</div>
+  </div>
 </div>
 
 <div class="sheet" id="reportSheet" onclick="if(event.target===this)closeReport()">
@@ -371,6 +388,22 @@ const CATEGORIES=[
 ];
 const GRADS=['linear-gradient(135deg,#FF6B5B,#FFB03A)','linear-gradient(135deg,#2DD4BF,#1B1B3A)','linear-gradient(135deg,#FFB03A,#FF6B5B)','linear-gradient(135deg,#2DD4BF,#FFB03A)','linear-gradient(135deg,#1B1B3A,#FF6B5B)','linear-gradient(135deg,#FFB03A,#2DD4BF)'];
 function gradFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return GRADS[h%GRADS.length];}
+
+// ---- Countries (flag emoji + name). Common ones first, then the rest A–Z ----
+const COUNTRIES=[
+  ['🇩🇴','Dominican Republic'],['🇺🇸','United States'],['🇲🇽','Mexico'],['🇨🇦','Canada'],
+  ['🇪🇸','Spain'],['🇵🇷','Puerto Rico'],['🇨🇴','Colombia'],['🇻🇪','Venezuela'],['🇦🇷','Argentina'],
+  ['🇦🇺','Australia'],['🇧🇷','Brazil'],['🇨🇱','Chile'],['🇨🇷','Costa Rica'],['🇨🇺','Cuba'],
+  ['🇪🇨','Ecuador'],['🇸🇻','El Salvador'],['🇫🇷','France'],['🇩🇪','Germany'],['🇬🇹','Guatemala'],
+  ['🇭🇳','Honduras'],['🇮🇳','India'],['🇮🇪','Ireland'],['🇮🇹','Italy'],['🇯🇲','Jamaica'],
+  ['🇯🇵','Japan'],['🇳🇱','Netherlands'],['🇳🇮','Nicaragua'],['🇳🇬','Nigeria'],['🇵🇦','Panama'],
+  ['🇵🇾','Paraguay'],['🇵🇪','Peru'],['🇵🇭','Philippines'],['🇵🇱','Poland'],['🇵🇹','Portugal'],
+  ['🇬🇧','United Kingdom'],['🇺🇾','Uruguay'],['🌍','Other']
+];
+function populateCountries(sel,selected){
+  if(!sel)return;
+  sel.innerHTML=COUNTRIES.map(c=>'<option value="'+c[1]+'" '+(c[1]===selected?'selected':'')+'>'+c[0]+'  '+c[1]+'</option>').join('');
+}
 
 // ---- API layer ----
 const API=location.origin;
@@ -431,7 +464,10 @@ async function doSignup(){
   const name=document.getElementById('suName').value.trim();
   const email=document.getElementById('suEmail').value.trim();
   const password=document.getElementById('suPass').value;
-  const city=document.getElementById('suCity').value.trim();
+  const cityRaw=document.getElementById('suCity').value.trim();
+  const country=document.getElementById('suCountry').value;
+  const cflag=(COUNTRIES.find(c=>c[1]===country)||['🌍'])[0];
+  const city=(cityRaw?cityRaw+', ':'')+cflag+' '+country;
   if(!name||!email||!password){authStep('a-signup');showErr('suErr','Please fill in name, email, and password.');return;}
   try{
     const data=await api('/api/signup','POST',{name,email,password,city,origin:'',interests:signupInterests});
@@ -464,19 +500,35 @@ function enterApp(){
 }
 
 // ---- Home / Rounds ----
+let currentFilter='✨ For you';
 async function loadHome(){
   try{
     const data=await api('/api/rounds');
     allRounds=data.rounds;
-    const chips=['✨ For you'].concat(CATEGORIES.slice(0,8).map(c=>c.e+' '+c.n));
-    document.getElementById('homeChips').innerHTML=chips.map((c,i)=>'<div class="chip '+(i===0?'on':'')+'" onclick="pickChip(this)">'+c+'</div>').join('');
-    document.getElementById('roundsList').innerHTML=allRounds.map(r=>{
-      const emoji=r.emoji||'✨';
-      return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+(r.category||'Round')+'</div></div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta"><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span>'+(r.joined?'<span class="dot"></span><span style="color:var(--turq);font-weight:600">Joined</span>':'')+'</div></div></div>';
-    }).join('');
+    // Personalized chips: user's interests first, then a few others
+    const mine=(me&&me.interests&&me.interests.length)?me.interests:[];
+    const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
+    const others=CATEGORIES.map(c=>c.n).filter(n=>!mine.includes(n));
+    const ordered=mine.concat(others).slice(0,10);
+    const chips=['✨ For you'].concat(ordered.map(n=>(emap[n]||'')+' '+n));
+    document.getElementById('homeChips').innerHTML=chips.map(c=>'<div class="chip '+(c===currentFilter?'on':'')+'" onclick="pickChip(this)">'+c+'</div>').join('');
+    renderRoundsList();
   }catch(e){toast(e.message);}
 }
-function pickChip(el){document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');}
+function renderRoundsList(){
+  let list=allRounds;
+  if(currentFilter!=='✨ For you'){
+    const cat=currentFilter.replace(/^[^\sA-Za-z]+\s*/,'').trim(); // strip leading emoji
+    list=allRounds.filter(r=>(r.category||'').toLowerCase()===cat.toLowerCase());
+  }
+  const box=document.getElementById('roundsList');
+  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">No Rounds in this category yet.<br>Be the first — tap ➕ to host one!</p>';return;}
+  box.innerHTML=list.map(r=>{
+    const emoji=r.emoji||'✨';
+    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+(r.category||'Round')+'</div></div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta"><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span>'+(r.joined?'<span class="dot"></span><span style="color:var(--turq);font-weight:600">Joined</span>':'')+'</div></div></div>';
+  }).join('');
+}
+function pickChip(el){document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');currentFilter=el.textContent.trim();renderRoundsList();}
 
 function openDetail(rid){
   activeRound=allRounds.find(r=>r.id===rid);if(!activeRound)return;
@@ -588,10 +640,42 @@ async function createRound(){
 function renderProfile(){
   if(!me)return;
   document.getElementById('profAv').textContent=me.name[0].toUpperCase();
-  document.getElementById('profName').textContent=me.name;
-  document.getElementById('profMeta').textContent='📍 '+(me.city||'—')+(me.origin?' · '+me.origin:'');
+  document.getElementById('profName').textContent=me.name+(me.username?'  ·  @'+me.username:'');
+  document.getElementById('profMeta').textContent='📍 '+(me.city||'—');
   const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
   document.getElementById('profTags').innerHTML=(me.interests||[]).map(i=>'<div class="ptag">'+(emap[i]||'•')+' '+i+'</div>').join('')||'<span style="color:var(--muted);font-size:13px">No interests yet</span>';
+}
+
+// ---- Edit profile ----
+let editInterests=[];
+function openEdit(){
+  editInterests=(me.interests||[]).slice();
+  document.getElementById('edName').value=me.name||'';
+  document.getElementById('edUser').value=me.username||'';
+  // split city string "City, 🇩🇴 Country" back out best-effort
+  let cityPart=me.city||'', countryGuess='Dominican Republic';
+  COUNTRIES.forEach(c=>{if((me.city||'').includes(c[1])){countryGuess=c[1];cityPart=(me.city||'').split(',')[0].trim();}});
+  populateCountries(document.getElementById('edCountry'),countryGuess);
+  document.getElementById('edCity').value=cityPart;
+  renderEditInterests();
+  document.getElementById('editSheet').classList.add('open');
+}
+function closeEdit(){document.getElementById('editSheet').classList.remove('open');}
+function renderEditInterests(){
+  document.getElementById('edInterests').innerHTML=CATEGORIES.map(c=>'<div class="catpill '+(editInterests.includes(c.n)?'on':'')+'" onclick="toggleEditInterest(\''+c.n+'\',this)">'+c.e+' '+c.n+'</div>').join('');
+}
+function toggleEditInterest(n,el){if(editInterests.includes(n))editInterests=editInterests.filter(x=>x!==n);else editInterests.push(n);el.classList.toggle('on');}
+async function saveProfile(){
+  const name=document.getElementById('edName').value.trim()||me.name;
+  const username=document.getElementById('edUser').value.trim().replace(/^@/,'').replace(/\s+/g,'');
+  const cityRaw=document.getElementById('edCity').value.trim();
+  const country=document.getElementById('edCountry').value;
+  const cflag=(COUNTRIES.find(c=>c[1]===country)||['🌍'])[0];
+  const city=(cityRaw?cityRaw+', ':'')+cflag+' '+country;
+  try{
+    const data=await api('/api/me/update','POST',{name,username,city,interests:editInterests});
+    me=data.user;closeEdit();renderProfile();toast('Profile updated ✓');
+  }catch(e){toast(e.message);}
 }
 
 // ---- Report / toast ----
@@ -604,6 +688,7 @@ function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
 // ---- Boot ----
 async function boot(){
   renderCats('');
+  populateCountries(document.getElementById('suCountry'),'Dominican Republic');
   if(token){
     try{const data=await api('/api/me');me=data.user;connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
     catch{token=null;localStorage.removeItem('su_token');}
