@@ -72,6 +72,20 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .ain{width:100%;padding:15px;border-radius:14px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-family:'Instrument Sans';font-size:15px}
 .ain::placeholder{color:rgba(255,255,255,.45)}
 .ain:focus{outline:none;border-color:var(--mango)}
+/* Custom country picker */
+.country-picker{position:relative;width:100%}
+.cp-button{width:100%;padding:14px 15px;border-radius:14px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:15px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;gap:8px}
+.cp-current{display:flex;align-items:center;gap:9px;min-width:0}
+.cp-current span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cp-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(27,27,58,.25);z-index:90;overflow:hidden}
+.cp-menu.open{display:block;animation:fade .15s ease}
+.cp-search{width:100%;padding:12px 14px;border:none;border-bottom:1px solid var(--line);font-family:'Instrument Sans';font-size:14px;color:var(--ink);outline:none}
+.cp-list{max-height:230px;overflow-y:auto}
+.cp-item{display:flex;align-items:center;gap:10px;padding:11px 14px;font-size:14px;color:var(--ink);cursor:pointer}
+.cp-item:hover,.cp-item:active{background:#FFF3F1}
+.cp-empty{padding:14px;text-align:center;color:var(--muted);font-size:13px}
+/* On light sheets, the picker button needs dark text */
+.sheet .cp-button{background:#fff;border-color:var(--line);color:var(--ink)}
 .btn{width:100%;padding:16px;border-radius:16px;border:none;font-family:'Instrument Sans';font-size:16px;font-weight:700;cursor:pointer;transition:.2s}
 .btn:active{transform:scale(.98)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
@@ -221,7 +235,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="ilabel">Email</div><input class="ain" id="suEmail" type="email" placeholder="you@email.com">
         <div class="ilabel">Password <span style="opacity:.6;font-weight:400">(6+ characters)</span></div><input class="ain" id="suPass" type="password" placeholder="••••••••">
         <div class="ilabel">What country are you in?</div>
-        <select class="ain" id="suCountry" style="appearance:none;-webkit-appearance:none"></select>
+        <div class="country-picker" id="suCountry"></div>
         <div class="ilabel">City / area</div><input class="ain" id="suCity" placeholder="Santo Domingo">
         <div class="err" id="suErr"></div>
         <div class="auth-foot"><button class="btn btn-mango" onclick="authStep('a-interests')">Continue</button><div class="small-link"><a onclick="authStep('a-intro')">← Back</a></div></div>
@@ -357,7 +371,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <h3>Edit profile</h3>
     <div class="field"><label>First name</label><input type="text" id="edName"></div>
     <div class="field"><label>Username <span style="color:var(--muted);font-weight:400">(how friends find you)</span></label><input type="text" id="edUser" placeholder="@yourname"></div>
-    <div class="field"><label>Country</label><select id="edCountry" style="width:100%;padding:14px;border-radius:14px;border:1.5px solid var(--line);background:#fff;font-family:'Instrument Sans';font-size:15px;appearance:none;-webkit-appearance:none"></select></div>
+    <div class="field"><label>Country</label><div class="country-picker" id="edCountry"></div></div>
     <div class="field"><label>City / area</label><input type="text" id="edCity" placeholder="Santo Domingo"></div>
     <div class="field"><label>Your interests <span style="color:var(--muted);font-weight:400">(tap to toggle)</span></label><div id="edInterests" style="display:flex;flex-wrap:wrap;gap:8px"></div></div>
     <button class="btn btn-mango" onclick="saveProfile()" style="margin-top:6px">Save changes</button>
@@ -389,21 +403,68 @@ const CATEGORIES=[
 const GRADS=['linear-gradient(135deg,#FF6B5B,#FFB03A)','linear-gradient(135deg,#2DD4BF,#1B1B3A)','linear-gradient(135deg,#FFB03A,#FF6B5B)','linear-gradient(135deg,#2DD4BF,#FFB03A)','linear-gradient(135deg,#1B1B3A,#FF6B5B)','linear-gradient(135deg,#FFB03A,#2DD4BF)'];
 function gradFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return GRADS[h%GRADS.length];}
 
-// ---- Countries (flag emoji + name). Common ones first, then the rest A–Z ----
+// ---- Countries (ISO code + name). Flags render as images so they show on every device. ----
 const COUNTRIES=[
-  ['🇩🇴','Dominican Republic'],['🇺🇸','United States'],['🇲🇽','Mexico'],['🇨🇦','Canada'],
-  ['🇪🇸','Spain'],['🇵🇷','Puerto Rico'],['🇨🇴','Colombia'],['🇻🇪','Venezuela'],['🇦🇷','Argentina'],
-  ['🇦🇺','Australia'],['🇧🇷','Brazil'],['🇨🇱','Chile'],['🇨🇷','Costa Rica'],['🇨🇺','Cuba'],
-  ['🇪🇨','Ecuador'],['🇸🇻','El Salvador'],['🇫🇷','France'],['🇩🇪','Germany'],['🇬🇹','Guatemala'],
-  ['🇭🇳','Honduras'],['🇮🇳','India'],['🇮🇪','Ireland'],['🇮🇹','Italy'],['🇯🇲','Jamaica'],
-  ['🇯🇵','Japan'],['🇳🇱','Netherlands'],['🇳🇮','Nicaragua'],['🇳🇬','Nigeria'],['🇵🇦','Panama'],
-  ['🇵🇾','Paraguay'],['🇵🇪','Peru'],['🇵🇭','Philippines'],['🇵🇱','Poland'],['🇵🇹','Portugal'],
-  ['🇬🇧','United Kingdom'],['🇺🇾','Uruguay'],['🌍','Other']
+  ['do','Dominican Republic'],['us','United States'],['mx','Mexico'],['ca','Canada'],
+  ['es','Spain'],['pr','Puerto Rico'],['co','Colombia'],['ve','Venezuela'],['ar','Argentina'],
+  ['au','Australia'],['br','Brazil'],['cl','Chile'],['cr','Costa Rica'],['cu','Cuba'],
+  ['ec','Ecuador'],['sv','El Salvador'],['fr','France'],['de','Germany'],['gt','Guatemala'],
+  ['hn','Honduras'],['in','India'],['ie','Ireland'],['it','Italy'],['jm','Jamaica'],
+  ['jp','Japan'],['nl','Netherlands'],['ni','Nicaragua'],['ng','Nigeria'],['pa','Panama'],
+  ['py','Paraguay'],['pe','Peru'],['ph','Philippines'],['pl','Poland'],['pt','Portugal'],
+  ['gb','United Kingdom'],['uy','Uruguay'],['xx','Other']
 ];
-function populateCountries(sel,selected){
-  if(!sel)return;
-  sel.innerHTML=COUNTRIES.map(c=>'<option value="'+c[1]+'" '+(c[1]===selected?'selected':'')+'>'+c[0]+'  '+c[1]+'</option>').join('');
+function flagImg(code,size){
+  size=size||20;
+  if(code==='xx')return '<span style="font-size:'+size+'px;line-height:1">🌍</span>';
+  return '<img src="https://flagcdn.com/'+code+'.svg" alt="" width="'+size+'" height="'+Math.round(size*0.72)+'" style="border-radius:3px;object-fit:cover;vertical-align:middle">';
 }
+function codeForCountry(name){const c=COUNTRIES.find(c=>c[1]===name);return c?c[0]:'xx';}
+
+// Custom searchable country dropdown. `pickerId` is the wrapper element id.
+const pickerState={}; // pickerId -> selected country name
+function initCountryPicker(pickerId,selected){
+  pickerState[pickerId]=selected||'Dominican Republic';
+  const wrap=document.getElementById(pickerId);
+  if(!wrap)return;
+  wrap.innerHTML=
+    '<div class="cp-button" onclick="togglePicker(\''+pickerId+'\')">'
+    +'<span class="cp-current">'+flagImg(codeForCountry(pickerState[pickerId]))+' <span>'+pickerState[pickerId]+'</span></span>'
+    +'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>'
+    +'</div>'
+    +'<div class="cp-menu" id="'+pickerId+'-menu">'
+    +'<input class="cp-search" placeholder="Search countries…" oninput="filterPicker(\''+pickerId+'\',this.value)" onclick="event.stopPropagation()">'
+    +'<div class="cp-list" id="'+pickerId+'-list"></div>'
+    +'</div>';
+  renderPickerList(pickerId,'');
+}
+function renderPickerList(pickerId,filter){
+  filter=(filter||'').toLowerCase();
+  const list=document.getElementById(pickerId+'-list');
+  if(!list)return;
+  const items=COUNTRIES.filter(c=>c[1].toLowerCase().includes(filter));
+  if(!items.length){list.innerHTML='<div class="cp-empty">No match</div>';return;}
+  list.innerHTML=items.map(c=>'<div class="cp-item" onclick="choosePicker(\''+pickerId+'\',\''+c[1].replace(/'/g,"\\'")+'\')">'+flagImg(c[0])+' <span>'+c[1]+'</span></div>').join('');
+}
+function togglePicker(pickerId){
+  const menu=document.getElementById(pickerId+'-menu');
+  const open=menu.classList.contains('open');
+  // close any other open pickers
+  document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
+  if(!open){menu.classList.add('open');const s=menu.querySelector('.cp-search');if(s){s.value='';renderPickerList(pickerId,'');setTimeout(()=>s.focus(),50);}}
+}
+function filterPicker(pickerId,val){renderPickerList(pickerId,val);}
+function choosePicker(pickerId,name){
+  pickerState[pickerId]=name;
+  const cur=document.querySelector('#'+pickerId+' .cp-current');
+  if(cur)cur.innerHTML=flagImg(codeForCountry(name))+' <span>'+name+'</span>';
+  document.getElementById(pickerId+'-menu').classList.remove('open');
+}
+function getPickerValue(pickerId){return pickerState[pickerId]||'Dominican Republic';}
+// close pickers when clicking elsewhere
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
+});
 
 // ---- API layer ----
 const API=location.origin;
@@ -465,9 +526,9 @@ async function doSignup(){
   const email=document.getElementById('suEmail').value.trim();
   const password=document.getElementById('suPass').value;
   const cityRaw=document.getElementById('suCity').value.trim();
-  const country=document.getElementById('suCountry').value;
-  const cflag=(COUNTRIES.find(c=>c[1]===country)||['🌍'])[0];
-  const city=(cityRaw?cityRaw+', ':'')+cflag+' '+country;
+  const country=getPickerValue('suCountry');
+  const cflag=(COUNTRIES.find(c=>c[1]===country)||['xx'])[0];
+  const city=(cityRaw?cityRaw+', ':'')+country;
   if(!name||!email||!password){authStep('a-signup');showErr('suErr','Please fill in name, email, and password.');return;}
   try{
     const data=await api('/api/signup','POST',{name,email,password,city,origin:'',interests:signupInterests});
@@ -652,10 +713,10 @@ function openEdit(){
   editInterests=(me.interests||[]).slice();
   document.getElementById('edName').value=me.name||'';
   document.getElementById('edUser').value=me.username||'';
-  // split city string "City, 🇩🇴 Country" back out best-effort
+  // split city string "City, Country" back out best-effort
   let cityPart=me.city||'', countryGuess='Dominican Republic';
   COUNTRIES.forEach(c=>{if((me.city||'').includes(c[1])){countryGuess=c[1];cityPart=(me.city||'').split(',')[0].trim();}});
-  populateCountries(document.getElementById('edCountry'),countryGuess);
+  initCountryPicker('edCountry',countryGuess);
   document.getElementById('edCity').value=cityPart;
   renderEditInterests();
   document.getElementById('editSheet').classList.add('open');
@@ -669,9 +730,8 @@ async function saveProfile(){
   const name=document.getElementById('edName').value.trim()||me.name;
   const username=document.getElementById('edUser').value.trim().replace(/^@/,'').replace(/\s+/g,'');
   const cityRaw=document.getElementById('edCity').value.trim();
-  const country=document.getElementById('edCountry').value;
-  const cflag=(COUNTRIES.find(c=>c[1]===country)||['🌍'])[0];
-  const city=(cityRaw?cityRaw+', ':'')+cflag+' '+country;
+  const country=getPickerValue('edCountry');
+  const city=(cityRaw?cityRaw+', ':'')+country;
   try{
     const data=await api('/api/me/update','POST',{name,username,city,interests:editInterests});
     me=data.user;closeEdit();renderProfile();toast('Profile updated ✓');
@@ -688,7 +748,7 @@ function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
 // ---- Boot ----
 async function boot(){
   renderCats('');
-  populateCountries(document.getElementById('suCountry'),'Dominican Republic');
+  initCountryPicker('suCountry','Dominican Republic');
   if(token){
     try{const data=await api('/api/me');me=data.user;connectWS();document.getElementById('loading').style.display='none';enterApp();return;}
     catch{token=null;localStorage.removeItem('su_token');}
