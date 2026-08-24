@@ -15,7 +15,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
-:root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#FBF7F0;--ink:#2A2A3C;--muted:#8A8699;--line:#EDE6DA;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
+:root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#F0EFF7;--ink:#2A2A3C;--muted:#8A8699;--line:#E6E4F0;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
 /* Dark theme */
 .phone[data-theme="dark"]{--bone:#15151f;--card:#20202e;--ink:#EDEAF5;--muted:#8A86A0;--line:#2C2C3E;--night:#EDEAF5;--shadow:0 8px 30px rgba(0,0,0,.4)}
 .phone[data-theme="dark"] .round,.phone[data-theme="dark"] .circle-card,.phone[data-theme="dark"] .friend-row,.phone[data-theme="dark"] .chip,.phone[data-theme="dark"] .srow,.phone[data-theme="dark"] .catpill{background:#20202e}
@@ -310,6 +310,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .field input:focus,.field textarea:focus{outline:none;border-color:var(--coral)}
 .cat-scroll{display:flex;flex-wrap:wrap;gap:8px;max-height:150px;overflow-y:auto;padding:2px}
 .catpill{padding:10px 13px;border-radius:14px;border:1.5px solid var(--line);background:#fff;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;transition:.2s}
+.rsvp-btn{flex:1;padding:10px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:'Instrument Sans'}
+.rsvp-btn.on{border-color:var(--coral);background:#FFF3F1;color:var(--night)}
 .catpill.on{border-color:var(--coral);background:#FFF3F1}
 .privacy-banner{background:#EAFBF7;border:1px solid #b8f0e6;border-radius:14px;padding:13px 14px;display:flex;gap:10px;font-size:12.5px;color:#0d7d6f;line-height:1.5;margin:6px 0 20px;font-weight:500}
 .privacy-banner svg{flex:none;width:18px;height:18px;margin-top:1px}
@@ -433,8 +435,25 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle">Round</h1>
     </div>
     <div class="detail-body">
+      <div id="detailPhoto" style="display:none;margin-bottom:14px"><img id="detailPhotoImg" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px"></div>
       <div class="pill-row" id="detailPills"></div>
+      <div id="detailEvent" style="display:none;background:var(--bone);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0"></div>
       <p class="blurb" id="detailBlurb"></p>
+      <a id="detailLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;align-items:center;gap:8px;color:var(--coral);font-weight:700;font-size:14px;text-decoration:none;margin:6px 0 10px"></a>
+      <div id="detailRsvp" style="display:none;margin:12px 0">
+        <div style="font-weight:700;font-size:13px;color:var(--night);margin-bottom:8px">Will you attend?</div>
+        <div style="display:flex;gap:8px">
+          <button class="rsvp-btn" id="rsvp-going" onclick="doRsvp('going')">✅ Going</button>
+          <button class="rsvp-btn" id="rsvp-maybe" onclick="doRsvp('maybe')">🤔 Maybe</button>
+          <button class="rsvp-btn" id="rsvp-no" onclick="doRsvp('no')">❌ Can't</button>
+        </div>
+        <button class="btn" style="margin-top:10px;background:var(--bone);color:var(--night)" onclick="downloadIcs()">📅 Add to calendar</button>
+      </div>
+      <div id="detailHostTools" style="display:none;margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+        <div style="font-weight:700;font-size:13px;color:var(--muted);margin-bottom:8px">Creator tools</div>
+        <button class="btn" style="background:var(--bone);color:var(--night);margin-bottom:8px" onclick="openEditRound()">✏️ Edit this Round</button>
+        <button class="btn" style="background:var(--bone);color:var(--night)" onclick="openManageMembers()">👥 Manage members</button>
+      </div>
     </div>
   </div>
   <div class="attend">
@@ -575,7 +594,18 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <p class="sub">Start something small. A few people, a few meetups.</p>
       <div class="field"><label>What are you gathering around?</label><input class="field" id="catSearch" placeholder="🔍 Search categories…" onkeyup="renderCats(this.value)" style="margin-bottom:10px"><div class="cat-scroll" id="catScroll"></div></div>
       <div class="field"><label>Name your Round</label><input type="text" id="newTitle" placeholder="e.g. Sunday Book Club"></div>
+      <div class="field"><label>Cover photo <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <div id="newPhotoPreview" style="display:none;margin-bottom:8px"><img id="newPhotoImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px"></div>
+        <button type="button" onclick="pickRoundPhoto()" style="background:var(--bone);color:var(--night);border:1.5px solid var(--line);padding:10px 14px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer">📷 Add a photo</button>
+        <input type="file" id="roundPhotoInput" accept="image/*" style="display:none" onchange="onRoundPhotoChosen(event)">
+      </div>
       <div class="field"><label>Tell people what to expect</label><textarea rows="3" id="newBlurb" placeholder="What will you do together? Who's it for?"></textarea></div>
+      <div class="field"><label>Event date & time <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="datetime-local" id="newEventAt" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px">
+      </div>
+      <div class="field"><label>Link <span style="color:var(--muted);font-weight:400">(optional — map, tickets, info)</span></label>
+        <input type="url" id="newLink" placeholder="https://…">
+      </div>
       <div class="field"><label>Where does it meet? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
         <input type="text" id="newPlace" placeholder="e.g. Riverside Park, or a neighborhood">
         <div id="locStatus" style="font-size:12.5px;color:var(--muted);margin-top:8px;display:flex;align-items:center;gap:8px">
@@ -783,6 +813,32 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="report-opt" onclick="dmMenuReply()">↩️ Reply</div>
     <div class="report-opt" onclick="dmMenuForward()">➡️ Forward</div>
     <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeDmMsgMenu()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="editRoundSheet" onclick="if(event.target===this)closeEditRound()">
+  <div class="sheet-inner" style="max-height:85%;overflow-y:auto"><div class="grabber"></div>
+    <h3>Edit Round</h3>
+    <div id="erPhotoPreview" style="display:none;margin-bottom:8px"><img id="erPhotoImg" style="width:100%;max-height:150px;object-fit:cover;border-radius:12px"></div>
+    <button type="button" onclick="document.getElementById('erPhotoInput').click()" style="background:var(--bone);color:var(--night);border:1.5px solid var(--line);padding:9px 13px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:4px">📷 Change photo</button>
+    <button type="button" id="erRemovePhoto" onclick="erRemovePhoto()" style="background:none;color:#d94b3b;border:none;font-size:12px;cursor:pointer;display:none">Remove photo</button>
+    <input type="file" id="erPhotoInput" accept="image/*" style="display:none" onchange="onErPhotoChosen(event)">
+    <div class="field"><label>Name</label><input type="text" id="erTitle"></div>
+    <div class="field"><label>Description</label><textarea rows="3" id="erBlurb"></textarea></div>
+    <div class="field"><label>Where does it meet?</label><input type="text" id="erPlace"></div>
+    <div class="field"><label>Event date & time</label><input type="datetime-local" id="erEventAt" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px"></div>
+    <div class="field"><label>Link</label><input type="url" id="erLink" placeholder="https://…"></div>
+    <button class="btn btn-mango" onclick="saveEditRound()">Save changes</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:6px" onclick="closeEditRound()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="manageMembersSheet" onclick="if(event.target===this)closeManageMembers()">
+  <div class="sheet-inner" style="max-height:80%;overflow-y:auto"><div class="grabber"></div>
+    <h3>Manage members</h3>
+    <p style="font-size:13px;color:var(--muted)">Remove anyone who shouldn't be here. They won't be told who removed them.</p>
+    <div id="manageMembersList"></div>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:6px" onclick="closeManageMembers()">Done</div>
   </div>
 </div>
 
@@ -1093,6 +1149,7 @@ function go(id){
   if(id==='s-home')loadHome();
   if(id==='s-circles'){switchCircTab('rounds');loadCircles();}
   if(id==='s-chats'){switchChatTab('rounds');updateNotifBadge();}
+  if(id==='s-create'){loadCustomCategories().then(()=>renderCats(''));}
   if(id==='s-profile')renderProfile();
   buildNav();
   translatePage();
@@ -1464,13 +1521,117 @@ function openDetail(rid){
   document.getElementById('detailHero').style.background=gradFor(activeRound.id);
   document.getElementById('detailBlurb').textContent=t(activeRound.blurb||'A small group that meets a few times.');
   document.getElementById('detailPills').innerHTML='<div class="pill">'+t(activeRound.category||'Round')+'</div><div class="pill">👥 '+activeRound.member_count+' '+t('members')+'</div>';
+  // photo
+  const ph=document.getElementById('detailPhoto');
+  if(activeRound.photo){document.getElementById('detailPhotoImg').src=activeRound.photo;ph.style.display='block';}else{ph.style.display='none';}
+  // event date
+  const ev=document.getElementById('detailEvent');
+  if(activeRound.event_at){
+    const d=new Date(activeRound.event_at);
+    ev.innerHTML='<div style="font-weight:700;color:var(--night)">📅 '+d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})+'</div><div style="color:var(--muted);font-size:13px;margin-top:2px">🕐 '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+'</div>';
+    ev.style.display='block';
+  }else{ev.style.display='none';}
+  // link
+  const lk=document.getElementById('detailLink');
+  if(activeRound.link){lk.href=activeRound.link;lk.innerHTML='🔗 '+activeRound.link.replace(/^https?:\/\//,'').slice(0,40);lk.style.display='flex';}else{lk.style.display='none';}
+  // rsvp — only if there's an event and user is a member
+  const rsvp=document.getElementById('detailRsvp');
+  rsvp.style.display=(activeRound.event_at&&activeRound.joined)?'block':'none';
+  // host tools
+  document.getElementById('detailHostTools').style.display=(activeRound.is_host)?'block':'none';
   const btn=document.getElementById('joinBtn');
   if(activeRound.joined){btn.textContent=t('Open group chat');btn.onclick=()=>openThread(activeRound);}
   else{btn.textContent=t('Join this Round');btn.onclick=joinRound;}
   go('s-detail');
 }
+async function doRsvp(status){
+  try{
+    await api('/api/rounds/'+activeRound.id+'/rsvp','POST',{rsvp:status});
+    ['going','maybe','no'].forEach(s=>document.getElementById('rsvp-'+s).classList.toggle('on',s===status));
+    toast('RSVP saved ✓');
+  }catch(e){toast(e.message);}
+}
+// Build an .ics calendar file the user can open in any calendar app
+function downloadIcs(){
+  if(!activeRound||!activeRound.event_at)return;
+  const start=new Date(activeRound.event_at);
+  const end=new Date(activeRound.event_at+2*60*60*1000); // default 2h
+  const fmt=d=>d.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  const ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//ShowUpp//EN','BEGIN:VEVENT',
+    'UID:'+activeRound.id+'@showupp','DTSTAMP:'+fmt(new Date()),'DTSTART:'+fmt(start),'DTEND:'+fmt(end),
+    'SUMMARY:'+(activeRound.title||'ShowUpp Round').replace(/\n/g,' '),
+    'DESCRIPTION:'+((activeRound.blurb||'')+(activeRound.link?' '+activeRound.link:'')).replace(/\n/g,' '),
+    (activeRound.place?'LOCATION:'+activeRound.place.replace(/\n/g,' '):''),
+    'END:VEVENT','END:VCALENDAR'].filter(Boolean).join('\r\n');
+  const blob=new Blob([ics],{type:'text/calendar'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=(activeRound.title||'event')+'.ics';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 async function joinRound(){
   try{await api('/api/rounds/'+activeRound.id+'/join','POST');toast('You joined! 🎉');activeRound.joined=1;activeRound.member_count++;openDetail(activeRound.id);}catch(e){toast(e.message);}
+}
+// ---- Edit round (host) ----
+let erPhoto=undefined; // undefined=unchanged, null=remove, string=new
+function openEditRound(){
+  const r=activeRound;erPhoto=undefined;
+  document.getElementById('erTitle').value=r.title||'';
+  document.getElementById('erBlurb').value=r.blurb||'';
+  document.getElementById('erPlace').value=r.place||'';
+  document.getElementById('erLink').value=r.link||'';
+  document.getElementById('erEventAt').value=r.event_at?new Date(r.event_at-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16):'';
+  if(r.photo){document.getElementById('erPhotoImg').src=r.photo;document.getElementById('erPhotoPreview').style.display='block';document.getElementById('erRemovePhoto').style.display='inline';}
+  else{document.getElementById('erPhotoPreview').style.display='none';document.getElementById('erRemovePhoto').style.display='none';}
+  document.getElementById('editRoundSheet').classList.add('open');
+}
+function closeEditRound(){document.getElementById('editRoundSheet').classList.remove('open');}
+function onErPhotoChosen(e){
+  const file=e.target.files&&e.target.files[0];e.target.value='';if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{const img=new Image();img.onload=function(){
+    const c=document.createElement('canvas');const max=1000;let w=img.width,h=img.height;
+    if(w>h&&w>max){h=h*max/w;w=max;}else if(h>max){w=w*max/h;h=max;}
+    c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+    erPhoto=c.toDataURL('image/jpeg',0.75);
+    document.getElementById('erPhotoImg').src=erPhoto;document.getElementById('erPhotoPreview').style.display='block';document.getElementById('erRemovePhoto').style.display='inline';
+  };img.src=ev.target.result;};reader.readAsDataURL(file);
+}
+function erRemovePhoto(){erPhoto=null;document.getElementById('erPhotoPreview').style.display='none';document.getElementById('erRemovePhoto').style.display='none';}
+async function saveEditRound(){
+  const body={
+    title:document.getElementById('erTitle').value.trim(),
+    blurb:document.getElementById('erBlurb').value.trim(),
+    place:document.getElementById('erPlace').value.trim(),
+    link:document.getElementById('erLink').value.trim()
+  };
+  const evVal=document.getElementById('erEventAt').value;
+  body.event_at=evVal?new Date(evVal).getTime():0;
+  if(erPhoto===null)body.removePhoto=true;
+  else if(typeof erPhoto==='string')body.photo=erPhoto;
+  try{
+    const r=await api('/api/rounds/'+activeRound.id+'/edit','POST',body);
+    // update local copy
+    const idx=allRounds.findIndex(x=>x.id===activeRound.id);
+    if(idx>=0){allRounds[idx]={...allRounds[idx],...r.round};activeRound=allRounds[idx];}
+    closeEditRound();openDetail(activeRound.id);toast('Round updated ✓');
+  }catch(e){toast(e.message);}
+}
+// ---- Manage members (host) ----
+async function openManageMembers(){
+  document.getElementById('manageMembersSheet').classList.add('open');
+  const box=document.getElementById('manageMembersList');box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+t('Loading…')+'</p>';
+  try{
+    const r=await api('/api/rounds/'+activeRound.id+'/members');
+    box.innerHTML=r.members.map(u=>{
+      const isHost=u.id===r.host_id;
+      const btn=isHost?'<span style="font-size:12px;color:var(--muted)">Creator</span>':'<button class="friend-btn remove" onclick="removeMember(\''+u.id+'\')">Remove</button>';
+      return '<div class="friend-row">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username||'')+'</span></div>'+btn+'</div>';
+    }).join('');
+  }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+e.message+'</p>';}
+}
+function closeManageMembers(){document.getElementById('manageMembersSheet').classList.remove('open');}
+async function removeMember(uid){
+  try{await api('/api/rounds/'+activeRound.id+'/remove-member','POST',{userId:uid});toast('Removed');openManageMembers();}catch(e){toast(e.message);}
 }
 
 // ---- Circles ----
@@ -2336,11 +2497,37 @@ function connectWS(){
 }
 
 // ---- Create ----
+let customCat=null;
+let approvedCustomCats=[];
 function renderCats(filter){
   filter=(filter||'').toLowerCase();
-  document.getElementById('catScroll').innerHTML=CATEGORIES.filter(c=>c.n.toLowerCase().includes(filter)||t(c.n).toLowerCase().includes(filter)).map(c=>'<div class="catpill '+(selectedCats.includes(c.n)?'on':'')+'" onclick="toggleCat(\''+c.n+'\',this)">'+c.e+' '+t(c.n)+'</div>').join('');
+  const builtins=CATEGORIES.filter(c=>c.n.toLowerCase().includes(filter)||t(c.n).toLowerCase().includes(filter));
+  const customs=approvedCustomCats.filter(c=>c.name.toLowerCase().includes(filter));
+  let html=builtins.map(c=>'<div class="catpill '+(selectedCats.includes(c.n)?'on':'')+'" onclick="toggleCat(\''+c.n+'\',this)">'+c.e+' '+t(c.n)+'</div>').join('');
+  html+=customs.map(c=>'<div class="catpill '+(selectedCats.includes(c.name)?'on':'')+'" onclick="toggleCustomCat(\''+esc(c.name).replace(/'/g,"")+'\',\''+(c.emoji||'✨')+'\',this)">'+(c.emoji||'✨')+' '+esc(c.name)+'</div>').join('');
+  // "create new" option when there's a search with no exact match
+  const typed=(document.getElementById('catSearch')?document.getElementById('catSearch').value.trim():'');
+  if(typed&&typed.length>=2&&!builtins.some(c=>c.n.toLowerCase()===typed.toLowerCase())&&!customs.some(c=>c.name.toLowerCase()===typed.toLowerCase())){
+    html+='<div class="catpill" style="border-style:dashed;color:var(--coral)" onclick="createCustomCategory()">+ '+t('Create')+' "'+esc(typed)+'"</div>';
+  }
+  document.getElementById('catScroll').innerHTML=html;
 }
-function toggleCat(n,el){selectedCats=[n];document.querySelectorAll('#catScroll .catpill').forEach(p=>p.classList.remove('on'));el.classList.add('on');}
+function toggleCat(n,el){selectedCats=[n];customCat=null;document.querySelectorAll('#catScroll .catpill').forEach(p=>p.classList.remove('on'));el.classList.add('on');}
+function toggleCustomCat(name,emoji,el){selectedCats=[name];customCat={n:name,e:emoji};document.querySelectorAll('#catScroll .catpill').forEach(p=>p.classList.remove('on'));el.classList.add('on');}
+async function createCustomCategory(){
+  const name=document.getElementById('catSearch').value.trim();
+  if(name.length<2){toast('Category name too short.');return;}
+  try{
+    const r=await api('/api/categories','POST',{name,emoji:'✨'});
+    customCat={n:r.name,e:'✨'};selectedCats=[r.name];
+    if(r.pending){toast('Category created! It\'s usable now and will appear publicly once approved.');}
+    else{toast('Category selected.');}
+    renderCats('');
+  }catch(e){toast(e.message);}
+}
+async function loadCustomCategories(){
+  try{const r=await api('/api/categories');approvedCustomCats=r.categories||[];}catch(e){}
+}
 let newRoundLoc=null;
 async function attachRoundLocation(){
   document.getElementById('locStatusText').textContent='Finding your location…';
@@ -2348,18 +2535,43 @@ async function attachRoundLocation(){
   if(loc){newRoundLoc=loc;document.getElementById('locStatusText').textContent='✓ Location added';document.getElementById('locStatusText').style.color='#0d9488';}
   else{document.getElementById('locStatusText').textContent='Couldn\'t get location';}
 }
+let newRoundPhoto=null;
+function pickRoundPhoto(){document.getElementById('roundPhotoInput').click();}
+function onRoundPhotoChosen(e){
+  const file=e.target.files&&e.target.files[0];e.target.value='';if(!file)return;
+  if(!file.type.startsWith('image/')){toast('Please choose an image.');return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const img=new Image();
+    img.onload=function(){
+      const canvas=document.createElement('canvas');const max=1000;
+      let w=img.width,h=img.height;if(w>h&&w>max){h=h*max/w;w=max;}else if(h>max){w=w*max/h;h=max;}
+      canvas.width=w;canvas.height=h;canvas.getContext('2d').drawImage(img,0,0,w,h);
+      newRoundPhoto=canvas.toDataURL('image/jpeg',0.75);
+      document.getElementById('newPhotoImg').src=newRoundPhoto;
+      document.getElementById('newPhotoPreview').style.display='block';
+    };img.src=ev.target.result;
+  };reader.readAsDataURL(file);
+}
 async function createRound(){
   const title=document.getElementById('newTitle').value.trim();
   const blurb=document.getElementById('newBlurb').value.trim();
   const place=document.getElementById('newPlace').value.trim();
+  const link=document.getElementById('newLink').value.trim();
+  const evVal=document.getElementById('newEventAt').value;
   if(!title){toast('Give your Round a name.');return;}
-  const cat=CATEGORIES.find(c=>c.n===selectedCats[0])||{e:'✨',n:'General'};
+  const cat=CATEGORIES.find(c=>c.n===selectedCats[0])||customCat||{e:'✨',n:'General'};
   const body={title,blurb,category:cat.n,emoji:cat.e,place};
   if(newRoundLoc){body.lat=newRoundLoc.lat;body.lng=newRoundLoc.lng;}
+  if(newRoundPhoto)body.photo=newRoundPhoto;
+  if(link)body.link=link;
+  if(evVal){const ts=new Date(evVal).getTime();if(ts>0)body.event_at=ts;}
   try{
     await api('/api/rounds','POST',body);toast('Round created! 🎉');
     document.getElementById('newTitle').value='';document.getElementById('newBlurb').value='';
-    document.getElementById('newPlace').value='';newRoundLoc=null;
+    document.getElementById('newPlace').value='';newRoundLoc=null;newRoundPhoto=null;customCat=null;
+    document.getElementById('newLink').value='';document.getElementById('newEventAt').value='';
+    document.getElementById('newPhotoPreview').style.display='none';
     document.getElementById('locStatusText').textContent='';
     go('s-home');
   }catch(e){toast(e.message);}
