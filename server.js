@@ -238,6 +238,21 @@ try {
   if (!rcols.includes('lat')) { db.exec("ALTER TABLE rounds ADD COLUMN lat REAL"); console.log('Added rounds.lat'); }
   if (!rcols.includes('lng')) { db.exec("ALTER TABLE rounds ADD COLUMN lng REAL"); console.log('Added rounds.lng'); }
   if (!rcols.includes('place')) { db.exec("ALTER TABLE rounds ADD COLUMN place TEXT"); console.log('Added rounds.place'); }
+  if (!rcols.includes('photo')) { db.exec("ALTER TABLE rounds ADD COLUMN photo TEXT"); console.log('Added rounds.photo'); }
+  if (!rcols.includes('link')) { db.exec("ALTER TABLE rounds ADD COLUMN link TEXT"); console.log('Added rounds.link'); }
+  if (!rcols.includes('event_at')) { db.exec("ALTER TABLE rounds ADD COLUMN event_at INTEGER"); console.log('Added rounds.event_at'); }
+} catch (e) { console.log('Migration note:', e.message); }
+
+// --- Membership RSVP + custom category support ---
+try {
+  const mcols = db.prepare("PRAGMA table_info(memberships)").all().map(c => c.name);
+  if (!mcols.includes('rsvp')) { db.exec("ALTER TABLE memberships ADD COLUMN rsvp TEXT"); console.log('Added memberships.rsvp'); }
+  const ucols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!ucols.includes('premium')) { db.exec("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"); console.log('Added users.premium'); }
+  // custom categories table
+  db.exec(`CREATE TABLE IF NOT EXISTS categories (
+    name TEXT PRIMARY KEY, emoji TEXT, created_by TEXT, approved INTEGER DEFAULT 0, created_at INTEGER
+  )`);
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Seed a few starter Rounds so the app isn't empty on first run ---
@@ -888,8 +903,16 @@ app.get('/api/rounds', requireAuth, (req, res) => {
   res.json({ rounds });
 });
 
+// Basic safe-URL check: only http/https, reasonable length
+function safeUrl(u) {
+  if (!u) return null;
+  const s = String(u).trim();
+  if (!/^https?:\/\/[^\s]+\.[^\s]+/i.test(s)) return null;
+  return s.slice(0, 500);
+}
+
 app.post('/api/rounds', requireAuth, (req, res) => {
-  const { title, emoji, category, blurb, lat, lng, place } = req.body || {};
+  const { title, emoji, category, blurb, lat, lng, place, photo, link, event_at } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Give your Round a name.' });
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
@@ -897,14 +920,114 @@ app.post('/api/rounds', requireAuth, (req, res) => {
     host_id: req.user.id, created_at: now(),
     lat: (typeof lat === 'number') ? lat : null,
     lng: (typeof lng === 'number') ? lng : null,
-    place: place || null
+    place: place || null,
+    photo: (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null,
+    link: safeUrl(link),
+    event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
   };
-  db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place)
-              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place)`).run(round);
+  db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at)`).run(round);
   db.prepare('INSERT OR IGNORE INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?)')
     .run(round.id, req.user.id, now());
   res.json({ round });
 });
+
+// Edit a Round — only the host
+app.post('/api/rounds/:id/edit', requireAuth, (req, res) => {
+  const round = db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can edit this Round.' });
+  const { title, emoji, category, blurb, place, photo, link, event_at, removePhoto } = req.body || {};
+  const newPhoto = removePhoto ? null : ((photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : round.photo);
+  db.prepare(`UPDATE rounds SET
+      title = COALESCE(?, title),
+      emoji = COALESCE(?, emoji),
+      category = COALESCE(?, category),
+      blurb = COALESCE(?, blurb),
+      place = COALESCE(?, place),
+      photo = ?,
+      link = ?,
+      event_at = ?
+    WHERE id = ?`).run(
+    title ? String(title).trim() : null,
+    emoji || null, category || null,
+    (blurb !== undefined && blurb !== null) ? String(blurb) : null,
+    (place !== undefined && place !== null) ? String(place) : null,
+    newPhoto,
+    (link !== undefined) ? safeUrl(link) : round.link,
+    (typeof event_at === 'number') ? (event_at > 0 ? event_at : null) : round.event_at,
+    req.params.id
+  );
+  res.json({ round: db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id) });
+});
+
+// Remove / block a member from a Round — only the host
+app.post('/api/rounds/:id/remove-member', requireAuth, (req, res) => {
+  const round = db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can remove members.' });
+  const { userId } = req.body || {};
+  if (!userId || userId === req.user.id) return res.status(400).json({ error: 'Invalid member.' });
+  db.prepare('DELETE FROM memberships WHERE round_id = ? AND user_id = ?').run(req.params.id, userId);
+  res.json({ ok: true });
+});
+
+// List members of a Round (host sees a manage list)
+app.get('/api/rounds/:id/members', requireAuth, (req, res) => {
+  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Join to see members.' });
+  const round = db.prepare('SELECT host_id FROM rounds WHERE id=?').get(req.params.id);
+  const rows = db.prepare(`SELECT u.id,u.name,u.username,u.avatar,m.rsvp FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC`).all(req.params.id);
+  res.json({ members: rows, host_id: round ? round.host_id : null, isHost: round && round.host_id === req.user.id });
+});
+
+// RSVP to a Round event
+app.post('/api/rounds/:id/rsvp', requireAuth, (req, res) => {
+  const { rsvp } = req.body || {};
+  if (!['going', 'maybe', 'no'].includes(rsvp)) return res.status(400).json({ error: 'Invalid RSVP.' });
+  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Join the Round first.' });
+  db.prepare('UPDATE memberships SET rsvp = ? WHERE round_id = ? AND user_id = ?').run(rsvp, req.params.id, req.user.id);
+  const counts = db.prepare(`SELECT rsvp, COUNT(*) AS c FROM memberships WHERE round_id=? AND rsvp IS NOT NULL GROUP BY rsvp`).all(req.params.id);
+  res.json({ ok: true, counts });
+});
+
+// ---- Custom categories (user-suggested, moderated) ----
+const BANNED_WORDS = ['fuck','shit','bitch','cunt','nigger','faggot','rape','porn','sex','nazi','kill','slut','whore','pedo','molest'];
+function cleanCategoryName(raw) {
+  const s = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 30);
+  if (s.length < 2) return null;
+  const low = s.toLowerCase();
+  for (const w of BANNED_WORDS) { if (low.includes(w)) return false; }
+  return s;
+}
+app.get('/api/categories', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT name, emoji FROM categories WHERE approved = 1 ORDER BY name ASC').all();
+  res.json({ categories: rows });
+});
+app.post('/api/categories', requireAuth, (req, res) => {
+  const { name, emoji } = req.body || {};
+  const clean = cleanCategoryName(name);
+  if (clean === null) return res.status(400).json({ error: 'Category name too short.' });
+  if (clean === false) return res.status(400).json({ error: "That category name isn't allowed. Try another." });
+  const existing = db.prepare('SELECT name, approved FROM categories WHERE LOWER(name) = LOWER(?)').get(clean);
+  if (existing) return res.json({ ok: true, name: existing.name, approved: !!existing.approved });
+  db.prepare('INSERT INTO categories (name,emoji,created_by,approved,created_at) VALUES (?,?,?,0,?)')
+    .run(clean, emoji || '✨', req.user.id, now());
+  res.json({ ok: true, name: clean, approved: false, pending: true });
+});
+app.get('/api/admin/categories', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM categories ORDER BY approved ASC, created_at DESC').all();
+  res.json({ categories: rows });
+});
+app.post('/api/admin/categories/approve', requireAdmin, (req, res) => {
+  const { name, approve } = req.body || {};
+  if (approve) db.prepare('UPDATE categories SET approved = 1 WHERE name = ?').run(name);
+  else db.prepare('DELETE FROM categories WHERE name = ?').run(name);
+  res.json({ ok: true });
+});
+
+
 
 // Delete a Round — only the host (creator) can do this
 app.post('/api/rounds/:id/delete', requireAuth, (req, res) => {
