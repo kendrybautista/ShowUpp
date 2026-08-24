@@ -253,6 +253,27 @@ try {
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
     name TEXT PRIMARY KEY, emoji TEXT, created_by TEXT, approved INTEGER DEFAULT 0, created_at INTEGER
   )`);
+  // Public events table — source-agnostic so paid feeds (Ticketmaster, Eventbrite, etc.)
+  // can be ingested later as just another 'source' without schema changes.
+  db.exec(`CREATE TABLE IF NOT EXISTS events (
+    id          TEXT PRIMARY KEY,
+    source      TEXT DEFAULT 'community',   -- 'community' | 'ticketmaster' | 'eventbrite' | ...
+    source_id   TEXT,                       -- external provider's id (for dedupe on re-import)
+    title       TEXT NOT NULL,
+    description TEXT,
+    category    TEXT,
+    emoji       TEXT,
+    photo       TEXT,
+    link        TEXT,
+    place       TEXT,
+    lat         REAL,
+    lng         REAL,
+    starts_at   INTEGER,
+    ends_at     INTEGER,
+    posted_by   TEXT,                       -- user id for community events; null for imported
+    approved    INTEGER DEFAULT 1,          -- community events can be moderated if needed
+    created_at  INTEGER NOT NULL
+  )`);
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Seed a few starter Rounds so the app isn't empty on first run ---
@@ -1026,6 +1047,122 @@ app.post('/api/admin/categories/approve', requireAdmin, (req, res) => {
   else db.prepare('DELETE FROM categories WHERE name = ?').run(name);
   res.json({ ok: true });
 });
+
+// ---- Public events ("Happening Nearby") ----
+// Source-agnostic: community-posted events live in the DB; paid providers can be
+// ingested into the same table with source != 'community'. The list endpoint merges
+// everything and filters by distance, so adding a provider needs NO change here.
+function distanceMiles(lat1, lng1, lat2, lng2) {
+  const toRad = d => d * Math.PI / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// PROVIDER REGISTRY — add paid sources here later. Each returns an array of normalized events.
+// Example future shape:
+//   async function fetchTicketmaster(lat,lng,radiusMi){ ... map their API to our event shape ... }
+// Then push its results into `external` below. Requires TICKETMASTER_API_KEY env var.
+async function fetchExternalEvents(lat, lng, radiusMi) {
+  const external = [];
+  // --- Ticketmaster (scaffold; activates when TICKETMASTER_API_KEY is set) ---
+  if (process.env.TICKETMASTER_API_KEY && typeof lat === 'number' && typeof lng === 'number') {
+    try {
+      const km = Math.round(radiusMi * 1.60934);
+      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${process.env.TICKETMASTER_API_KEY}&latlong=${lat},${lng}&radius=${km}&unit=km&size=50&sort=date,asc`;
+      const r = await fetch(url);
+      if (r.ok) {
+        const data = await r.json();
+        const evs = (data._embedded && data._embedded.events) || [];
+        for (const e of evs) {
+          const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
+          const loc = v.location || {};
+          external.push({
+            id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
+            title: e.name, description: (e.info || e.pleaseNote || ''),
+            category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
+            emoji: '🎟️',
+            photo: (e.images && e.images[0] && e.images[0].url) || null,
+            link: e.url || null,
+            place: v.name || (v.city && v.city.name) || '',
+            lat: loc.latitude ? parseFloat(loc.latitude) : null,
+            lng: loc.longitude ? parseFloat(loc.longitude) : null,
+            starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
+            ends_at: null, source_label: 'Ticketmaster'
+          });
+        }
+      }
+    } catch (err) { console.log('[events] ticketmaster error', err.message); }
+  }
+  // --- Add more providers here (Eventbrite, SeatGeek, city open-data) the same way ---
+  return external;
+}
+
+// List events near a location, within radius (default 25 miles), optional category filter.
+app.get('/api/events', requireAuth, async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const radius = Math.min(parseFloat(req.query.radius) || 25, 100);
+  const category = req.query.category || null;
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+
+  // 1) community events from our DB (only upcoming, approved)
+  let community = db.prepare(`SELECT * FROM events WHERE approved = 1 AND source = 'community'
+    AND (starts_at IS NULL OR starts_at > ?) ORDER BY starts_at ASC LIMIT 200`).all(now() - 6 * 3600 * 1000);
+  community = community.map(e => ({ ...e, source_label: 'Community' }));
+
+  // 2) external providers (Ticketmaster etc.) — only if configured & we have a location
+  let external = [];
+  if (hasLoc) {
+    try { external = await fetchExternalEvents(lat, lng, radius); } catch (e) {}
+  }
+
+  // merge, attach distance, filter by radius + category
+  let all = community.concat(external);
+  all = all.map(e => {
+    let dist = null;
+    if (hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
+    return { ...e, distance: dist };
+  });
+  if (hasLoc) all = all.filter(e => e.distance == null || e.distance <= radius);
+  if (category && category !== 'all') all = all.filter(e => (e.category || '').toLowerCase() === category.toLowerCase());
+  // sort: soonest first, then nearest
+  all.sort((a, b) => (a.starts_at || Infinity) - (b.starts_at || Infinity) || (a.distance || 0) - (b.distance || 0));
+
+  res.json({ events: all, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
+});
+
+// Post a community event
+app.post('/api/events', requireAuth, (req, res) => {
+  const { title, description, category, emoji, photo, link, place, lat, lng, starts_at, ends_at } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'Give the event a name.' });
+  const ev = {
+    id: id(), source: 'community', source_id: null,
+    title: String(title).trim().slice(0, 120),
+    description: String(description || '').slice(0, 1000),
+    category: category || 'Event', emoji: emoji || '📣',
+    photo: (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null,
+    link: safeUrl(link), place: String(place || '').slice(0, 200),
+    lat: (typeof lat === 'number') ? lat : null,
+    lng: (typeof lng === 'number') ? lng : null,
+    starts_at: (typeof starts_at === 'number' && starts_at > 0) ? starts_at : null,
+    ends_at: (typeof ends_at === 'number' && ends_at > 0) ? ends_at : null,
+    posted_by: req.user.id, approved: 1, created_at: now()
+  };
+  db.prepare(`INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at)
+    VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at)`).run(ev);
+  res.json({ event: ev });
+});
+
+// Delete a community event (poster or admin)
+app.post('/api/events/:id/delete', requireAuth, (req, res) => {
+  const ev = db.prepare('SELECT posted_by FROM events WHERE id = ?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Event not found.' });
+  if (ev.posted_by !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'Not allowed.' });
+  db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 
 
 
