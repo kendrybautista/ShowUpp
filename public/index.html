@@ -90,6 +90,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .screen.active{display:flex}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .scroll{flex:1;overflow-y:auto;padding-bottom:96px}
+.fixed-head{flex:none;background:var(--bone);z-index:20;padding-top:2px}
 .scroll::-webkit-scrollbar{display:none}
 .statusbar{height:52px;flex:none}
 .topbar{padding:4px 22px 14px;display:flex;align-items:center;justify-content:space-between}
@@ -402,9 +403,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- HOME -->
 <div class="screen" id="s-home">
   <div class="statusbar"></div>
-  <div class="scroll">
+  <div class="fixed-head">
     <div class="topbar"><div class="hi"><span id="helloWord">Hello,</span> <b id="homeGreet">👋</b></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div>
     <div class="chips" id="homeChips"></div>
+  </div>
+  <div class="scroll">
     <div id="distanceBar" style="display:none;padding:6px 22px 4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
         <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
@@ -465,12 +468,14 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- CIRCLES -->
 <div class="screen" id="s-circles">
   <div class="statusbar"></div>
-  <div class="scroll">
+  <div class="fixed-head">
     <div class="topbar"><div class="hi">Your<b>Circles</b></div><div class="avatar" onclick="go('s-profile')" id="circAvatar">M</div></div>
     <div style="display:flex;gap:8px;padding:0 22px 12px">
       <div class="circ-tab on" id="tab-rounds" onclick="switchCircTab('rounds')">Rounds</div>
       <div class="circ-tab" id="tab-friends" onclick="switchCircTab('friends')">Friends</div>
     </div>
+  </div>
+  <div class="scroll">
     <div id="circ-rounds-pane">
       <p style="padding:0 22px 10px;font-size:13.5px;color:var(--muted);line-height:1.5">Rounds you've joined. Tap to open the group chat. Swipe a Round you host to delete it.</p>
       <div id="circlesList"></div>
@@ -499,7 +504,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- CHATS -->
 <div class="screen" id="s-chats">
   <div class="statusbar"></div>
-  <div class="scroll" style="padding-bottom:96px">
+  <div class="fixed-head">
     <div class="topbar"><div class="hi">Your<b>Chats</b></div>
       <div style="display:flex;align-items:center;gap:12px">
         <div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span id="notifBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div>
@@ -510,6 +515,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="circ-tab on" id="ctab-rounds" onclick="switchChatTab('rounds')">Round chats</div>
       <div class="circ-tab" id="ctab-direct" onclick="switchChatTab('direct')">Direct</div>
     </div>
+  </div>
+  <div class="scroll" style="padding-bottom:96px">
     <div id="chat-rounds-pane">
       <div id="chatList"></div>
     </div>
