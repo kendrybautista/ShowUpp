@@ -259,6 +259,7 @@ try {
   const ucols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
   if (!ucols.includes('premium')) { db.exec("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"); console.log('Added users.premium'); }
   if (!ucols.includes('bio')) { db.exec("ALTER TABLE users ADD COLUMN bio TEXT"); console.log('Added users.bio'); }
+  if (!ucols.includes('is_private')) { db.exec("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0"); console.log('Added users.is_private'); }
   if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
@@ -350,6 +351,7 @@ function publicUser(u) {
     bio: u.bio || '',
     gallery: u.gallery ? JSON.parse(u.gallery) : [],
     premium: !!u.premium,
+    isPrivate: !!u.is_private,
     isAdmin: !!u.is_admin,
     lang: u.lang || 'en'
   };
@@ -491,7 +493,7 @@ app.post('/api/reset-password', (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -513,7 +515,8 @@ app.post('/api/me/update', requireAuth, (req, res) => {
       interests = COALESCE(?, interests),
       lang = COALESCE(?, lang),
       bio = COALESCE(?, bio),
-      gallery = COALESCE(?, gallery)
+      gallery = COALESCE(?, gallery),
+      is_private = COALESCE(?, is_private)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
@@ -522,6 +525,7 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     cleanLang,
     (bio !== undefined && bio !== null) ? String(bio).slice(0, 500) : null,
     cleanGallery,
+    (typeof isPrivate === 'boolean') ? (isPrivate ? 1 : 0) : null,
     req.user.id
   );
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -580,6 +584,40 @@ function isBlocked(a, b) { // has a blocked b OR b blocked a
 }
 
 // Search users by username or name, excluding yourself and anyone blocked
+// View a user's profile — respects privacy. Friends always see full profile.
+// Non-friends see full profile only if the user is public. Private users show limited info.
+app.get('/api/users/:id/profile', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  if (isBlocked(req.user.id, u.id)) return res.status(403).json({ error: 'Unavailable.' });
+  const friends = areFriends(req.user.id, u.id);
+  const isSelf = req.user.id === u.id;
+  const canSeeFull = isSelf || friends || !u.is_private;
+  // relationship status for the button
+  const sent = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(req.user.id, u.id);
+  const incoming = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(u.id, req.user.id);
+  const status = friends ? 'friend' : (sent ? 'pending' : (incoming ? 'incoming' : 'none'));
+  if (canSeeFull) {
+    res.json({
+      profile: {
+        id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
+        city: u.city, origin: u.origin, interests: u.interests ? JSON.parse(u.interests) : [],
+        bio: u.bio || '', gallery: u.gallery ? JSON.parse(u.gallery) : [],
+        isPrivate: !!u.is_private, full: true, status
+      }
+    });
+  } else {
+    // limited view for a private, non-friend user
+    res.json({
+      profile: {
+        id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
+        city: u.city, interests: [], bio: '', gallery: [],
+        isPrivate: true, full: false, status
+      }
+    });
+  }
+});
+
 app.get('/api/users/search', requireAuth, (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase().replace(/^@/, '');
   if (q.length < 2) return res.json({ users: [] });
