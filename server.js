@@ -241,6 +241,11 @@ try {
   if (!rcols.includes('photo')) { db.exec("ALTER TABLE rounds ADD COLUMN photo TEXT"); console.log('Added rounds.photo'); }
   if (!rcols.includes('link')) { db.exec("ALTER TABLE rounds ADD COLUMN link TEXT"); console.log('Added rounds.link'); }
   if (!rcols.includes('event_at')) { db.exec("ALTER TABLE rounds ADD COLUMN event_at INTEGER"); console.log('Added rounds.event_at'); }
+  // round reactions (like/love), one row per user per round per type
+  db.exec(`CREATE TABLE IF NOT EXISTS round_reactions (
+    round_id TEXT NOT NULL, user_id TEXT NOT NULL, type TEXT NOT NULL,
+    created_at INTEGER, PRIMARY KEY (round_id, user_id, type)
+  )`);
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Membership RSVP + custom category support ---
@@ -249,6 +254,8 @@ try {
   if (!mcols.includes('rsvp')) { db.exec("ALTER TABLE memberships ADD COLUMN rsvp TEXT"); console.log('Added memberships.rsvp'); }
   const ucols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
   if (!ucols.includes('premium')) { db.exec("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"); console.log('Added users.premium'); }
+  if (!ucols.includes('bio')) { db.exec("ALTER TABLE users ADD COLUMN bio TEXT"); console.log('Added users.bio'); }
+  if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
     name TEXT PRIMARY KEY, emoji TEXT, created_by TEXT, approved INTEGER DEFAULT 0, created_at INTEGER
@@ -336,6 +343,9 @@ function publicUser(u) {
     city: u.city,
     origin: u.origin,
     interests: u.interests ? JSON.parse(u.interests) : [],
+    bio: u.bio || '',
+    gallery: u.gallery ? JSON.parse(u.gallery) : [],
+    premium: !!u.premium,
     isAdmin: !!u.is_admin,
     lang: u.lang || 'en'
   };
@@ -477,7 +487,7 @@ app.post('/api/reset-password', (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, (req, res) => {
-  const { name, username, city, interests, lang } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -487,21 +497,30 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     if (taken) return res.status(409).json({ error: 'That username is taken. Try another.' });
   }
   const cleanLang = (lang && ['en', 'es'].includes(lang)) ? lang : null;
+  // gallery: array of image data URLs, max 10, each capped
+  let cleanGallery = null;
+  if (Array.isArray(gallery)) {
+    cleanGallery = JSON.stringify(gallery.filter(g => typeof g === 'string' && g.startsWith('data:image')).slice(0, 10).map(g => g.slice(0, 2000000)));
+  }
   db.prepare(`UPDATE users SET
       name = COALESCE(?, name),
       username = COALESCE(?, username),
       city = COALESCE(?, city),
       interests = COALESCE(?, interests),
-      lang = COALESCE(?, lang)
+      lang = COALESCE(?, lang),
+      bio = COALESCE(?, bio),
+      gallery = COALESCE(?, gallery)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
     (city !== undefined && city !== null) ? String(city) : null,
     Array.isArray(interests) ? JSON.stringify(interests) : null,
     cleanLang,
+    (bio !== undefined && bio !== null) ? String(bio).slice(0, 500) : null,
+    cleanGallery,
     req.user.id
   );
-  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, lang FROM users WHERE id = ?').get(req.user.id);
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
@@ -918,11 +937,33 @@ app.get('/api/rounds', requireAuth, (req, res) => {
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
-      (r.host_id = ?) AS is_host
+      (r.host_id = ?) AS is_host,
+      (SELECT COUNT(*) FROM round_reactions rr WHERE rr.round_id = r.id AND rr.type='like') AS like_count,
+      (SELECT COUNT(*) FROM round_reactions rr WHERE rr.round_id = r.id AND rr.type='love') AS love_count,
+      EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='like') AS i_liked,
+      EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='love') AS i_loved
     FROM rounds r ORDER BY r.created_at DESC
-  `).all(req.user.id, req.user.id);
+  `).all(req.user.id, req.user.id, req.user.id, req.user.id);
   res.json({ rounds });
 });
+
+// Toggle a like/love reaction on a Round
+app.post('/api/rounds/:id/react', requireAuth, (req, res) => {
+  const { type } = req.body || {};
+  if (!['like', 'love'].includes(type)) return res.status(400).json({ error: 'Invalid reaction.' });
+  const round = db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+  const existing = db.prepare('SELECT 1 FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').get(req.params.id, req.user.id, type);
+  if (existing) {
+    db.prepare('DELETE FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').run(req.params.id, req.user.id, type);
+  } else {
+    db.prepare('INSERT OR IGNORE INTO round_reactions (round_id,user_id,type,created_at) VALUES (?,?,?,?)').run(req.params.id, req.user.id, type, now());
+  }
+  const like_count = db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='like'").get(req.params.id).c;
+  const love_count = db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='love'").get(req.params.id).c;
+  res.json({ ok: true, like_count, love_count, active: !existing });
+});
+
 
 // Basic safe-URL check: only http/https, reasonable length
 function safeUrl(u) {
