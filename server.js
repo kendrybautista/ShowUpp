@@ -250,6 +250,15 @@ try {
     round_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at INTEGER,
     PRIMARY KEY (round_id, user_id)
   )`);
+  // Temporary profile posts (like stories) — auto-expire after 24h, max 10/day per user.
+  db.exec(`CREATE TABLE IF NOT EXISTS moments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    text TEXT,
+    photo TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`);
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Membership RSVP + custom category support ---
@@ -593,6 +602,9 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
   const friends = areFriends(req.user.id, u.id);
   const isSelf = req.user.id === u.id;
   const canSeeFull = isSelf || friends || !u.is_private;
+  // Interest-picture gallery is visible ONLY to the person themselves and their friends.
+  // Non-friends (even on public profiles) see just the main avatar.
+  const canSeeGallery = isSelf || friends;
   // relationship status for the button
   const sent = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(req.user.id, u.id);
   const incoming = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(u.id, req.user.id);
@@ -602,20 +614,69 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
       profile: {
         id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
         city: u.city, origin: u.origin, interests: u.interests ? JSON.parse(u.interests) : [],
-        bio: u.bio || '', gallery: u.gallery ? JSON.parse(u.gallery) : [],
-        isPrivate: !!u.is_private, full: true, status
+        bio: u.bio || '', gallery: canSeeGallery && u.gallery ? JSON.parse(u.gallery) : [],
+        isPrivate: !!u.is_private, full: true, status, isFriend: friends
       }
     });
   } else {
-    // limited view for a private, non-friend user
+    // limited view for a private, non-friend user — main avatar only
     res.json({
       profile: {
         id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
         city: u.city, interests: [], bio: '', gallery: [],
-        isPrivate: true, full: false, status
+        isPrivate: true, full: false, status, isFriend: false
       }
     });
   }
+});
+
+// ---- Moments: temporary 24h profile posts ----
+const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
+const MOMENT_DAILY_MAX = 10;
+function pruneMoments() {
+  db.prepare('DELETE FROM moments WHERE expires_at < ?').run(now());
+}
+// Create a moment
+app.post('/api/moments', requireAuth, (req, res) => {
+  pruneMoments();
+  const { text, photo } = req.body || {};
+  const cleanText = String(text || '').slice(0, 500);
+  const cleanPhoto = (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null;
+  if (!cleanText.trim() && !cleanPhoto) return res.status(400).json({ error: 'Write something or add a photo.' });
+  // enforce 10 per rolling 24h
+  const since = now() - MOMENT_TTL;
+  const count = db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since).c;
+  if (count >= MOMENT_DAILY_MAX) return res.status(429).json({ error: "You've reached the limit of 10 posts in 24 hours. Try again later." });
+  const m = { id: id(), user_id: req.user.id, text: cleanText, photo: cleanPhoto, created_at: now(), expires_at: now() + MOMENT_TTL };
+  db.prepare('INSERT INTO moments (id,user_id,text,photo,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@created_at,@expires_at)').run(m);
+  const remaining = MOMENT_DAILY_MAX - (count + 1);
+  res.json({ moment: m, remaining });
+});
+// Get my own active moments
+app.get('/api/moments/mine', requireAuth, (req, res) => {
+  pruneMoments();
+  const rows = db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
+  const since = now() - MOMENT_TTL;
+  const used = db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since).c;
+  res.json({ moments: rows, remaining: Math.max(0, MOMENT_DAILY_MAX - used) });
+});
+// Get a user's active moments — only if self or friends
+app.get('/api/users/:id/moments', requireAuth, (req, res) => {
+  pruneMoments();
+  const targetId = req.params.id;
+  if (targetId !== req.user.id && !areFriends(req.user.id, targetId)) {
+    return res.status(403).json({ error: 'Only friends can see these posts.' });
+  }
+  const rows = db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now());
+  res.json({ moments: rows });
+});
+// Delete a moment (own only)
+app.post('/api/moments/:id/delete', requireAuth, (req, res) => {
+  const m = db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Post not found.' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
+  db.prepare('DELETE FROM moments WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/users/search', requireAuth, (req, res) => {
