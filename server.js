@@ -269,6 +269,8 @@ try {
   if (!ucols.includes('premium')) { db.exec("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"); console.log('Added users.premium'); }
   if (!ucols.includes('bio')) { db.exec("ALTER TABLE users ADD COLUMN bio TEXT"); console.log('Added users.bio'); }
   if (!ucols.includes('is_private')) { db.exec("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0"); console.log('Added users.is_private'); }
+  if (!ucols.includes('lat')) { db.exec("ALTER TABLE users ADD COLUMN lat REAL"); console.log('Added users.lat'); }
+  if (!ucols.includes('lng')) { db.exec("ALTER TABLE users ADD COLUMN lng REAL"); console.log('Added users.lng'); }
   if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
@@ -628,6 +630,50 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
       }
     });
   }
+});
+
+// ---- Save the user's approximate location (for "find similar people" & distance) ----
+app.post('/api/me/location', requireAuth, (req, res) => {
+  const { lat, lng } = req.body || {};
+  if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Invalid location.' });
+  db.prepare('UPDATE users SET lat = ?, lng = ? WHERE id = ?').run(lat, lng, req.user.id);
+  res.json({ ok: true });
+});
+
+// ---- Find people with similar interests (5+ shared) within a distance range ----
+app.get('/api/discover-people', requireAuth, (req, res) => {
+  const me = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const myInterests = me.interests ? JSON.parse(me.interests) : [];
+  const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 500);
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const MIN_SHARED = 5;
+  const others = db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
+  const matches = [];
+  for (const u of others) {
+    if (isBlocked(req.user.id, u.id)) continue;
+    const theirInterests = u.interests ? JSON.parse(u.interests) : [];
+    const shared = theirInterests.filter(x => myInterests.includes(x));
+    if (shared.length < MIN_SHARED) continue;
+    let dist = null;
+    if (hasLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
+      dist = distanceMiles(lat, lng, u.lat, u.lng);
+      if (dist > radiusMi) continue; // outside range
+    } else if (hasLoc) {
+      // they have no location — skip when a range is being applied
+      continue;
+    }
+    matches.push({
+      id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
+      city: u.city, interests: theirInterests, sharedCount: shared.length,
+      sharedInterests: shared, distance: dist, isPrivate: !!u.is_private,
+      lat: (typeof u.lat === 'number') ? u.lat : null, lng: (typeof u.lng === 'number') ? u.lng : null,
+      isFriend: areFriends(req.user.id, u.id)
+    });
+  }
+  // sort by most shared interests, then nearest
+  matches.sort((a, b) => b.sharedCount - a.sharedCount || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  res.json({ people: matches });
 });
 
 // ---- Moments: temporary 24h profile posts ----
