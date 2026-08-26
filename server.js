@@ -246,6 +246,10 @@ try {
     round_id TEXT NOT NULL, user_id TEXT NOT NULL, type TEXT NOT NULL,
     created_at INTEGER, PRIMARY KEY (round_id, user_id, type)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS saved_rounds (
+    round_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at INTEGER,
+    PRIMARY KEY (round_id, user_id)
+  )`);
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Membership RSVP + custom category support ---
@@ -941,9 +945,33 @@ app.get('/api/rounds', requireAuth, (req, res) => {
       (SELECT COUNT(*) FROM round_reactions rr WHERE rr.round_id = r.id AND rr.type='like') AS like_count,
       (SELECT COUNT(*) FROM round_reactions rr WHERE rr.round_id = r.id AND rr.type='love') AS love_count,
       EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='like') AS i_liked,
-      EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='love') AS i_loved
+      EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='love') AS i_loved,
+      EXISTS(SELECT 1 FROM saved_rounds sr WHERE sr.round_id = r.id AND sr.user_id = ?) AS i_saved
     FROM rounds r ORDER BY r.created_at DESC
-  `).all(req.user.id, req.user.id, req.user.id, req.user.id);
+  `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+  res.json({ rounds });
+});
+
+// Toggle save/bookmark on a Round
+app.post('/api/rounds/:id/save', requireAuth, (req, res) => {
+  const round = db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+  const existing = db.prepare('SELECT 1 FROM saved_rounds WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (existing) db.prepare('DELETE FROM saved_rounds WHERE round_id=? AND user_id=?').run(req.params.id, req.user.id);
+  else db.prepare('INSERT OR IGNORE INTO saved_rounds (round_id,user_id,created_at) VALUES (?,?,?)').run(req.params.id, req.user.id, now());
+  res.json({ ok: true, saved: !existing });
+});
+
+// List Rounds the user has saved
+app.get('/api/saved-rounds', requireAuth, (req, res) => {
+  const rounds = db.prepare(`
+    SELECT r.*,
+      (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
+      EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
+      1 AS i_saved
+    FROM rounds r JOIN saved_rounds sr ON sr.round_id = r.id
+    WHERE sr.user_id = ? ORDER BY sr.created_at DESC
+  `).all(req.user.id, req.user.id);
   res.json({ rounds });
 });
 
