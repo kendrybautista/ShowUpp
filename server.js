@@ -449,6 +449,34 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '' } });
 });
 
+// ---- Secure change: email / phone / password (requires current password) ----
+app.post('/api/me/secure-change', requireAuth, (req, res) => {
+  const { field, currentPassword, newValue } = req.body || {};
+  if (!['email', 'phone', 'password'].includes(field)) return res.status(400).json({ error: 'Invalid field.' });
+  if (!currentPassword) return res.status(400).json({ error: 'Enter your current password.' });
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!row || !bcrypt.compareSync(String(currentPassword), row.pass_hash)) {
+    return res.status(401).json({ error: 'Current password is incorrect.' });
+  }
+  const val = String(newValue || '').trim();
+  if (field === 'email') {
+    const email = val.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.user.id);
+    if (taken) return res.status(409).json({ error: 'That email is already in use.' });
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
+  } else if (field === 'phone') {
+    const phone = val.replace(/[^0-9+]/g, '').slice(0, 20);
+    db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
+  } else if (field === 'password') {
+    if (val.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+    const hash = bcrypt.hashSync(val, 10);
+    db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, req.user.id);
+  }
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
+});
+
 // ---- Forgot email: look up a (masked) email by username or phone ----
 app.post('/api/forgot-email', (req, res) => {
   const idRaw = (req.body && req.body.identifier) || '';
