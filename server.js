@@ -259,6 +259,8 @@ try {
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
   )`);
+  const momCols = db.prepare("PRAGMA table_info(moments)").all().map(c => c.name);
+  if (!momCols.includes('media')) { db.exec("ALTER TABLE moments ADD COLUMN media TEXT"); console.log('Added moments.media'); }
 } catch (e) { console.log('Migration note:', e.message); }
 
 // --- Membership RSVP + custom category support ---
@@ -271,6 +273,7 @@ try {
   if (!ucols.includes('is_private')) { db.exec("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0"); console.log('Added users.is_private'); }
   if (!ucols.includes('lat')) { db.exec("ALTER TABLE users ADD COLUMN lat REAL"); console.log('Added users.lat'); }
   if (!ucols.includes('lng')) { db.exec("ALTER TABLE users ADD COLUMN lng REAL"); console.log('Added users.lng'); }
+  if (!ucols.includes('relationship')) { db.exec("ALTER TABLE users ADD COLUMN relationship TEXT"); console.log('Added users.relationship'); }
   if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
@@ -363,6 +366,7 @@ function publicUser(u) {
     gallery: u.gallery ? JSON.parse(u.gallery) : [],
     premium: !!u.premium,
     isPrivate: !!u.is_private,
+    relationship: u.relationship || '',
     isAdmin: !!u.is_admin,
     lang: u.lang || 'en'
   };
@@ -370,7 +374,7 @@ function publicUser(u) {
 
 // --- App ---
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '16mb' }));
 // Serve the front-end (index.html) from /public
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -504,7 +508,7 @@ app.post('/api/reset-password', (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery, isPrivate } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -527,7 +531,8 @@ app.post('/api/me/update', requireAuth, (req, res) => {
       lang = COALESCE(?, lang),
       bio = COALESCE(?, bio),
       gallery = COALESCE(?, gallery),
-      is_private = COALESCE(?, is_private)
+      is_private = COALESCE(?, is_private),
+      relationship = COALESCE(?, relationship)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
@@ -537,6 +542,7 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     (bio !== undefined && bio !== null) ? String(bio).slice(0, 500) : null,
     cleanGallery,
     (typeof isPrivate === 'boolean') ? (isPrivate ? 1 : 0) : null,
+    (relationship !== undefined && relationship !== null) ? String(relationship).slice(0, 40) : null,
     req.user.id
   );
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -617,7 +623,7 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
         id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
         city: u.city, origin: u.origin, interests: u.interests ? JSON.parse(u.interests) : [],
         bio: u.bio || '', gallery: canSeeGallery && u.gallery ? JSON.parse(u.gallery) : [],
-        isPrivate: !!u.is_private, full: true, status, isFriend: friends
+        isPrivate: !!u.is_private, full: true, status, isFriend: friends, relationship: u.relationship || ''
       }
     });
   } else {
@@ -691,16 +697,37 @@ function pruneMoments() {
 // Create a moment
 app.post('/api/moments', requireAuth, (req, res) => {
   pruneMoments();
-  const { text, photo } = req.body || {};
+  const { text, photo, media } = req.body || {};
   const cleanText = String(text || '').slice(0, 500);
+  // media: array of {type:'image'|'video', data:dataURL}. Cap total size ~12MB.
+  let cleanMedia = [];
+  if (Array.isArray(media)) {
+    let budget = 12 * 1024 * 1024;
+    for (const item of media.slice(0, 10)) {
+      if (!item || typeof item.data !== 'string') continue;
+      const isImg = item.data.startsWith('data:image');
+      const isVid = item.data.startsWith('data:video');
+      if (!isImg && !isVid) continue;
+      if (item.data.length > budget) continue;
+      budget -= item.data.length;
+      cleanMedia.push({ type: isVid ? 'video' : 'image', data: item.data });
+    }
+  }
+  // legacy single-photo support
   const cleanPhoto = (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null;
-  if (!cleanText.trim() && !cleanPhoto) return res.status(400).json({ error: 'Write something or add a photo.' });
-  // enforce 10 per rolling 24h
+  if (cleanPhoto && !cleanMedia.length) cleanMedia.push({ type: 'image', data: cleanPhoto });
+  if (!cleanText.trim() && !cleanMedia.length) return res.status(400).json({ error: 'Write something or add a photo/video.' });
   const since = now() - MOMENT_TTL;
   const count = db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since).c;
   if (count >= MOMENT_DAILY_MAX) return res.status(429).json({ error: "You've reached the limit of 10 posts in 24 hours. Try again later." });
-  const m = { id: id(), user_id: req.user.id, text: cleanText, photo: cleanPhoto, created_at: now(), expires_at: now() + MOMENT_TTL };
-  db.prepare('INSERT INTO moments (id,user_id,text,photo,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@created_at,@expires_at)').run(m);
+  const firstPhoto = cleanMedia.find(x => x.type === 'image');
+  const m = {
+    id: id(), user_id: req.user.id, text: cleanText,
+    photo: firstPhoto ? firstPhoto.data : null,
+    media: JSON.stringify(cleanMedia),
+    created_at: now(), expires_at: now() + MOMENT_TTL
+  };
+  db.prepare('INSERT INTO moments (id,user_id,text,photo,media,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@created_at,@expires_at)').run(m);
   const remaining = MOMENT_DAILY_MAX - (count + 1);
   res.json({ moment: m, remaining });
 });
