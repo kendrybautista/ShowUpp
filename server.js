@@ -647,6 +647,8 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
   const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 500);
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const mode = req.query.mode || 'distance'; // 'distance' | 'country'
+  const country = (req.query.country || '').trim().toLowerCase();
   const MIN_SHARED = 5;
   const others = db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
   const matches = [];
@@ -656,12 +658,17 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
     const shared = theirInterests.filter(x => myInterests.includes(x));
     if (shared.length < MIN_SHARED) continue;
     let dist = null;
-    if (hasLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
-      dist = distanceMiles(lat, lng, u.lat, u.lng);
-      if (dist > radiusMi) continue; // outside range
-    } else if (hasLoc) {
-      // they have no location — skip when a range is being applied
-      continue;
+    if (mode === 'country') {
+      // match by the country embedded in their city string ("City, Country")
+      const theirCity = (u.city || '').toLowerCase();
+      if (!country || !theirCity.includes(country)) continue;
+    } else {
+      if (hasLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
+        dist = distanceMiles(lat, lng, u.lat, u.lng);
+        if (dist > radiusMi) continue;
+      } else if (hasLoc) {
+        continue;
+      }
     }
     matches.push({
       id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
@@ -671,7 +678,6 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
       isFriend: areFriends(req.user.id, u.id)
     });
   }
-  // sort by most shared interests, then nearest
   matches.sort((a, b) => b.sharedCount - a.sharedCount || (a.distance ?? 1e9) - (b.distance ?? 1e9));
   res.json({ people: matches });
 });
@@ -874,7 +880,9 @@ app.get('/api/notifications', requireAuth, (req, res) => {
 
 // Unread counts for the badge (notifications + unread DMs)
 app.get('/api/notifications/counts', requireAuth, (req, res) => {
-  const notif = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0').get(req.user.id).c;
+  // Bell = non-message notifications only (friend requests, accepts, group events).
+  // Message notifications are surfaced separately on the Chats icon.
+  const notif = db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0 AND type != 'dm'").get(req.user.id).c;
   const convs = db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
   let unreadDms = 0;
   for (const cm of convs) {
