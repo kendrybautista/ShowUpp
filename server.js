@@ -274,6 +274,7 @@ try {
   if (!ucols.includes('lat')) { db.exec("ALTER TABLE users ADD COLUMN lat REAL"); console.log('Added users.lat'); }
   if (!ucols.includes('lng')) { db.exec("ALTER TABLE users ADD COLUMN lng REAL"); console.log('Added users.lng'); }
   if (!ucols.includes('relationship')) { db.exec("ALTER TABLE users ADD COLUMN relationship TEXT"); console.log('Added users.relationship'); }
+  if (!ucols.includes('phone')) { db.exec("ALTER TABLE users ADD COLUMN phone TEXT"); console.log('Added users.phone'); }
   if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
@@ -421,11 +422,19 @@ app.post('/api/signup', (req, res) => {
 });
 
 app.post('/api/login', (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
-  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase());
+  // Accept email, username, or phone in the "email" field (kept name for compatibility) or "identifier"
+  const idRaw = (req.body && (req.body.identifier || req.body.email)) || '';
+  const password = req.body && req.body.password;
+  const identifier = String(idRaw).trim();
+  if (!identifier || !password) return res.status(400).json({ error: 'Enter your email, username, or phone and password.' });
+  const lower = identifier.toLowerCase();
+  const digits = identifier.replace(/[^0-9+]/g, '');
+  // Try email, then username, then phone
+  let row = db.prepare('SELECT * FROM users WHERE email = ?').get(lower);
+  if (!row) row = db.prepare('SELECT * FROM users WHERE username = ?').get(lower.replace(/^@/, ''));
+  if (!row && digits.length >= 6) row = db.prepare('SELECT * FROM users WHERE phone = ?').get(digits);
   if (!row || !bcrypt.compareSync(String(password), row.pass_hash)) {
-    return res.status(401).json({ error: 'Wrong email or password.' });
+    return res.status(401).json({ error: 'Wrong login or password.' });
   }
   if (row.suspended) {
     return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
@@ -435,7 +444,31 @@ app.post('/api/login', (req, res) => {
 
 // Return the current user (used on app load to restore session)
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json({ user: publicUser(req.user) });
+  // Include email + phone for the logged-in user's own profile (never exposed via publicUser to others)
+  const full = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(req.user.id) || {};
+  res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '' } });
+});
+
+// ---- Forgot email: look up a (masked) email by username or phone ----
+app.post('/api/forgot-email', (req, res) => {
+  const idRaw = (req.body && req.body.identifier) || '';
+  const identifier = String(idRaw).trim();
+  if (!identifier) return res.status(400).json({ error: 'Enter your username or phone number.' });
+  const lower = identifier.toLowerCase().replace(/^@/, '');
+  const digits = identifier.replace(/[^0-9+]/g, '');
+  let row = db.prepare('SELECT email FROM users WHERE username = ?').get(lower);
+  if (!row && digits.length >= 6) row = db.prepare('SELECT email FROM users WHERE phone = ?').get(digits);
+  if (!row) return res.status(404).json({ error: 'No account found with that username or phone.' });
+  // mask the email: keep first char + domain
+  const em = row.email || '';
+  const at = em.indexOf('@');
+  let masked = em;
+  if (at > 0) {
+    const namePart = em.slice(0, at);
+    const domain = em.slice(at);
+    masked = namePart[0] + '•'.repeat(Math.max(2, namePart.length - 1)) + domain;
+  }
+  res.json({ maskedEmail: masked });
 });
 
 // ---- Password recovery via email ----
@@ -508,7 +541,7 @@ app.post('/api/reset-password', (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -516,6 +549,19 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     if (cleanUser.length < 3) return res.status(400).json({ error: 'Username needs at least 3 letters/numbers.' });
     const taken = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
     if (taken) return res.status(409).json({ error: 'That username is taken. Try another.' });
+  }
+  // Email: validate + enforce uniqueness if changing
+  let cleanEmail = null;
+  if (email !== undefined && email !== null && String(email).trim()) {
+    cleanEmail = String(email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const emailTaken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(cleanEmail, req.user.id);
+    if (emailTaken) return res.status(409).json({ error: 'That email is already in use.' });
+  }
+  // Phone: optional, store digits/plus only
+  let cleanPhone = null;
+  if (phone !== undefined && phone !== null) {
+    cleanPhone = String(phone).replace(/[^0-9+]/g, '').slice(0, 20);
   }
   const cleanLang = (lang && ['en', 'es'].includes(lang)) ? lang : null;
   // gallery: array of image data URLs, max 10, each capped
@@ -532,7 +578,9 @@ app.post('/api/me/update', requireAuth, (req, res) => {
       bio = COALESCE(?, bio),
       gallery = COALESCE(?, gallery),
       is_private = COALESCE(?, is_private),
-      relationship = COALESCE(?, relationship)
+      relationship = COALESCE(?, relationship),
+      email = COALESCE(?, email),
+      phone = COALESCE(?, phone)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
@@ -543,10 +591,12 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     cleanGallery,
     (typeof isPrivate === 'boolean') ? (isPrivate ? 1 : 0) : null,
     (relationship !== undefined && relationship !== null) ? String(relationship).slice(0, 40) : null,
+    cleanEmail,
+    cleanPhone,
     req.user.id
   );
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: publicUser(updated) });
+  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
 });
 
 // Upload / change profile picture (stored as a data URL; kept small)
