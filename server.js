@@ -396,7 +396,7 @@ app.post('/api/check-email', (req, res) => {
 });
 
 app.post('/api/signup', (req, res) => {
-  const { email, password, name, city, origin, interests, lang } = req.body || {};
+  const { email, password, name, phone, city, origin, interests, lang } = req.body || {};
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
@@ -411,16 +411,17 @@ app.post('/api/signup', (req, res) => {
     email: email.toLowerCase(),
     pass_hash: bcrypt.hashSync(String(password), 10),
     name: String(name).trim(),
+    phone: phone ? String(phone).replace(/[^0-9+ ]/g, '').trim().slice(0, 24) : '',
     city: city || '',
     origin: origin || '',
     interests: JSON.stringify(Array.isArray(interests) ? interests : []),
     lang: (lang && ['en', 'es'].includes(lang)) ? lang : 'en',
     created_at: now()
   };
-  db.prepare(`INSERT INTO users (id,email,pass_hash,name,city,origin,interests,lang,created_at)
-              VALUES (@id,@email,@pass_hash,@name,@city,@origin,@interests,@lang,@created_at)`).run(user);
+  db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@created_at)`).run(user);
 
-  res.json({ token: makeToken(user), user: publicUser(user) });
+  res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
 });
 
 app.post('/api/login', (req, res) => {
@@ -441,7 +442,7 @@ app.post('/api/login', (req, res) => {
   if (row.suspended) {
     return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
   }
-  res.json({ token: makeToken(row), user: publicUser(row) });
+  res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0 } });
 });
 
 // Return the current user (used on app load to restore session)
@@ -1129,7 +1130,16 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(req.params.id);
   const others = members.filter(m => m.id !== req.user.id);
   const title = conv.is_group ? conv.title : (others[0] ? others[0].name : 'Conversation');
-  res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others } });
+  // Read-receipt info for 1-on-1 chats: the other member's last_read time and whether they + I have receipts on
+  let otherLastRead = 0, receiptsOn = false;
+  if (!conv.is_group && others[0]) {
+    const om = db.prepare('SELECT last_read FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, others[0].id);
+    otherLastRead = (om && om.last_read) || 0;
+    const meRow = db.prepare('SELECT read_receipts FROM users WHERE id=?').get(req.user.id);
+    const otherRow = db.prepare('SELECT read_receipts FROM users WHERE id=?').get(others[0].id);
+    receiptsOn = (meRow && meRow.read_receipts !== 0) && (otherRow && otherRow.read_receipts !== 0);
+  }
+  res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others, other_last_read: otherLastRead, receipts_on: receiptsOn } });
 });
 
 // React to a DM message
