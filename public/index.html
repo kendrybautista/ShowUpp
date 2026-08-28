@@ -20,6 +20,23 @@
 .phone[data-theme="dark"]{--bone:#0B0B16;--card:#15162A;--ink:#EDEEF7;--muted:#8890B5;--line:#232544;--night:#EDEEF7;--coral:#5B7FFF;--mango:#6C8BFF;--turq:#4FB0FF;--shadow:0 8px 30px rgba(0,0,0,.5)}
 .phone[data-theme="dark"] .btn-mango,.phone[data-theme="dark"] .btn-primary{background:linear-gradient(135deg,#6366F1,#5B7FFF)}
 .phone[data-theme="dark"] .catpill.on,.phone[data-theme="dark"] .sec-toggle.on,.phone[data-theme="dark"] .circ-tab.on{background:linear-gradient(135deg,#6366F1,#5B7FFF);color:#fff}
+/* Dark-theme legibility fixes: elements with hardcoded light backgrounds */
+.phone[data-theme="dark"] #profMoments{background:var(--card)!important;border-color:var(--line)}
+.phone[data-theme="dark"] .secure-row{border-color:var(--line)}
+.phone[data-theme="dark"] .sicon{filter:brightness(.9)}
+.phone[data-theme="dark"] .qa-card{background:#1B1C33}
+.phone[data-theme="dark"] .card-bookmark{background:rgba(30,32,54,.92);color:#8BA0FF}
+.phone[data-theme="dark"] .photo-tag{background:rgba(30,32,54,.92);color:#EDEEF7}
+.phone[data-theme="dark"] .photo-caption{background:linear-gradient(to bottom,rgba(11,11,22,0),rgba(11,11,22,.75) 55%,rgba(11,11,22,.92))}
+.phone[data-theme="dark"] .photo-caption h3,.phone[data-theme="dark"] .photo-caption .meta{color:#EDEEF7;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+.phone[data-theme="dark"] input,.phone[data-theme="dark"] textarea,.phone[data-theme="dark"] select{background:#15162A;color:#EDEEF7;border-color:#2C2E52}
+.phone[data-theme="dark"] .search-bar,.phone[data-theme="dark"] .searchbar{background:#15162A;color:#EDEEF7}
+.phone[data-theme="dark"] .chip{background:#1B1C33;color:#C7CCEA}
+.phone[data-theme="dark"] .chip.on{background:linear-gradient(135deg,#6366F1,#5B7FFF);color:#fff}
+.phone[data-theme="dark"] .viewToggle,.phone[data-theme="dark"] #viewToggle{background:#15162A!important}
+.phone[data-theme="dark"] .gp-toggle{color:#C7CCEA}
+.phone[data-theme="dark"] .theme-opt{color:#C7CCEA}
+.phone[data-theme="dark"] .detail-loc,.phone[data-theme="dark"] #detailLocation,.phone[data-theme="dark"] #detailEvent{background:#15162A!important;border-color:#2C2E52}
 .phone[data-theme="dark"] .round,.phone[data-theme="dark"] .circle-card,.phone[data-theme="dark"] .friend-row,.phone[data-theme="dark"] .chip,.phone[data-theme="dark"] .srow,.phone[data-theme="dark"] .catpill{background:#20202e}
 .phone[data-theme="dark"] .nav{background:rgba(21,21,31,.92)}
 .phone[data-theme="dark"] .sheet-inner{background:#20202e}
@@ -138,6 +155,25 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .round .banner .tag{background:rgba(255,255,255,.92);color:var(--night);font-size:11px;font-weight:700;padding:5px 10px;border-radius:12px}
 .round-actions{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .photo-card{padding:0;overflow:hidden}
+/* Horizontal round card (Image 2 layout) */
+.rc-card{padding:0;overflow:hidden;position:relative}
+.rc-top{display:flex;gap:0}
+.rc-photo{width:38%;min-width:120px;align-self:stretch;min-height:150px;background-size:cover;background-position:center;position:relative;flex:none}
+.rc-tag{position:absolute;top:10px;left:10px;background:rgba(255,255,255,.95);color:var(--night);font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:12px}
+.rc-emoji{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:42px}
+.rc-info{flex:1;padding:14px 14px 12px;position:relative;min-width:0}
+.rc-title{font-family:'Fraunces',serif;font-size:19px;font-weight:600;color:var(--night);margin:0 34px 6px 0;line-height:1.15}
+.rc-members{font-size:13px;color:var(--muted);margin-bottom:8px}
+.rc-joined{color:var(--turq);font-weight:700;margin-left:4px}
+.rc-avatars{display:flex;align-items:center;margin-bottom:10px}
+.rc-av{width:28px;height:28px;border-radius:50%;background-size:cover;background-position:center;background-color:#ccc;border:2px solid var(--card);margin-left:-8px;background-repeat:no-repeat}
+.rc-av:first-child{margin-left:0}
+.rc-more{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--muted);background:var(--bone)!important}
+.rc-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px}
+.rc-sep{opacity:.5}
+.rc-actions-row{padding:0 14px 12px}
+.rc-actions-row .round-actions{margin-top:0;padding-top:10px;border-top:1px solid var(--line)}
+.rc-card .card-bookmark{position:absolute;top:12px;right:12px;width:34px;height:34px;box-shadow:none;background:var(--bone)}
 .photo-cover{position:relative;width:100%;height:300px}
 .photo-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .photo-tag{position:absolute;top:14px;left:14px;background:rgba(255,255,255,.95);color:var(--night);font-size:13px;font-weight:700;padding:6px 14px;border-radius:14px;z-index:2}
@@ -456,20 +492,23 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="fixed-head">
     <div class="topbar"><div class="hi"><span id="helloWord">Hi there,</span> <b id="homeGreet">👋</b></div><div style="display:flex;align-items:center;gap:14px"><div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div></div>
     <div class="chips" id="homeChips"></div>
-    <div style="display:flex;gap:6px;padding:0 18px 10px">
-      <div class="circ-tab on sec-toggle" id="sec-rounds" onclick="switchHomeSection('rounds')">🤝 Rounds</div>
-      <div class="circ-tab sec-toggle" id="sec-events" onclick="switchHomeSection('events')">📣 Nearby</div>
-      <div class="circ-tab sec-toggle" id="sec-saved" onclick="switchHomeSection('saved')">🔖 Saved</div>
-    </div>
   </div>
   <div class="scroll">
     <div style="margin:12px 18px 6px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 14px;box-shadow:var(--shadow)">
-      <div style="font-weight:700;font-size:15px;color:var(--night);margin-bottom:12px;padding:0 4px">Quick access</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
-        <div class="qa-card" onclick="switchHomeSection('rounds')"><div class="qa-emoji">🤝</div><div class="qa-title">Rounds</div><div class="qa-sub">Small groups</div></div>
-        <div class="qa-card" onclick="qaNearMe()"><div class="qa-emoji">📍</div><div class="qa-title">Near me</div><div class="qa-sub">Find nearby</div></div>
-        <div class="qa-card" onclick="switchHomeSection('events')"><div class="qa-emoji">📣</div><div class="qa-title">Nearby</div><div class="qa-sub">Happening now</div></div>
-        <div class="qa-card" onclick="switchHomeSection('saved')"><div class="qa-emoji">🔖</div><div class="qa-title">Saved</div><div class="qa-sub">Your picks</div></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:0 4px">
+        <span style="font-weight:700;font-size:15px;color:var(--night)">Quick access</span>
+        <span onclick="openQaEditor()" style="font-size:13px;font-weight:700;color:var(--coral);cursor:pointer">Edit</span>
+      </div>
+      <div id="qaGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px"></div>
+    </div>
+
+    <!-- Quick access editor sheet -->
+    <div class="sheet" id="qaEditSheet" onclick="if(event.target===this)closeQaEditor()">
+      <div class="sheet-inner" style="max-height:80%;overflow-y:auto"><div class="grabber"></div>
+        <h3>Edit Quick access</h3>
+        <p style="font-size:13px;color:var(--muted);margin-top:-4px">Pick the shortcuts you want. Rounds, Nearby and Saved always stay.</p>
+        <div id="qaEditList" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+        <button class="btn btn-mango" onclick="closeQaEditor()" style="margin-top:14px">Done</button>
       </div>
     </div>
     <div id="distanceBar" style="display:none;padding:6px 22px 4px">
@@ -1502,7 +1541,7 @@ function go(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('.scroll').forEach(s=>s.scrollTop=0);
-  if(id==='s-home'){loadHome();if(typeof switchHomeSection==='function')switchHomeSection('rounds');}
+  if(id==='s-home'){loadHome();if(typeof renderQaGrid==='function')renderQaGrid();if(typeof switchHomeSection==='function')switchHomeSection('rounds');}
   if(id==='s-circles'){switchCircTab('rounds');loadCircles();}
   if(id==='s-chats'){switchChatTab('rounds');updateNotifBadge();}
   if(id==='s-create'){loadCustomCategories().then(()=>renderCats(''));}
@@ -1917,10 +1956,68 @@ function qaNearMe(){
   if(chip)chip.click();
   else{const db=document.getElementById('distanceBar');if(db)db.style.display='block';}
 }
+// ---- Quick access shortcuts (editable) ----
+const QA_ALL=[
+  {id:'rounds',emoji:'🤝',title:'Rounds',sub:'Small groups',fixed:true,act:()=>switchHomeSection('rounds')},
+  {id:'nearby',emoji:'📣',title:'Nearby',sub:'Happening now',fixed:true,act:()=>switchHomeSection('events')},
+  {id:'saved',emoji:'🔖',title:'Saved',sub:'Your picks',fixed:true,act:()=>switchHomeSection('saved')},
+  {id:'nearme',emoji:'📍',title:'Near me',sub:'Find nearby',act:()=>qaNearMe()},
+  {id:'friends',emoji:'👥',title:'Friends',sub:'Your people',act:()=>{go('s-circles');if(typeof switchCircleTab==='function')switchCircleTab('friends');}},
+  {id:'similar',emoji:'✨',title:'Similar',sub:'People like you',act:()=>{go('s-circles');if(typeof switchCircleTab==='function')switchCircleTab('similar');}},
+  {id:'chats',emoji:'💬',title:'Chats',sub:'Messages',act:()=>go('s-chats')},
+  {id:'qr',emoji:'🔳',title:'QR code',sub:'Find me',act:()=>{if(typeof openMyQR==='function')openMyQR();}},
+  {id:'invite',emoji:'📨',title:'Invite',sub:'Bring friends',act:()=>{if(typeof openInvite==='function')openInvite();}},
+  {id:'host',emoji:'➕',title:'Host',sub:'New Round',act:()=>go('s-create')}
+];
+const QA_DEFAULT=['rounds','nearme','nearby','saved'];
+function qaGetSelection(){
+  let sel=null;try{sel=JSON.parse(localStorage.getItem('su_qa')||'null');}catch(e){}
+  if(!Array.isArray(sel)||!sel.length)sel=QA_DEFAULT.slice();
+  QA_ALL.filter(x=>x.fixed).forEach(f=>{if(!sel.includes(f.id))sel.push(f.id);});
+  return sel;
+}
+function qaSaveSelection(sel){try{localStorage.setItem('su_qa',JSON.stringify(sel));}catch(e){}}
+function renderQaGrid(){
+  const grid=document.getElementById('qaGrid');if(!grid)return;
+  const sel=qaGetSelection();
+  const items=sel.map(id=>QA_ALL.find(x=>x.id===id)).filter(Boolean);
+  const shown=items.slice(0,4);
+  let html=shown.map(it=>'<div class="qa-card" onclick="qaRun(\''+it.id+'\')"><div class="qa-emoji">'+it.emoji+'</div><div class="qa-title">'+it.title+'</div><div class="qa-sub">'+it.sub+'</div></div>').join('');
+  if(items.length>4){
+    html+='<div class="qa-card" onclick="toggleQaMore(event)"><div class="qa-emoji">⋯</div><div class="qa-title">More</div><div class="qa-sub">'+(items.length-4)+' more</div></div>';
+  }
+  grid.innerHTML=html;
+  let more=document.getElementById('qaMore');
+  if(items.length>4){
+    const extra=items.slice(4);
+    if(!more){more=document.createElement('div');more.id='qaMore';grid.parentElement.appendChild(more);}
+    more.style.cssText='display:none;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:8px';
+    more.innerHTML=extra.map(it=>'<div class="qa-card" onclick="qaRun(\''+it.id+'\')"><div class="qa-emoji">'+it.emoji+'</div><div class="qa-title">'+it.title+'</div><div class="qa-sub">'+it.sub+'</div></div>').join('');
+  }else if(more){more.remove();}
+}
+function toggleQaMore(e){e.stopPropagation();const m=document.getElementById('qaMore');if(m)m.style.display=m.style.display==='grid'?'none':'grid';}
+function qaRun(id){const it=QA_ALL.find(x=>x.id===id);if(it&&it.act)it.act();}
+function openQaEditor(){
+  const sel=qaGetSelection();
+  const listEl=document.getElementById('qaEditList');
+  listEl.innerHTML=QA_ALL.map(it=>{
+    const on=sel.includes(it.id);
+    const lock=it.fixed?'<span style="font-size:11px;color:var(--muted)">Always on</span>':'<label class="switch"><input type="checkbox" '+(on?'checked':'')+' onchange="qaToggle(\''+it.id+'\',this.checked)"><span class="slider"></span></label>';
+    return '<div style="display:flex;align-items:center;gap:10px;background:var(--bone);border:1px solid var(--line);border-radius:12px;padding:10px 12px"><span style="font-size:22px">'+it.emoji+'</span><div style="flex:1"><div style="font-weight:700;font-size:14px;color:var(--night)">'+it.title+'</div><div style="font-size:11.5px;color:var(--muted)">'+it.sub+'</div></div>'+lock+'</div>';
+  }).join('');
+  document.getElementById('qaEditSheet').classList.add('open');
+}
+function closeQaEditor(){document.getElementById('qaEditSheet').classList.remove('open');renderQaGrid();}
+function qaToggle(id,on){
+  let sel=qaGetSelection();
+  if(on){if(!sel.includes(id))sel.push(id);}
+  else{sel=sel.filter(x=>x!==id);}
+  qaSaveSelection(sel);
+}
 function switchHomeSection(which){
   homeSection=which;
-  document.getElementById('sec-rounds').classList.toggle('on',which==='rounds');
-  document.getElementById('sec-events').classList.toggle('on',which==='events');
+  const secR=document.getElementById('sec-rounds');if(secR)secR.classList.toggle('on',which==='rounds');
+  const secE=document.getElementById('sec-events');if(secE)secE.classList.toggle('on',which==='events');
   const savedTab=document.getElementById('sec-saved');if(savedTab)savedTab.classList.toggle('on',which==='saved');
   const showRounds=(which==='rounds'||which==='saved'); // both use the rounds list UI
   const showEvents=(which==='events');
@@ -2097,30 +2194,50 @@ function renderRoundsList(customList){
   box.innerHTML=list.map(r=>{
     const emoji=r.emoji||'✨';
     const d=distLabel(r);
-    const meta='<span>'+r.member_count+' member'+(r.member_count===1?'':'s')+'</span>'+(d?'<span class="dot"></span><span>'+d+'</span>':'')+(r.joined?'<span class="dot"></span><span style="color:var(--turq);font-weight:600">Joined</span>':'');
-    const likeOn=r.i_liked?' on':'';const loveOn=r.i_loved?' on':'';const saveOn=r.i_saved?' on':'';
+    // date + time from starts_at if present
+    let dateStr='',timeStr='';
+    if(r.starts_at){const dt=new Date(r.starts_at);dateStr=dt.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});timeStr=dt.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});}
+    // member avatars (little stacked circles) + overflow count
+    const avs=(r.member_avatars||[]);
+    let avatarsHtml='';
+    if(avs.length){
+      avatarsHtml='<div class="rc-avatars">'+avs.slice(0,4).map(a=>'<span class="rc-av" style="background-image:url('+esc(a)+')"></span>').join('');
+      const extra=r.member_count-avs.length;
+      if(extra>0)avatarsHtml+='<span class="rc-av rc-more">+'+extra+'</span>';
+      avatarsHtml+='</div>';
+    }
+    // meta row: date · time · distance
+    const metaBits=[];
+    if(dateStr)metaBits.push('🗓️ '+dateStr);
+    if(timeStr)metaBits.push('🕐 '+timeStr);
+    if(d)metaBits.push('📍 '+d);
+    const metaRow=metaBits.length?'<div class="rc-meta">'+metaBits.map(b=>'<span>'+b+'</span>').join('<span class="rc-sep">·</span>')+'</div>':'';
+    const likeOn=r.i_liked?' on':'';const loveOn=r.i_loved?' on':'';
     const actions='<div class="round-actions" onclick="event.stopPropagation()">'
       +'<button class="ract'+likeOn+'" onclick="toggleRoundReact(\''+r.id+'\',\'like\',this)">👍 <span>'+(r.like_count||0)+'</span></button>'
       +'<button class="ract'+loveOn+'" onclick="toggleRoundReact(\''+r.id+'\',\'love\',this)">❤️ <span>'+(r.love_count||0)+'</span></button>'
       +'<button class="ract" onclick="shareRound(\''+r.id+'\')">'+shareIconSvg()+'</button>'
       +'</div>';
     const bookmark='<button class="card-bookmark'+(r.i_saved?' on':'')+'" onclick="event.stopPropagation();toggleSaveRound(\''+r.id+'\',this)">'
-      +'<svg width="20" height="20" viewBox="0 0 24 24" fill="'+(r.i_saved?'currentColor':'none')+'" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
-    if(r.photo){
-      // Full-bleed photo card (matches design): tall photo, category tag top-left,
-      // bookmark top-right, name + meta overlaid bottom-left, actions strip below.
-      return '<div class="round photo-card" onclick="openDetail(\''+r.id+'\')">'
-        +'<div class="photo-cover">'
-          +'<img src="'+esc(r.photo)+'" alt="">'
-          +'<div class="photo-tag">'+t(r.category||'Round')+'</div>'
+      +'<svg width="18" height="18" viewBox="0 0 24 24" fill="'+(r.i_saved?'currentColor':'none')+'" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    // Left visual: photo if present, else gradient + emoji
+    const leftVisual=r.photo
+      ? '<div class="rc-photo" style="background-image:url('+esc(r.photo)+')"><div class="rc-tag">'+t(r.category||'Round')+'</div></div>'
+      : '<div class="rc-photo" style="background:'+gradFor(r.id)+'"><div class="rc-emoji">'+emoji+'</div><div class="rc-tag">'+t(r.category||'Round')+'</div></div>';
+    const joinedBadge=r.joined?'<span class="rc-joined">'+t('Joined')+'</span>':'';
+    return '<div class="round rc-card" onclick="openDetail(\''+r.id+'\')">'
+      +'<div class="rc-top">'
+        +leftVisual
+        +'<div class="rc-info">'
           +bookmark
-          +'<div class="photo-caption"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div></div>'
+          +'<h3 class="rc-title">'+esc(r.title)+'</h3>'
+          +'<div class="rc-members">'+r.member_count+' '+t('members')+' '+joinedBadge+'</div>'
+          +avatarsHtml
+          +metaRow
         +'</div>'
-        +'<div class="body">'+actions+'</div>'
-      +'</div>';
-    }
-    // Normal card (no photo): gradient banner + emoji
-    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+t(r.category||'Round')+'</div>'+bookmark+'</div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div>'+actions+'</div></div>';
+      +'</div>'
+      +'<div class="rc-actions-row">'+actions+'</div>'
+    +'</div>';
   }).join('');
 }
 async function pickChip(el){
