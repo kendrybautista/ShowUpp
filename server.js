@@ -275,6 +275,8 @@ try {
   if (!ucols.includes('lng')) { db.exec("ALTER TABLE users ADD COLUMN lng REAL"); console.log('Added users.lng'); }
   if (!ucols.includes('relationship')) { db.exec("ALTER TABLE users ADD COLUMN relationship TEXT"); console.log('Added users.relationship'); }
   if (!ucols.includes('phone')) { db.exec("ALTER TABLE users ADD COLUMN phone TEXT"); console.log('Added users.phone'); }
+  if (!ucols.includes('incognito')) { db.exec("ALTER TABLE users ADD COLUMN incognito INTEGER DEFAULT 0"); console.log('Added users.incognito'); }
+  if (!ucols.includes('read_receipts')) { db.exec("ALTER TABLE users ADD COLUMN read_receipts INTEGER DEFAULT 1"); console.log('Added users.read_receipts'); }
   if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
   // custom categories table
   db.exec(`CREATE TABLE IF NOT EXISTS categories (
@@ -445,8 +447,34 @@ app.post('/api/login', (req, res) => {
 // Return the current user (used on app load to restore session)
 app.get('/api/me', requireAuth, (req, res) => {
   // Include email + phone for the logged-in user's own profile (never exposed via publicUser to others)
-  const full = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(req.user.id) || {};
-  res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '' } });
+  const full = db.prepare('SELECT email, phone, incognito, read_receipts FROM users WHERE id = ?').get(req.user.id) || {};
+  res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0 } });
+});
+
+// Presence of my friends (respects their incognito setting)
+app.get('/api/friends/presence', requireAuth, (req, res) => {
+  const friendIds = db.prepare('SELECT friend_id AS fid FROM friendships WHERE user_id = ?').all(req.user.id).map(r => r.fid);
+  const presence = {};
+  for (const fid of friendIds) {
+    const u = db.prepare('SELECT incognito FROM users WHERE id = ?').get(fid);
+    // If the friend is incognito, always report offline
+    presence[fid] = (u && u.incognito) ? false : isUserOnline(fid);
+  }
+  res.json({ presence });
+});
+
+// Toggle my incognito (appear offline to friends)
+app.post('/api/me/incognito', requireAuth, (req, res) => {
+  const on = req.body && req.body.incognito ? 1 : 0;
+  db.prepare('UPDATE users SET incognito = ? WHERE id = ?').run(on, req.user.id);
+  res.json({ incognito: !!on });
+});
+
+// Toggle my read receipts
+app.post('/api/me/read-receipts', requireAuth, (req, res) => {
+  const on = req.body && req.body.readReceipts ? 1 : 0;
+  db.prepare('UPDATE users SET read_receipts = ? WHERE id = ?').run(on, req.user.id);
+  res.json({ readReceipts: !!on });
 });
 
 // ---- Secure change: email / phone / password (requires current password) ----
@@ -968,6 +996,11 @@ app.post('/api/report', requireAuth, (req, res) => {
 });
 
 // ---- Notifications ----
+function isUserOnline(userId) {
+  let online = false;
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) online = true; });
+  return online;
+}
 function pushNotif(userId, type, title, body, link) {
   try {
     db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
