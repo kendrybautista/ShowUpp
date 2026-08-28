@@ -1240,6 +1240,11 @@ app.get('/api/rounds', requireAuth, (req, res) => {
       EXISTS(SELECT 1 FROM saved_rounds sr WHERE sr.round_id = r.id AND sr.user_id = ?) AS i_saved
     FROM rounds r ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+  // attach up to 4 member avatars for the card preview
+  const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
+  for (const r of rounds) {
+    r.member_avatars = avStmt.all(r.id).map(x => x.avatar || '').filter(Boolean);
+  }
   res.json({ rounds });
 });
 
