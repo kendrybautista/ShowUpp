@@ -17,7 +17,9 @@
 <style>
 :root{--night:#1B1B3A;--coral:#FF6B5B;--mango:#FFB03A;--turq:#2DD4BF;--bone:#F0EFF7;--ink:#2A2A3C;--muted:#8A8699;--line:#E6E4F0;--card:#FFFFFF;--shadow:0 8px 30px rgba(27,27,58,.08)}
 /* Dark theme */
-.phone[data-theme="dark"]{--bone:#15151f;--card:#20202e;--ink:#EDEAF5;--muted:#8A86A0;--line:#2C2C3E;--night:#EDEAF5;--shadow:0 8px 30px rgba(0,0,0,.4)}
+.phone[data-theme="dark"]{--bone:#0B0B16;--card:#15162A;--ink:#EDEEF7;--muted:#8890B5;--line:#232544;--night:#EDEEF7;--coral:#5B7FFF;--mango:#6C8BFF;--turq:#4FB0FF;--shadow:0 8px 30px rgba(0,0,0,.5)}
+.phone[data-theme="dark"] .btn-mango,.phone[data-theme="dark"] .btn-primary{background:linear-gradient(135deg,#6366F1,#5B7FFF)}
+.phone[data-theme="dark"] .catpill.on,.phone[data-theme="dark"] .sec-toggle.on,.phone[data-theme="dark"] .circ-tab.on{background:linear-gradient(135deg,#6366F1,#5B7FFF);color:#fff}
 .phone[data-theme="dark"] .round,.phone[data-theme="dark"] .circle-card,.phone[data-theme="dark"] .friend-row,.phone[data-theme="dark"] .chip,.phone[data-theme="dark"] .srow,.phone[data-theme="dark"] .catpill{background:#20202e}
 .phone[data-theme="dark"] .nav{background:rgba(21,21,31,.92)}
 .phone[data-theme="dark"] .sheet-inner{background:#20202e}
@@ -88,8 +90,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   .statusbar{height:env(safe-area-inset-top,0px)}
   .nav{padding-bottom:env(safe-area-inset-bottom,0px);height:calc(84px + env(safe-area-inset-bottom,0px))}
 }
-.screen{position:absolute;inset:0;display:none;flex-direction:column;background:linear-gradient(to bottom,#F5F9FF,#FBFCFE 60%,#FFFFFF);animation:fade .35s ease}
-.phone[data-theme="dark"] .screen{background:#15151f}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
+.phone[data-theme="dark"] .screen{background:#0B0B16}
 .phone[data-theme="warm"] .screen{background:linear-gradient(to bottom,#FBF6EC,#FDFAF3)}
 
 
@@ -139,6 +141,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .photo-cover{position:relative;width:100%;height:300px}
 .photo-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .photo-tag{position:absolute;top:14px;left:14px;background:rgba(255,255,255,.95);color:var(--night);font-size:13px;font-weight:700;padding:6px 14px;border-radius:14px;z-index:2}
+.card-bookmark{position:absolute;top:12px;right:12px;z-index:3;width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.95);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#6C5CE7;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.card-bookmark.on{color:#6C5CE7}
+.qa-card{background:var(--bone);border:1px solid var(--line);border-radius:14px;padding:12px 6px;text-align:center;cursor:pointer;transition:.15s}
+.qa-card:active{transform:scale(.95)}
+.qa-emoji{font-size:26px;line-height:1;margin-bottom:6px}
+.qa-title{font-size:12.5px;font-weight:700;color:var(--night)}
+.qa-sub{font-size:10px;color:var(--muted);margin-top:1px}
 .photo-caption{position:absolute;left:0;right:0;bottom:0;padding:20px 16px 16px;z-index:2;background:linear-gradient(to bottom,rgba(255,255,255,0),rgba(255,255,255,.55) 55%,rgba(255,255,255,.85))}
 .photo-caption h3{font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:var(--night);margin:0 0 4px;text-shadow:0 1px 8px rgba(255,255,255,.8)}
 .photo-caption .meta{color:var(--night);text-shadow:0 1px 6px rgba(255,255,255,.8)}
@@ -445,7 +454,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <div class="screen" id="s-home">
   <div class="statusbar"></div>
   <div class="fixed-head">
-    <div class="topbar"><div class="hi"><span id="helloWord">Hello,</span> <b id="homeGreet">👋</b></div><div style="display:flex;align-items:center;gap:14px"><div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div></div>
+    <div class="topbar"><div class="hi"><span id="helloWord">Hi there,</span> <b id="homeGreet">👋</b></div><div style="display:flex;align-items:center;gap:14px"><div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div></div>
     <div class="chips" id="homeChips"></div>
     <div style="display:flex;gap:6px;padding:0 18px 10px">
       <div class="circ-tab on sec-toggle" id="sec-rounds" onclick="switchHomeSection('rounds')">🤝 Rounds</div>
@@ -454,6 +463,15 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     </div>
   </div>
   <div class="scroll">
+    <div style="margin:12px 18px 6px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 14px;box-shadow:var(--shadow)">
+      <div style="font-weight:700;font-size:15px;color:var(--night);margin-bottom:12px;padding:0 4px">Quick access</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <div class="qa-card" onclick="switchHomeSection('rounds')"><div class="qa-emoji">🤝</div><div class="qa-title">Rounds</div><div class="qa-sub">Small groups</div></div>
+        <div class="qa-card" onclick="qaNearMe()"><div class="qa-emoji">📍</div><div class="qa-title">Near me</div><div class="qa-sub">Find nearby</div></div>
+        <div class="qa-card" onclick="switchHomeSection('events')"><div class="qa-emoji">📣</div><div class="qa-title">Nearby</div><div class="qa-sub">Happening now</div></div>
+        <div class="qa-card" onclick="switchHomeSection('saved')"><div class="qa-emoji">🔖</div><div class="qa-title">Saved</div><div class="qa-sub">Your picks</div></div>
+      </div>
+    </div>
     <div id="distanceBar" style="display:none;padding:6px 22px 4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
         <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
@@ -788,6 +806,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="srow" onclick="openMyQR()"><div class="sicon" style="background:#F3EEFF"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14h1M14 20h1M20 20h1M17 17h1"/></svg></div><div class="st"><b>My QR code</b><span>Let friends scan to find you</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
         <div class="srow" onclick="openInvite()"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></div><div class="st"><b>Invite friends to ShowUpp</b><span>Share the app with people you know</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
         <div class="srow"><div class="sicon" style="background:#EAFBF7"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="st"><b>Hide exact location</b><span>Others see your city, never your address</span></div><div class="toggle" onclick="event.stopPropagation();this.classList.toggle('off')"></div></div>
+        <div class="srow"><div class="sicon" style="background:#F0EEF9"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6C5CE7" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg></div><div class="st"><b>Incognito (appear offline)</b><span>Friends won't see when you're online</span></div><div class="toggle off" id="incognitoToggle" onclick="event.stopPropagation();toggleIncognito(this)"></div></div>
+        <div class="srow"><div class="sicon" style="background:#EAF3FF"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M18 6L7 17l-5-5"/><path d="M22 10l-7.5 7.5L13 16"/></svg></div><div class="st"><b>Read receipts</b><span>Let friends see when you've read their message</span></div><div class="toggle" id="receiptToggle" onclick="event.stopPropagation();toggleReceipts(this)"></div></div>
         <div class="srow" onclick="toast('Nothing sold. No ads. Ever.')"><div class="sicon" style="background:#FFF8EC"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFB03A" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><div class="st"><b>What we collect</b><span>Nothing sold, no ads</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
         <div class="srow" onclick="openBlocked()"><div class="sicon" style="background:#FDECEA"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d94b3b" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg></div><div class="st"><b>Blocked users</b><span>Manage people you've blocked</span></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
       </div>
@@ -837,7 +857,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><label>Country</label><div class="country-picker" id="edCountry"></div></div>
     <div class="field"><label>City / area</label><input type="text" id="edCity" placeholder="Santo Domingo"></div>
     <div class="field"><label data-i18n="language">Language</label>
-      <div id="edLang" class="lang-picker" style="display:flex;gap:8px"></div>
+      <select id="edLangSelect" onchange="setLang(this.value)" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px;color:var(--ink)"></select>
     </div>
     <div class="field"><label data-i18n="distance_unit">Distance unit</label>
       <div style="display:flex;gap:8px">
@@ -1284,6 +1304,11 @@ function renderLangPickers(){
     box.style.display='grid';box.style.gridTemplateColumns='1fr 1fr';box.style.gap='8px';
     box.innerHTML=LANGUAGES.map(l=>'<div class="lang-opt'+(l[0]===LANG?' on':'')+'" data-lang-val="'+l[0]+'" onclick="setLang(\''+l[0]+'\')">'+l[1]+' '+l[2]+'</div>').join('');
   });
+  // Edit-page language dropdown
+  const sel=document.getElementById('edLangSelect');
+  if(sel){
+    sel.innerHTML=LANGUAGES.map(l=>'<option value="'+l[0]+'"'+(l[0]===LANG?' selected':'')+'>'+l[1]+' '+l[2]+'</option>').join('');
+  }
 }
 // Walk the DOM and translate text nodes + placeholders. Safe to call repeatedly.
 const _origText=new WeakMap();
@@ -1554,6 +1579,7 @@ function buildNav(){
     }).join('');
   });
   if(typeof updateNotifBadge==='function')updateNotifBadge();
+  if(typeof loadPresence==='function')loadPresence();
 }
 
 // ---- Auth flow ----
@@ -1884,6 +1910,13 @@ function updateDetailSaveBtn(){
 // ---- Happening Nearby (public events) ----
 let allEvents=[], eventCat='all', eventsView='list', eventsMap=null, eventsMapMarkers=[];
 let homeSection='rounds';
+function qaNearMe(){
+  switchHomeSection('rounds');
+  // enable the near-me distance filter if available
+  const chip=document.querySelector('#homeChips .chip[data-filter="Near me"]');
+  if(chip)chip.click();
+  else{const db=document.getElementById('distanceBar');if(db)db.style.display='block';}
+}
 function switchHomeSection(which){
   homeSection=which;
   document.getElementById('sec-rounds').classList.toggle('on',which==='rounds');
@@ -2069,23 +2102,25 @@ function renderRoundsList(customList){
     const actions='<div class="round-actions" onclick="event.stopPropagation()">'
       +'<button class="ract'+likeOn+'" onclick="toggleRoundReact(\''+r.id+'\',\'like\',this)">👍 <span>'+(r.like_count||0)+'</span></button>'
       +'<button class="ract'+loveOn+'" onclick="toggleRoundReact(\''+r.id+'\',\'love\',this)">❤️ <span>'+(r.love_count||0)+'</span></button>'
-      +'<button class="ract'+saveOn+'" onclick="toggleSaveRound(\''+r.id+'\',this)"><span class="save-ico">'+(r.i_saved?'🔖':'📑')+'</span></button>'
       +'<button class="ract" onclick="shareRound(\''+r.id+'\')">'+shareIconSvg()+'</button>'
       +'</div>';
+    const bookmark='<button class="card-bookmark'+(r.i_saved?' on':'')+'" onclick="event.stopPropagation();toggleSaveRound(\''+r.id+'\',this)">'
+      +'<svg width="20" height="20" viewBox="0 0 24 24" fill="'+(r.i_saved?'currentColor':'none')+'" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
     if(r.photo){
       // Full-bleed photo card (matches design): tall photo, category tag top-left,
-      // name + meta overlaid bottom-left, action buttons in a strip below.
+      // bookmark top-right, name + meta overlaid bottom-left, actions strip below.
       return '<div class="round photo-card" onclick="openDetail(\''+r.id+'\')">'
         +'<div class="photo-cover">'
           +'<img src="'+esc(r.photo)+'" alt="">'
           +'<div class="photo-tag">'+t(r.category||'Round')+'</div>'
+          +bookmark
           +'<div class="photo-caption"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div></div>'
         +'</div>'
         +'<div class="body">'+actions+'</div>'
       +'</div>';
     }
     // Normal card (no photo): gradient banner + emoji
-    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+t(r.category||'Round')+'</div></div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div>'+actions+'</div></div>';
+    return '<div class="round" onclick="openDetail(\''+r.id+'\')"><div class="banner" style="background:'+gradFor(r.id)+'"><div class="emoji">'+emoji+'</div><div class="tag">'+t(r.category||'Round')+'</div>'+bookmark+'</div><div class="body"><h3>'+esc(r.title)+'</h3><div class="meta">'+meta+'</div>'+actions+'</div></div>';
   }).join('');
 }
 async function pickChip(el){
@@ -3589,6 +3624,7 @@ function renderProfile(){
   const acc=document.getElementById('grpAccount');
   if(acc&&!acc.dataset.init){acc.classList.add('open');const h=acc.previousElementSibling;if(h&&h.classList.contains('gp-toggle'))h.classList.add('open');acc.dataset.init='1';}
   try{if(localStorage.getItem('su_bio')==='1'){const bs=document.getElementById('bioSub');if(bs)bs.textContent='✓ Enabled on this device';}}catch(e){}
+  if(typeof syncPrivacyToggles==='function')syncPrivacyToggles();
   document.getElementById('profName').textContent=me.name+(me.username?'  ·  @'+me.username:'');
   document.getElementById('profMeta').textContent='📍 '+(me.city||'—');
   const relEl=document.getElementById('profRel');
@@ -3818,6 +3854,34 @@ function toggleGroup(id,head){
   const body=document.getElementById(id);if(!body)return;
   const open=body.classList.toggle('open');
   head.classList.toggle('open',open);
+}
+// Incognito + read receipts
+async function toggleIncognito(el){
+  el.classList.toggle('off');
+  const incognito=!el.classList.contains('off'); // not off => incognito ON
+  try{await api('/api/me/incognito','POST',{incognito});me.incognito=incognito;toast(incognito?'You now appear offline to friends':'Friends can see when you are online');}catch(e){el.classList.toggle('off');toast(e.message);}
+}
+async function toggleReceipts(el){
+  const off=el.classList.toggle('off');
+  const readReceipts=!off;
+  try{await api('/api/me/read-receipts','POST',{readReceipts});me.readReceipts=readReceipts;toast(readReceipts?'Read receipts on':'Read receipts off');}catch(e){el.classList.toggle('off');toast(e.message);}
+}
+function syncPrivacyToggles(){
+  const inc=document.getElementById('incognitoToggle');
+  if(inc)inc.classList.toggle('off',!me.incognito);
+  const rec=document.getElementById('receiptToggle');
+  if(rec)rec.classList.toggle('off',me.readReceipts===false);
+}
+// Friend presence (online dots)
+let friendPresence={};
+async function loadPresence(){
+  try{const r=await api('/api/friends/presence');friendPresence=r.presence||{};applyPresenceDots();}catch(e){}
+}
+function applyPresenceDots(){
+  document.querySelectorAll('[data-presence-uid]').forEach(el=>{
+    const uid=el.getAttribute('data-presence-uid');
+    el.style.display=friendPresence[uid]?'block':'none';
+  });
 }
 // ---- Biometric (Face ID / fingerprint) login via WebAuthn ----
 // Registers this device so the user can re-unlock faster. Device-bound; the password still works everywhere.
