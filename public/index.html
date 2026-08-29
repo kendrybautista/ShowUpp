@@ -162,7 +162,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .rc-card{padding:0;overflow:hidden;position:relative}
 .rc-top{display:flex;gap:0}
 .rc-photo{width:38%;min-width:120px;align-self:stretch;min-height:150px;background-size:cover;background-position:center;position:relative;flex:none}
-.rc-tag{position:absolute;top:10px;left:10px;background:rgba(255,255,255,.95);color:var(--night);font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:12px}
+.rc-tag{position:absolute;bottom:10px;left:10px;background:rgba(255,255,255,.95);color:var(--night);font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:12px}
 .rc-emoji{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:42px}
 .rc-info{flex:1;padding:14px 14px 12px;position:relative;min-width:0}
 .rc-title{font-family:'Fraunces',serif;font-size:19px;font-weight:600;color:var(--night);margin:0 34px 6px 0;line-height:1.15}
@@ -309,6 +309,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .circ-tab.on{background:var(--night);color:#fff;border-color:var(--night)}
 .friend-row{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin-bottom:10px}
 .friend-row .fav{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--turq),var(--night));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;flex:none}
+.fav-wrap{position:relative;flex:none}
+.presence-dot{position:absolute;bottom:0;right:0;width:13px;height:13px;border-radius:50%;background:#28C76F;border:2.5px solid var(--card,#fff);box-shadow:0 0 0 1px rgba(0,0,0,.04)}
 .friend-row .fi{flex:1;min-width:0}
 .friend-row .fi b{font-size:14.5px;color:var(--night);display:block}
 .friend-row .fi span{font-size:12.5px;color:var(--muted)}
@@ -446,14 +448,20 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="logo" style="font-size:30px">Show<span>Upp</span></div>
         <h2 style="margin-top:20px" data-i18n="welcome_back">Welcome back</h2>
         <div class="ilabel">Email, username or phone</div><input class="ain" id="loginEmail" type="text" autocapitalize="off" autocorrect="off" placeholder="you@email.com">
-        <div class="ilabel">Password</div><input class="ain" id="loginPass" type="password" placeholder="••••••••">
+        <div class="ilabel">Password</div>
+        <div style="position:relative">
+          <input class="ain" id="loginPass" type="password" placeholder="••••••••" style="padding-right:44px">
+          <button type="button" onclick="togglePw('loginPass',this)" aria-label="Show password" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;padding:6px;color:var(--muted)">👁️</button>
+        </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,.85)"><input type="checkbox" id="rememberMe" checked style="width:16px;height:16px;accent-color:var(--mango)"> <span data-i18n="remember_me">Remember me</span></label>
           <a onclick="openForgot()" style="font-size:13px;color:var(--mango);cursor:pointer" data-i18n="forgot_pw">Forgot password?</a>
           <a onclick="openForgotEmail()" style="font-size:13px;color:var(--mango);cursor:pointer;margin-left:14px">Forgot email?</a>
         </div>
         <div class="err" id="loginErr"></div>
-        <div class="auth-foot"><button class="btn btn-mango" onclick="doLogin()">Log in</button><div class="small-link">New here? <a onclick="authStep('a-signup')">Create an account</a></div></div>
+        <div class="auth-foot"><button class="btn btn-mango" onclick="doLogin()">Log in</button>
+        <button id="bioLoginBtn" onclick="loginWithBiometric()" style="display:none;width:100%;margin-top:10px;background:var(--card);color:var(--night);border:1.5px solid var(--line);padding:12px;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer">🔐 Log in with Face ID / fingerprint</button>
+        <div class="small-link">New here? <a onclick="authStep('a-signup')">Create an account</a></div></div>
       </div>
 
       <div class="astep" id="a-signup">
@@ -571,6 +579,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div id="detailLocation" style="display:none;background:var(--bone);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0"></div>
       <p class="blurb" id="detailBlurb"></p>
       <a id="detailLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;align-items:center;gap:8px;color:var(--coral);font-weight:700;font-size:14px;text-decoration:none;margin:6px 0 10px"></a>
+      <a id="detailLinkPreview" href="#" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;margin:2px 0 12px"></a>
       <div id="detailRsvp" style="display:none;margin:12px 0">
         <div style="font-weight:700;font-size:13px;color:var(--night);margin-bottom:8px">Will you attend? <span id="goingCount" style="color:var(--turq);font-weight:700"></span></div>
         <div style="display:flex;gap:8px">
@@ -1329,7 +1338,28 @@ const LANGUAGES=[['en','🇬🇧','English'],['es','🇩🇴','Español'],['fr',
 const RTL_LANGS=['ar'];
 let LANG='en';
 const SHOWUPP_LOGO='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABFCAIAAABmETfOAAABWGlDQ1BJQ0MgUHJvZmlsZQAAeJx9kLFLw1AQxr9WpaB1EB0cHDKJQ5SSCro4tBVEcQhVweqUvqapkMZHkiIFN/+Bgv+BCs5uFoc6OjgIopPo5uSk4KLleS+JpCJ6j+N+fO+74zggOW5wbvcDqDu+W1zKK5ulLSX1jAS9IAzm8Zyur0r+rj/j/T703k7LWb///43Biukxqp+UGcZdH0ioxPqezyXvE4+5tBRxS7IV8onkcsjngWe9WCC+JlZYzagQvxCr5R7d6uG63WDRDnL7tOlsrMk5lBNYxA48cNgw0IQCHdk//LOBv4BdcjfhUp+FGnzqyZEiJ5jEy3DAMAOVWEOGUpN3ju53F91PjbWDJ2ChI4S4iLWVDnA2Rydrx9rUPDAyBFy1ueEagdRHmaxWgddTYLgEjN5Qz7ZXzWrh9uk8MPAoxNskkDoEui0hPo6E6B5T8wNw6XwBA6diE8HYWhMAABvASURBVHicnXtplCVVle639zkRd8yxqJGqYp5VuhmrRETBWRoVtFulEaF5z2E58bSlEVZ3L5d0o2irOLFEQaARUZAlOIOiqEwOKFiIUGhVQVJTDpU3804RcfZ+P86JuJGZhfZ7sbKqbuW9ceLss6dvf3tfWr1mo0IBUgBQAhEAKABREIFACigUAAgEgoJUQSQgJhhLqkh6SbefSpYxw8ZxFFnDTET+VgVAAIhUiQiA5i9ABFVVUUW32xfCcLMhTgBVkEL9Gsi3Req3AA578pcSERTIF7cIj1QCtPRBAJz/1suWSxw2SUwRc5qkrbmuNbRqxbJDDj3guc859MCD1u67ZuXoyEgU23xPVJxJ6QorEalqePSWLRPX3XDrj+9+YGioSSAlJSV/5FAvlCopIfxSwz5VCAAp8oWIaPWaDQjCKUBQVYJCwz6UKJfXH6+CiGCYur1+p9Ndu27VS0/b+LKXvODYY45Ys2ofjisAgAwifiuDxal4Sq4BzcUj8oKDWdLk8o9efcUnrq83G06EUJyGKnJbgbI/DyK/UnFimktrEbYbzlPDp6isPA26Iiis5TTNWrPzhx6y39lnn3Hm615ywIHrAbik2+/3XLcNELM31UVP9CcJVR2cY/63fyVODONDl164a6p9zVduGxqqi3PFvX6n/qQFC9U/sFYQqQK0as3G4iQVYH8wBFYKeg0LMkgt82xrbmxs+J1vP/uC889atnzc9du9fgqAg0eVnOf/6xKVarXx9NO7XvSSc+bnu5E1/iAKVYCUwl8QAN5lVJWIkdsawIMbiqOjQl9EAAmREjOIeXrP3EtP2/jdb1990UVvG25W5vfM9BNnjCmkQuE0/4+Xv4WIDJt+t7N23/Fjjj6s2+kwE/JDD8sqBRMqXURFiAnhj/NgU3zcLxTW8B8zTOJct92+5F8uuPlrnzrq8PXt2enMORtFzBQikrez4jH/M6WVb/HiqaoTx9YedtjBTglkipjDRATlgafmh1J64eOHApaCCwfXJoUQiLyhQhUw7LJMVD535b+++ezX9ub3JKrGGn9GPqCFgFlSVPG62Lo30fJn9iq8qkKhFFVqVSJSiKgQce4s4R7vUZxbY0lI8pu3BFaS4nH5LijolSBOoHL1VR854zUvbc9Os2Fm3uvW93qV5VlkooX5LZKWDROwbdszqiJQpUGYZmgRNiSXLexbQ0r0J82D/BKMOahT2PsbdTvtKz76gTNe89L52Sk2/Fdt7Nkc7Nnss/R5bzuwxkztnnzwwYdq1RhOFoRzv/lCGB9Lw74ptz6oKssgLwc9s48ZqtaYVqv9/gvPO+ctb2jPTltrc6hAexWg0EDpXQIgoopwlKrBkYqrkEmVRDRLs7g+ct2N3/rTn5+p1GpQohxh+H+5iBw6yFpapMQQMIhWlsJ9cTFgjGm1WieffPw3b/2MJD2Pnvy+RWTp2RcWJSKiSoAxxjCH9FLOZ7lHLsxEpKrWEkeN7373J297x7+lqfM5hwApxQ8Akps35WmaimMtJ2jKhQkHQADgnAwP1y/78Lsjg46IMaZQyxKplMCq6lwWRVG1XgcZgJJer9dPVDzSkXCj3xB8Hs3VpQKA2DzzzO6bbrr9i9fcCmVjOXf9Bc9T73SqVPiOD3s5CvEPsoUBq0/Y/sHG7JmZ/eD7Lzj6b583PztljMVfuijL0lqtzo3RPdO7fvbzh3790B8ef2LrxDM75+bazkFVnBMa4EIBoMxQLVIPiBS6a+fU5NRMs9lgQyrCRSwrC4YQ+3L9eDyrXBJUVS0NbiSo9zNKeum6fVdccP6ZaX+e2YQsuTB2lc5bGyOj27ZN3PS17992212PP/nnpJ+qqo2sNZaZVbVA37rYAv2DAy61kRkbG3GZo8JyFtlGsYfBolBvorkSvcw290sPbwFVY0yr3XnH2/5+33X7tlszxphnixOqaoyJ4uiaL3/jox+/5qmnd9XrtXq1Vq/WfLBgZvagG8REzonm4bpAih4CefsUhThBiG46KAdy16HCkot90CD6lVOqF8zDXwKUSSVLR8eabzjrZZIlzxYkiEhEjTEw0Xve959XX3PL0NDQsvERJ86JkBLgDJt+H91eAlJiViBiqlcIqm6whTy46cBblDSkmtJJFsUBQwEq5+XclfIkBhDRwHlYVUmZeW6+fdqpJx551MH9bpeJscTwwkmRkKm8+72XXXf97cuWLVNxWebUH5GBOmp10yP2qz3/kMq+yxBH8Y5pd8+j7d9vSasVw0wiXoDcW4okDiyFgjmM9XdAF9QeHhyq5FGRQAiFJoLyoSDizGWnvvgEY2MnbWstgKWmKCL1oZGPX/HF667/5vIVy9M0FRUCkRKxqoPA/fPrx84/bXS8klGWEbGwaZ0+dPsvO/9xy/RcF7ElUVKASqks35mW4EIJ8pVMt6xLlD2SIFAoLJW0SUQuk+ZQ/fjjn6cu8dBpgcYIBIjTaq32h0c3f/LK64ZHRtI09UgI6gEOp8599K3Lzz2p2mp35uYp+DmEoeef3Fi3j/lfn93Zc1FEIrrQ4mjAIgx2BQh5JZEMyudc+IHL+f96FRIjoBLyxWrqsrVrVh188H5Zmpbxay6fTwvKtnLddbdNT89H1qioBkdXZm11srNfPHTuSZXd093MwTBF1kSWmaFEO2f6LzkivvgNK/qJ8+6y4CrhkIVBHkJ5NaxghuEQ3gPVkbMGOUWjXFqUQNxPkvX7rRkbGcoyt6imyHGLWGtmJid/dPf99XpdxA1OjpE5Gq3LP57S6CZiIht4GvXwAAyNYprtuDM3NI5ca3p9GC6AUQ73FoipmiMl72QecLZ7uqedJanwggC0AFR60KKFmbrMrdhnjKNIZEFBECAskYhGcbT1qR0T2yfjSiQFuCcYsr0Mh6+rHDCm/UQM+5tIlQLYYGKiLJOhKDvuoChxwnkO9lFniQbhqRsWIiJrTKedJml/wxH1V584tHoZz3dT8nWkEimR5DGWyJZDkC97hoeH8pJ0b3hXlWw0PTPf66XVauRXyqsDcaB1+1TqEc91Mhtqtvw2pcI5IG7/5RWmvqovAIukFY4+B27KCiJlw70MSSc58cj4Pa8ae8HhzWrMk/N06X9P3HZfa6he8TVATl4BqpY9etbCVbnerC0WZiA6QAzAZanL+lCDRQWVQMFkLZETVQ7JR/Ii1i9AzCYVo+IAk4NkUhUQySKLYhLVPfPJ+uXRu89Z/caNjWo635prJTDjVb3s7OUPb+1u3aUVC/HKyHdiPZ8UPA5CCpU8Vy5RF/nfOTc+NhTHFgoOQpGqqrKh7Mnt3XZ/1ESsTkWUqDBIFfHOTmDzxI6eaO5fPvVQrnj1KAmGuNVzFaNvOXX0na9oHrLczHfm5oTYWFLM9XTZsJ5wyPDjT83UYitainGq7AjiT1SJAIGbnZ0r3l6qNyL0e71DD9n/iMMPTlLHbDx68qdQq9rHnuo/tDWtxyaTQR4qDkbExUa2Tcv9j3XrsXW5OAi8EhGYCWy4n+lMO9lwWPXGD679xDlja6vZzJ6uCpiIDcBEzOSyo9ZZtkaJ4f/kmuDcb0NNAcLk5BTUldPgAt4CyDI3NDp6wT+9odvrEXOgwhSiykSp2M98ZzpJ1UIERMwCOBF4DwdqMV/1nckt01KpgMBaWI+nzUgBbnXc6nH+2PlrbnrfypPWZfOz3RRsjfVsrg8BTOycPHdd3KhCRPNEr7kNgymPHyoaR5WdO6d7nS4x7dXNFDDW9Nvzb37jq153xikTE8+wia0J3J6oNmr2Jw/3Lr5pd1yrjjUsQVREMhVxjQotG21eeWf72p+2RqomE1/VU2DoGZGhdi9zLv2nl4/cdvHa//2CSDrt+bYwEedFF1AkEE2EDloVrxrjJBXDVHZPW0JoSk4rcbx1247tO6bWr1vR76flgqVctIo4yvRzV15SiStfv/XOuBrXqlX/RBFp1viGn/Yn9ky+/RVDz93XDFctMXd77ld/Sm782eytD3QqcU3VKeXUNoFZk1TbKb/gOc0Lzxg5+UDba3dmZtUwkcn7IiEWBKKQgMzp8iE+an1188R8PSZIqF8LEBzaDkpqjdm5c/dvHtp0wEHr0U+WMmpBSKbMuXqt9uUvXfbyV53yuc999eFHnsiytBrHcWzZRGPD/LNN6c837ThwJQ5a04xttHV399Ft7W7fjDQq4sXKsxsztdrJ2uX0njNWvGljI3ad2T09ZjImYF8UxM3CDC4KS+7YQ5q33dsRwONqn7UtlXoHGnJ0dtdd9531+lcNaqByWZEfCbPJnMs67b9//atOf8UL7vrxg7ff8eMHHvjt9u2T/cQxkbUURdGW3fzk7lQkYdKI45E6RESJGCHPEKGXuDe+aOxfXje6bzVpzc0mMNZysSOl4MUlgsp7JBEhS7Kj10WNihZETEhbq3y3JRyGEihz2bLxkR/98CvLl48UiHEpcV0kA3HOWFupV6E6uXP6D49v/f3vNz/0202PPvrE0xO75+e6SdqLI1ut1tiYzDmoErEoCAJokuk+w3r3ZQeOcW96LouYmYk5ZAGnSmVitNBYaNypZZ3q8hmXb9+5B5WInPq2HlkNTaginmhUibdN7PjGLd9/7/vO6/c86zYAjUvFY2NUtd2aJ2B0bOjkFx578gtPAKTdmp94ZmrTo0/ee++Dv7jv15ufnGjPdWrVSq0SiTgFSFnJRdbMdeV7D878w4mNZUNRp+/STAOdnbNTxf7yf7wpKYAs0+VNPmS12bY7qUS2SDy0es1Gl3MdARoRZWm2cvn4D773pZUrRtMkzXmLBfIs5nEJBBJREU9gUhSZyEYURQC198xt+uOfvv/Dn9/x7Z889uhmE9lms6EiAmKQQF3WO+4ge9bzx19+dH1lA/1E+lmI4LIo3+TY1OMn53SkYS/79vwV35weG7JOvGcxrVp9opQ04j0usjw9M3v+ua/9zGc+3GnNsGEsvPbKwi+lrL2cRLDWVCoVmMrM5NTtd/z4i1/62u8efrwxNBxFkbjM39rpOVU5bF3ljBMar/mb2voRuJyu+QuXCEbr/J1Hs/Ou3FmtUA5cmZVC0EUORQlInYyODt9w4x03/vc368PjWZotWm4pKFnEHfiLmaw1xlhVdNq9+dnpRj0+97yzfvj9a6/42IdGhofm5tvGGhVAMVQzQ/Vo6y751xt23fGb+XrdiAxQwl49HAAxdVN3xNrKijGTZUx5DcWhIM1bSHlYVVWtVWsfvPgTP7rrnuboMpe58nLF62eju8sf8zexIWutE2m3Zq2hd7zj7O/e8YWTTnjO7l1TbAgQJypQZqxfXXv5MaNpJlgCEpZGMoImKVY29OBVUZIpMXm3YvIFJsALCT9RtZbTzJ1/wYe+9727GyPLPO/5Fw5vr1It0i0RGWNEZH7P5EH7rbrl65986zl/N7OnxTYGM7PpJthwaPWI1aabBEBUWHj50SERMRGRKGpGjlzLTpznnpB3NPMHa14zKpGScxpZ2+sl55530aev/FJcqdRrsXNuoIm/qK6lIbT8lo1sp9czhq666iPveuc5rbm2MRGEoO70Y2pGUxEPimnRwREgkNgSQZ1oHvj1mANqTP4eKIFLtU+JQiH1JJ2IRNYaYy+99NNvPPsDj2z6c2N4Wa1WVRFxvv3wrEb4Vy9jjAiSXu/y//zA6a984cz0VJJlBy7HKYdFva6woYL8K8ulRHEU7+pwAh5rWIaDoid8+KpoWROpA0Cq4c7gcwSVMEhRHC1EFEyjY6M/uPP+V5/x9osu+o9Nj22pDTVrQ01rjYg4VxRwCzbxP5GZmbIsdWnvissvPOiAVTOz3TedMrRqiBMF5xMqi9dRVcX/uX7yrP/aec3P2lM9GmnaiLP1y+PxkThzYYKCVq/ZqN6wVCW0DvMVwm7zxgxz5mR+bn58dPi00zaceebLNpxw9PKV+wCELOn3E+cygIn/So9z0SZB5LK0OTJ68zd+cOnFH77z3w4Yt73EBbSxYCmCiDYr9Isn0n/41A5B7DTbf5/olUfbMzeMPrkLF92wOxV4GoXWrNkoABOJeoY1d9mFO/DiGRAzp1nWbneMNfvvt3bjiUe/8OTjjjv2OfutXxXXaoBz/aTXT4hQ0JJ//SIw0HPxgzd+6LihzU6sT74LBPO1u8pII37vV2ZuuKc1NmQhJkndXJIua7ATypQtB9XQ6jUbA1/oizgqt6uDtnjAaBBDQSBjSNHvJ71uD4R99hk55OD9jz/u6OdvPPrYY45ctWYV4HrttsvEWFPWTxmyoIDUUHDsZjYn93wk67XJRmUkVb4qMW/ejdd9bEcnhYHXCNiQOAh00HFBPsAShCCEEmZBgPYkWDBMKhqkBPZqUWRZ1u/1k9RFlteuW3XSxr993WtOPfXFG+JarTPXokB/LWgaDsRTEBFHZu7uy7Ot95rasEe8ATKVZHOqI43o0q/NfP7OzniTnUNhWD48i4bezsDHvGBCIOjCqbJ8HwSFepziFtTyoQQiYpBCtJ9l3W6/EsXHH3/Uu9755tNPf2G/03fOLcVluRkIVRrJE9/u//LLMBFUFqT+UHiQqFYj/tMUzvz4znYfNreyQu2FHiQvCAY2RwoKXd+B+cCHSoRgWT71kCYBVWQqzokoosiOjI40mvUHfvnwm8/553e957J+kto42nuQVKGo5nZt6v32RjYmryn3Rkkooth++e72rpZEzLrgrSLdETSMZQ160MV6grwGL0wu8I55N7LUeqOcOgsdL1VRwGUANes1AF+8+huTu2auvfZyJvbMoW9qEjFUyMTa29X55ecp7WhUg4hv2AwOFSCCUwzXzQN/Sm+5r9WsWldiqfOT0KA5BG6obB6B/GAgH4IjzWvWcom98Mfz4/5e1UC4qKpmos7p6tUrvvWdez716esrjSHx7QsiAolzRBFLMn/f5zGzjaMqxFEpE8pAcWQIfeErvjXZ7qstaSvfmz9/CEgVhgJCHFwDjiew+UvI9GD9C06Dkf94jl6Kj6gSMudGRprXXf+tiacmKpUY4WAdsyXXm7v/k7TzIY7rvlXgG05YOEjkREca0Y2/6Px0UzJUtX74VACPJRDsaNDC9WiooBa0eKHeoQIdSxxeU2DTKTT7fYNRSUUDqef7G97lpDBYQWx4+/btD9z/kIkjVUCETQ3Z3Ny9H3db7oVt5KmHFBAlyb2AAVHUKrxpe/ap26fqFSsQGYhCvm0EQCG+AwCEXXGJ/yhrRQmw7OE/DBtDRCDWfPolzLsGS/UBxwNSWuD+PuWzU52cnAKRilBliLrPtO+5XJ/6FUdNSFZINfjxcytEhjQTe+lNu3e1NDKQIFMxWFqysNzo/OjOkgEOVRAzI3My187qFUtI53uuElcbFeMJV9/WL+yWgiBK4KA5DLIViJQQRfHadashwjbKtv2k+5uvYH6S4oaoo+JjRYkVhqzhnAwPVf791ukfP9Ifb8ZOhH2DMrBXC1GtBjLEb8wuiHE5jk0yaVbpHa9eftKRtcglf9ye3Xxv79ePd62lekwMEi1GYFVynQdDhZ/bZVKFqrV2br57yKEHn3TKi/ozT3d/f3P251+QgKOKQsJIdinzCITAAFKnY83o6w90vvDD1kgjykQCUi/14PNZiFI7w8umRKvXbChCHyuUSAU1m1z1nvUvPSJu75l3aVptNlrUvPnnM9f8cNfm7c5yVK0Yw96qVUICKXQkCC0+IsV8L7FR9carLz71KJ164CbaMwFbIWMNkXKO3JUAeMpNiJgoS2Wobu/fIud99pleFllyouyrrCIkFDNShe1oYSRAeYobfvXZTnrp60cvPLWya7rHnjNniiIaHq7v6tsfPNL79v2tXz8xP912rBzHJrKWOX+MqoiKInWUicRWDlyBS8593iuPGWpteQyqCkNQZTAxmPI8GNh7P2uSCYZr0aaJ7K2f37WzRdVIndNgFJ68RZhOCEYZOroU7LgAwQUOBFSU6rF86/3L1tZdP/XwlJiNimZZVonN0Fizz9GjT/UffLzzuy29J3Zku2epl0qSOufEGI6sjtRo3Yracw+sPP/Q6vEHxA3Xbs/1TFz1uilmPAl+HDYctwBMnIk2avbJ3fSWz05sndShiklFPUgoopJisOPCjXJGNSjOFnkZUCZyGa0dt8tidUocJp9IRUTVMKeZTu1sMfTwZvQ3J1fdi4baiWklmGnLfE9SJ7GlsaYdqWI4cnWrLkk67blOpmRjdUKWmYp2T5hcCBYMIkWS6diwfWRCLvjCjqem0KyaYiZmYGuheNRy/7IstL8sBow4EcgpRYYZqpmE0Bcwr0I96QMIOt203UlY1UZmzNB4BaZufFtVRKUv/TnXU7BhNkSmwJaLKDtSUTLwX3ZwivFmdPcf+xdeO71zluoVzpzCt4a9+RXbH0wHhb7CompIVa0GLjFgIsvYuSdtdXW84nyf1Q+6BPuRcHRM8ONRTjRzAgU0AxH54pJ8ygAZBlP4/kg++jUYKSa/JKBKhobr8U33tS/56mQvixoVZG4wkZDzi0ErhRgaJh2pYMKKoytmfD0GQmwxMePufaJTj+CEcm7Y9zsXg24qLIOZrTHWMJOfLKG8oAozymU9qRYlggfMtRjK1X+/Zc+F1006iauRFkLleb/EOtGC1k8hVVHsMGAWfaHApyAiuvYX/TkXV6zL0oyKE8qTcnBZDz0GNNxiW/NvFPBv6SUCVhlt2oee0rOvfOYLP5irxTGzujyaFQG9WIIUxdcJGKGlj3w/nAsng3tzH3YijQo/PEGXfHNeydasZqmI5DeXSagl+y3MgwBiCl9WCFaX/9f3GVRVdbQZ9SS+/I6ZN1+548Ens6GGVVVXsrFcPMIgU5JvDYWEthAQqqpA/QYs+eipOfgnckL1Ct3y6/7OWbnk1dWj13Gn4/oOfiyY8iKlWGsp5RYspPRunmIgzkVEw3XbyczNv+pddWfrka1Js2YbVcqywAigdIL+MFjLxdPgKkA55cVi8Z0sWrnvBpRnvnNVREyzvWy8pv94cv1Nx1b2H0PqtNsXzxwxFX5c6JKKKSVmJiYpAWMFWLVSNZWYp1vZXY+lX72ve/8TCbNpxOTEz53ubd+qgRjJ7Yrz5FSIWtQ4XPotrVqzUcP3e4BSfCB1zJyJzvV1/zF67bGVVz+veuhKqrCmmaQCJxAtEmzB0nttBUTKhg2jEnPEpuewebf70R+SO37Ve+TpHsg2qoYG85NLHDGnjcKkr/ppmRx8LPx0EeWLwoJWr9kgAGix0gTqt2ih/Uw7iY43cOz+9kWHVY8/wO6/zAzFiCyyzBPoqqL+q4/WGgIMKxtOwXMpb97lHtjc+dkfs99tTSbnEEemHpPAk/O5PS1SVC4YgySXxm+MihmpRZ8vT9gDtGrNBj89xgP9DkiawpqYyTnqJk4UY3VeP04Hr+L142btsKwY5vHhSiUK33mZ77rpuf6Olpto0ZYpfnJn9tSUa3WcYa1WbMRQJfET6gOv98KVoF3xRS8d+GpJ4IEHLoAkXjAiAv4vXirwW6p3mPMAAAAASUVORK5CYII=';
-function injectHeaderLogos(){document.querySelectorAll('.hdr-logo').forEach(function(img){if(!img.src)img.src=SHOWUPP_LOGO;});}
+function injectHeaderLogos(){document.querySelectorAll('.hdr-logo').forEach(function(img){if(!img.src)img.src=SHOWUPP_LOGO;img.style.cursor='pointer';img.onclick=function(){go('s-profile');};});}
+// Format a US-style 10-digit number as (xxx) xxx-xxxx; leave other formats as-is
+function formatPhone(v){
+  if(!v)return '';
+  const d=(''+v).replace(/[^0-9]/g,'');
+  if(d.length===10)return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);
+  if(d.length===11&&d[0]==='1')return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7);
+  return v; // international or partial — show as entered
+}
+function attachPhoneFormatter(inputId){
+  const el=document.getElementById(inputId);if(!el)return;
+  el.addEventListener('input',function(){
+    const d=el.value.replace(/[^0-9]/g,'');
+    if(d.length<=10&&!el.value.trim().startsWith('+')){
+      let out=d;
+      if(d.length>6)out='('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6,10);
+      else if(d.length>3)out='('+d.slice(0,3)+') '+d.slice(3);
+      else if(d.length>0)out='('+d;
+      el.value=out;
+    }
+  });
+}
 
 // Reverse map cache: for the active language, english->translation
 function dict(){return (LANG==='en')?null:(TRANSLATIONS[LANG]||null);}
@@ -1693,8 +1723,16 @@ async function doLogin(){
     connectWS();enterApp();
   }catch(e){showErr('loginErr',e.message);}
 }
+function togglePw(id,btn){
+  const el=document.getElementById(id);if(!el)return;
+  if(el.type==='password'){el.type='text';if(btn)btn.textContent='🙈';}
+  else{el.type='password';if(btn)btn.textContent='👁️';}
+}
 function prefillLogin(){
   try{const e=localStorage.getItem('su_email');if(e){document.getElementById('loginEmail').value=e;document.getElementById('rememberMe').checked=true;}}catch(e){}
+  // Reveal the biometric login button only if it's set up on this device
+  const bb=document.getElementById('bioLoginBtn');
+  if(bb)bb.style.display=(typeof biometricLoginAvailable==='function'&&biometricLoginAvailable())?'block':'none';
 }
 // ---- Forgot password (interim) ----
 function openForgot(){document.getElementById('forgotMsg').textContent='';document.getElementById('forgotSheet').classList.add('open');}
@@ -1890,7 +1928,18 @@ async function loadHome(){
     html+=ordered.map(n=>{const val=(emap[n]||'')+' '+n;const lbl=(emap[n]||'')+' '+t(n);return '<div class="chip '+(val===currentFilter?'on':'')+'" data-filter="'+val+'" onclick="pickChip(this)">'+lbl+'</div>';}).join('');
     document.getElementById('homeChips').innerHTML=html;
     renderRoundsList();
+    // Quietly get location once so distances populate on the feed, then re-render
+    if(!userLoc)primeLocation();
   }catch(e){toast(e.message);}
+}
+// Silently request location (no nagging toasts); on success, refresh cards so distances show
+function primeLocation(){
+  if(userLoc||!navigator.geolocation)return;
+  navigator.geolocation.getCurrentPosition(
+    p=>{userLoc={lat:p.coords.latitude,lng:p.coords.longitude};if(typeof renderRoundsList==='function')renderRoundsList();},
+    ()=>{}, // stay silent if denied
+    {enableHighAccuracy:false,timeout:8000,maximumAge:600000}
+  );
 }
 let maxDistKm=25;
 function filteredRounds(){
@@ -1974,10 +2023,15 @@ let allEvents=[], eventCat='all', eventsView='list', eventsMap=null, eventsMapMa
 let homeSection='rounds';
 function qaNearMe(){
   switchHomeSection('rounds');
-  // enable the near-me distance filter if available
-  const chip=document.querySelector('#homeChips .chip[data-filter="Near me"]');
-  if(chip)chip.click();
-  else{const db=document.getElementById('distanceBar');if(db)db.style.display='block';}
+  // Activate the actual "Near me" chip (value includes the 📍 emoji)
+  const chip=document.querySelector('#homeChips .chip[data-filter="📍 Near me"]');
+  if(chip){pickChip(chip);}
+  else{
+    // fallback: set filter directly and re-render
+    currentFilter='📍 Near me';
+    if(!userLoc){primeLocation();}
+    renderRoundsList();
+  }
 }
 // ---- Quick access shortcuts (editable) ----
 const QA_ALL=[
@@ -2226,8 +2280,8 @@ async function submitEvent(){
 function renderRoundsList(customList){
   const list=customList||filteredRounds();
   const box=document.getElementById('roundsList');
-  // show distance slider only in Near me mode (not for saved/custom lists)
-  document.getElementById('distanceBar').style.display=(!customList&&currentFilter==='📍 Near me'&&userLoc)?'block':'none';
+  // show distance slider whenever Near me is active (not for saved/custom lists)
+  document.getElementById('distanceBar').style.display=(!customList&&currentFilter==='📍 Near me')?'block':'none';
   if(currentView==='map'){renderMap(list);return;}
   if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds within '+maxDistKm+' km.<br>Try widening the range, or host one!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
   box.innerHTML=list.map(r=>{
@@ -2370,7 +2424,12 @@ function openDetail(rid){
   }
   // link
   const lk=document.getElementById('detailLink');
-  if(activeRound.link){lk.href=activeRound.link;lk.innerHTML='🔗 '+activeRound.link.replace(/^https?:\/\//,'').slice(0,40);lk.style.display='flex';}else{lk.style.display='none';}
+  const lkPrev=document.getElementById('detailLinkPreview');
+  if(lkPrev)lkPrev.style.display='none';
+  if(activeRound.link){
+    lk.href=activeRound.link;lk.innerHTML='🔗 '+activeRound.link.replace(/^https?:\/\//,'').slice(0,40);lk.style.display='flex';
+    loadLinkPreview(activeRound.link);
+  }else{lk.style.display='none';}
   // rsvp — only if there's an event and user is a member
   const rsvp=document.getElementById('detailRsvp');
   rsvp.style.display=(activeRound.event_at&&activeRound.joined)?'block':'none';
@@ -2637,8 +2696,9 @@ function friendAvatar(u){
   const av=u.avatar?JSON.stringify(u.avatar):'null';
   const nm=JSON.stringify(u.name||'');
   const onclick=' onclick="event.stopPropagation();openAvatarViewer('+av+','+nm+',false)"';
-  if(u.avatar)return '<div class="fav"'+onclick+' style="background-image:url('+u.avatar+');background-size:cover;background-position:center"></div>';
-  return '<div class="fav"'+onclick+'>'+initial+'</div>';
+  const dot='<span class="presence-dot" data-presence-uid="'+u.id+'" style="display:none"></span>';
+  if(u.avatar)return '<div class="fav-wrap">'+'<div class="fav"'+onclick+' style="background-image:url('+u.avatar+');background-size:cover;background-position:center"></div>'+dot+'</div>';
+  return '<div class="fav-wrap"><div class="fav"'+onclick+'>'+initial+'</div>'+dot+'</div>';
 }
 function searchFriends(q){
   clearTimeout(searchTimer);
@@ -2690,6 +2750,7 @@ async function loadFriends(){
     const box=document.getElementById('friendsList');
     if(!data.friends.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">No friends yet. Search above to find people by their username.</p>';}
     else box.innerHTML=data.friends.map(u=>'<div class="friend-row">'+friendAvatar(u)+'<div class="fi" style="cursor:pointer" onclick="viewProfile(\''+u.id+'\')"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+(u.city?' · '+esc(u.city):'')+'</span></div><button class="friend-btn remove" onclick="openFriendActions(\''+u.id+'\',\''+esc(u.name).replace(/'/g,"")+'\')">•••</button></div>').join('');
+    if(typeof loadPresence==='function')loadPresence();
   }catch(e){toast(e.message);}
 }
 async function loadBlockedTab(){
@@ -2813,27 +2874,31 @@ function renderDmMsgs(msgs){
   const box=document.getElementById('dmMsgs');dmMsgCache={};
   if(!msgs.length){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">'+t('Say hello 👋')+'</p>';return;}
   box.innerHTML=msgs.map(dmMsgHTML).join('');
-  applySeenIndicator(msgs);
+  window._dmMsgs=msgs;
+  updateReceiptLine();
   box.scrollTop=box.scrollHeight;
 }
-function applySeenIndicator(msgs){
-  // Remove any prior indicator
+function updateReceiptLine(){
   const old=document.getElementById('dmSeenLine');if(old)old.remove();
   if(!dmReceiptsOn||!me)return;
-  // find my last sent message
+  const msgs=window._dmMsgs||[];
   let lastMine=null;
   for(let i=msgs.length-1;i>=0;i--){if(msgs[i].user_id===me.id){lastMine=msgs[i];break;}}
   if(!lastMine)return;
-  // seen if the other member's last_read is at/after this message's time
-  if(dmOtherLastRead&&dmOtherLastRead>=lastMine.created_at){
-    const wrap=document.getElementById('dmw-'+lastMine.id);
-    if(wrap)wrap.insertAdjacentHTML('afterend','<div id="dmSeenLine" style="text-align:right;font-size:11px;color:var(--muted);margin:-4px 4px 6px">Seen ✓</div>');
-  }
+  const wrap=document.getElementById('dmw-'+lastMine.id);if(!wrap)return;
+  const seen=dmOtherLastRead&&dmOtherLastRead>=lastMine.created_at;
+  const label=seen?'Seen ✓✓':'Delivered ✓';
+  const color=seen?'var(--coral)':'var(--muted)';
+  wrap.insertAdjacentHTML('afterend','<div id="dmSeenLine" style="text-align:right;font-size:11px;color:'+color+';margin:-4px 4px 6px">'+label+'</div>');
 }
+// keep the old name working in case it's referenced
+function applySeenIndicator(){updateReceiptLine();}
 function appendDm(m){
   const box=document.getElementById('dmMsgs');
   if(box.querySelector('p:only-child'))box.innerHTML='';
   box.insertAdjacentHTML('beforeend',dmMsgHTML(m));
+  if(window._dmMsgs)window._dmMsgs.push(m);else window._dmMsgs=[m];
+  updateReceiptLine();
   box.scrollTop=box.scrollHeight;
 }
 function updateDmReactions(messageId,reactions){
@@ -3698,6 +3763,11 @@ function connectWS(){
     if(msg.type==='reaction'&&activeRound&&msg.roundId===activeRound.id){updateReactions(msg.messageId,msg.reactions);}
     if(msg.type==='dm'&&activeConv&&msg.convId===activeConv){appendDm(msg.message);}
     if(msg.type==='dmReaction'&&activeConv&&msg.convId===activeConv){updateDmReactions(msg.messageId,msg.reactions);}
+    if(msg.type==='dmRead'&&activeConv&&msg.convId===activeConv&&me&&msg.readerId!==me.id){
+      dmOtherLastRead=msg.readAt||Date.now();
+      if(typeof msg.receiptsOn!=='undefined')dmReceiptsOn=dmReceiptsOn&&msg.receiptsOn?true:(dmReceiptsOn||msg.receiptsOn);
+      updateReceiptLine();
+    }
     if(msg.type==='call-offer'){onCallOffer(msg.from,msg.fromName,msg.fromAvatar,msg.media,msg.sdp);}
     if(msg.type==='call-answer'){onCallAnswer(msg.sdp);}
     if(msg.type==='call-ice'){onCallIce(msg.candidate);}
@@ -3767,14 +3837,39 @@ function onRoundPhotoChosen(e){
     };img.src=ev.target.result;
   };reader.readAsDataURL(file);
 }
-async function geocodeAddress(addr){
-  // Free geocoding via OpenStreetMap Nominatim (no key). Returns {lat,lng} or null.
+async function loadLinkPreview(url){
+  const box=document.getElementById('detailLinkPreview');if(!box)return;
   try{
-    const url='https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(addr);
+    const p=await api('/api/link-preview?url='+encodeURIComponent(url));
+    if(!p||(!p.title&&!p.image&&!p.description)){box.style.display='none';return;}
+    box.href=url;
+    const img=p.image?'<div style="width:100%;height:150px;background:#eee url('+esc(p.image)+') center/cover no-repeat"></div>':'';
+    box.innerHTML='<div style="border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)">'
+      +img
+      +'<div style="padding:10px 12px">'
+        +'<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px">'+esc(p.site||'link')+'</div>'
+        +'<div style="font-weight:700;font-size:14px;color:var(--night);line-height:1.25">'+esc(p.title||url)+'</div>'
+        +(p.description?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.35">'+esc(p.description)+'</div>':'')
+      +'</div>'
+    +'</div>';
+    box.style.display='block';
+  }catch(e){box.style.display='none';}
+}
+async function geocodeAddress(addr){
+  // Free geocoding via OpenStreetMap Nominatim (no key). Returns {lat,lng,name} or null.
+  try{
+    const url='https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q='+encodeURIComponent(addr);
     const r=await fetch(url,{headers:{'Accept':'application/json'}});
     if(!r.ok)return null;
     const arr=await r.json();
-    if(Array.isArray(arr)&&arr.length){return{lat:parseFloat(arr[0].lat),lng:parseFloat(arr[0].lon)};}
+    if(Array.isArray(arr)&&arr.length){
+      const it=arr[0];
+      // Prefer an actual business/place name if the geocoder recognized one
+      let name='';
+      if(it.namedetails&&it.namedetails.name)name=it.namedetails.name;
+      else if(it.type&&['office','shop','restaurant','cafe','bar','amenity'].some(k=>(it.class===k||it.type===k)))name=(it.display_name||'').split(',')[0];
+      return {lat:parseFloat(it.lat),lng:parseFloat(it.lon),name:name||''};
+    }
   }catch(e){}
   return null;
 }
@@ -3792,7 +3887,12 @@ async function createRound(){
   else if(place){
     toast('Locating address…');
     const geo=await geocodeAddress(place);
-    if(geo){body.lat=geo.lat;body.lng=geo.lng;}
+    if(geo){
+      body.lat=geo.lat;body.lng=geo.lng;
+      // If the geocoder recognized a business/venue name, prepend it to the place text
+      if(geo.name&&!place.toLowerCase().includes(geo.name.toLowerCase()))body.place=geo.name+' — '+place;
+    }
+    else{toast("Couldn't pin that address — the Round will still be created, but won't show on the map. Try tapping 📍 Use my current location.");}
   }
   if(newRoundPhoto)body.photo=newRoundPhoto;
   if(link)body.link=link;
@@ -3903,9 +4003,15 @@ function openEdit(){
   document.getElementById('edUser').value=me.username||'';
   // secure fields are view-only
   document.getElementById('edEmailView').textContent=me.email||'—';
-  document.getElementById('edPhoneView').textContent=me.phone||'—';
+  document.getElementById('edPhoneView').textContent=formatPhone(me.phone)||'—';
   let cityPart=me.city||'', countryGuess='Dominican Republic';
-  COUNTRIES.forEach(c=>{if((me.city||'').includes(c[1])){countryGuess=c[1];cityPart=(me.city||'').split(',')[0].trim();}});
+  COUNTRIES.forEach(c=>{
+    // If the stored city ends with a known country, strip just that country suffix,
+    // keeping everything before it (e.g. "Bowling Green, KY" stays intact).
+    const suffix=', '+c[1];
+    if((me.city||'').endsWith(suffix)){countryGuess=c[1];cityPart=(me.city||'').slice(0,-suffix.length).trim();}
+    else if((me.city||'')===c[1]){countryGuess=c[1];cityPart='';}
+  });
   initCountryPicker('edCountry',countryGuess);
   document.getElementById('edCity').value=cityPart;
   renderEditInterests();
@@ -3962,7 +4068,7 @@ async function submitSecureChange(){
     closeSecure();
     // refresh the view-only displays
     if(secureField==='email')document.getElementById('edEmailView').textContent=me.email||'—';
-    if(secureField==='phone')document.getElementById('edPhoneView').textContent=me.phone||'—';
+    if(secureField==='phone')document.getElementById('edPhoneView').textContent=formatPhone(me.phone)||'—';
     toast('Updated ✓');
   }catch(e){msg.textContent=e.message;}
 }
@@ -4106,12 +4212,47 @@ async function setupBiometric(){
       }
     });
     if(cred){
-      try{localStorage.setItem('su_bio','1');localStorage.setItem('su_bio_user',me.email||me.username||'');}catch(e){}
+      // Save the current session token, gated behind this device's biometric unlock.
+      // Honest scope: this restores YOUR saved session after a local Face ID/fingerprint check.
+      try{
+        localStorage.setItem('su_bio','1');
+        localStorage.setItem('su_bio_user',me.email||me.username||'');
+        localStorage.setItem('su_bio_cred',arrayBufToB64(cred.rawId));
+        if(token)localStorage.setItem('su_bio_token',token);
+      }catch(e){}
       document.getElementById('bioSub').textContent='✓ Enabled on this device';
       toast('Face ID / fingerprint login enabled on this device 🎉');
     }
   }catch(e){
     toast("Couldn't enable biometric login. You can try again anytime.");
+  }
+}
+function arrayBufToB64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
+function b64ToArrayBuf(b64){const s=atob(b64);const b=new Uint8Array(s.length);for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return b.buffer;}
+function biometricLoginAvailable(){
+  try{return localStorage.getItem('su_bio')==='1'&&!!localStorage.getItem('su_bio_token');}catch(e){return false;}
+}
+async function loginWithBiometric(){
+  if(!biometricSupported()||!biometricLoginAvailable()){toast('Set up Face ID / fingerprint first from the You page.');return;}
+  let credId='';try{credId=localStorage.getItem('su_bio_cred')||'';}catch(e){}
+  try{
+    // Local biometric check (verifies the device owner). We use the stored credential id.
+    await navigator.credentials.get({
+      publicKey:{
+        challenge:new Uint8Array(32).map(()=>Math.floor(Math.random()*256)),
+        allowCredentials:credId?[{type:'public-key',id:b64ToArrayBuf(credId)}]:[],
+        userVerification:'required',
+        timeout:60000
+      }
+    });
+    // Biometric passed — restore the saved session token
+    let saved='';try{saved=localStorage.getItem('su_bio_token')||'';}catch(e){}
+    if(!saved){toast('No saved session. Please log in once with your password.');return;}
+    token=saved;saveToken(token,true);
+    const data=await api('/api/me');me=data.user;
+    connectWS();enterApp();
+  }catch(e){
+    toast('Face ID / fingerprint sign-in was cancelled or failed.');
   }
 }
 function loadTheme(){
@@ -4135,6 +4276,8 @@ function loadUnit(){
 
 // ---- Boot ----
 async function boot(){
+  console.log('ShowUpp build: 2026-08-28-D (postgres-live, rounds-crash-fix, show-password, distance-bar, city-parse, qa-nearme)');
+  if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   renderCats('');
   loadTheme();
   loadUnit();
