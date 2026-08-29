@@ -1219,9 +1219,10 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
     FROM rounds r ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
   // attach up to 4 member avatars for the card preview
-  const avStmt = await db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
+  const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
   for (const r of rounds) {
-    r.member_avatars = avStmt.all(r.id).map(x => x.avatar || '').filter(Boolean);
+    const avRows = await avStmt.all(r.id);
+    r.member_avatars = avRows.map(x => x.avatar || '').filter(Boolean);
   }
   res.json({ rounds });
 });
