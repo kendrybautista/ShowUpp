@@ -993,8 +993,8 @@ app.get('/api/notifications/counts', requireAuth, async (req, res) => {
   const convs = await db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
   let unreadDms = 0;
   for (const cm of convs) {
-    const c = await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
-      .get(cm.conv_id, cm.last_read || 0, req.user.id).c;
+    const c = Number((await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
+      .get(cm.conv_id, cm.last_read || 0, req.user.id)).c) || 0;
     if (c > 0) unreadDms++;
   }
   res.json({ notifications: notif, dms: unreadDms, total: notif + unreadDms });
