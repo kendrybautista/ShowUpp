@@ -25,40 +25,23 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // --- Config ---
 const PORT = process.env.PORT || 3000;
-// In production, set these as environment variables on your host.
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
-// Admin / owner account — seeded on boot so it survives free-tier DB resets.
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@showupp.app';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
 
-// --- Database setup ---
-// IMPORTANT for data persistence:
-// On hosts with an ephemeral filesystem (like Render's free tier), a database file
-// stored inside the app folder is WIPED on every deploy/restart — which deletes all
-// accounts. To keep data, set DATA_DIR to a mounted persistent disk (e.g. /data on Render)
-// and the DB will live there and survive restarts.
-const DATA_DIR = process.env.DATA_DIR || __dirname;
-let dbPath = path.join(DATA_DIR, 'showupp.db');
-try {
-  // make sure the directory exists and is writable; otherwise fall back to app dir
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.accessSync(DATA_DIR, fs.constants.W_OK);
-} catch (e) {
-  console.log('DATA_DIR not writable (' + DATA_DIR + '), falling back to app folder. Set a persistent disk to keep data across restarts.');
-  dbPath = path.join(__dirname, 'showupp.db');
-}
-console.log('Using database at:', dbPath);
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
+// --- Database setup (Neon Postgres) ---
+// All data lives in Neon, separate from the app host, so it survives restarts/deploys.
+const db = require('./db-pg');
 
-db.exec(`
+// All schema creation and migrations run inside init(), called before the server listens.
+async function initDb() {
+await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     email      TEXT UNIQUE NOT NULL,
@@ -66,8 +49,8 @@ db.exec(`
     name       TEXT NOT NULL,
     city       TEXT,
     origin     TEXT,
-    interests  TEXT,           -- JSON array
-    created_at INTEGER NOT NULL
+    interests  TEXT,
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS rounds (
@@ -77,13 +60,13 @@ db.exec(`
     category   TEXT,
     blurb      TEXT,
     host_id    TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS memberships (
     round_id  TEXT NOT NULL,
     user_id   TEXT NOT NULL,
-    joined_at INTEGER NOT NULL,
+    joined_at BIGINT NOT NULL,
     PRIMARY KEY (round_id, user_id)
   );
 
@@ -92,27 +75,27 @@ db.exec(`
     round_id  TEXT NOT NULL,
     user_id   TEXT NOT NULL,
     body      TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS friendships (
     user_id    TEXT NOT NULL,
     friend_id  TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (user_id, friend_id)
   );
 
   CREATE TABLE IF NOT EXISTS friend_requests (
     from_id    TEXT NOT NULL,
     to_id      TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (from_id, to_id)
   );
 
   CREATE TABLE IF NOT EXISTS blocks (
     user_id    TEXT NOT NULL,
     blocked_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (user_id, blocked_id)
   );
 
@@ -122,7 +105,7 @@ db.exec(`
     reported_id TEXT,
     context     TEXT,
     reason      TEXT,
-    created_at  INTEGER NOT NULL
+    created_at  BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS conversations (
@@ -130,13 +113,13 @@ db.exec(`
     is_group   INTEGER DEFAULT 0,
     title      TEXT,
     created_by TEXT,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS conversation_members (
     conv_id   TEXT NOT NULL,
     user_id   TEXT NOT NULL,
-    last_read INTEGER DEFAULT 0,
+    last_read BIGINT DEFAULT 0,
     PRIMARY KEY (conv_id, user_id)
   );
 
@@ -147,7 +130,7 @@ db.exec(`
     body       TEXT NOT NULL,
     kind       TEXT DEFAULT 'text',
     media_url  TEXT,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS notifications (
@@ -158,136 +141,82 @@ db.exec(`
     body       TEXT,
     link       TEXT,
     read       INTEGER DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS reset_tokens (
     token      TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
+    expires_at BIGINT NOT NULL,
     used       INTEGER DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 `);
 
-// --- Safe migration: add username column if it doesn't exist yet ---
-try {
-  const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
-  if (!cols.includes('username')) {
-    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
-    console.log('Added username column.');
-  }
-  if (!cols.includes('avatar')) {
-    db.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
-    console.log('Added avatar column.');
-  }
-  if (!cols.includes('lang')) {
-    db.exec("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'en'");
-    console.log('Added lang column.');
-  }
-  if (!cols.includes('is_admin')) {
-    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
-    console.log('Added is_admin column.');
-  }
-  if (!cols.includes('suspended')) {
-    db.exec("ALTER TABLE users ADD COLUMN suspended INTEGER DEFAULT 0");
-    console.log('Added suspended column.');
-  }
-} catch (e) { console.log('Migration note:', e.message); }
+// --- Safe migrations: Postgres supports ADD COLUMN IF NOT EXISTS, so these are idempotent ---
+await db.exec(`
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'en';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS premium INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS is_private INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS lat REAL;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS lng REAL;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS relationship TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS incognito INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts INTEGER DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS gallery TEXT;
 
-// --- Safe migration: add messaging feature columns ---
-try {
-  const mcols = db.prepare("PRAGMA table_info(messages)").all().map(c => c.name);
-  if (!mcols.includes('reactions')) { db.exec("ALTER TABLE messages ADD COLUMN reactions TEXT"); console.log('Added messages.reactions'); }
-  if (!mcols.includes('reply_to')) { db.exec("ALTER TABLE messages ADD COLUMN reply_to TEXT"); console.log('Added messages.reply_to'); }
-  if (!mcols.includes('reply_preview')) { db.exec("ALTER TABLE messages ADD COLUMN reply_preview TEXT"); console.log('Added messages.reply_preview'); }
-  if (!mcols.includes('kind')) { db.exec("ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'text'"); console.log('Added messages.kind'); }
-  if (!mcols.includes('media_url')) { db.exec("ALTER TABLE messages ADD COLUMN media_url TEXT"); console.log('Added messages.media_url'); }
-  if (!mcols.includes('ephemeral')) { db.exec("ALTER TABLE messages ADD COLUMN ephemeral INTEGER DEFAULT 0"); console.log('Added messages.ephemeral'); }
-  if (!mcols.includes('seen_by')) { db.exec("ALTER TABLE messages ADD COLUMN seen_by TEXT"); console.log('Added messages.seen_by'); }
-} catch (e) { console.log('Migration note:', e.message); }
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'text';
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS ephemeral INTEGER DEFAULT 0;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_by TEXT;
 
-// --- Safe migration: add DM messaging feature columns ---
-try {
-  const dcols = db.prepare("PRAGMA table_info(dm_messages)").all().map(c => c.name);
-  if (!dcols.includes('reactions')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reactions TEXT"); console.log('Added dm_messages.reactions'); }
-  if (!dcols.includes('reply_to')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reply_to TEXT"); console.log('Added dm_messages.reply_to'); }
-  if (!dcols.includes('reply_preview')) { db.exec("ALTER TABLE dm_messages ADD COLUMN reply_preview TEXT"); console.log('Added dm_messages.reply_preview'); }
-} catch (e) { console.log('Migration note:', e.message); }
-function seedAdmin() {
-  try {
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL.toLowerCase());
-    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-    if (existing) {
-      // keep password in sync with env and ensure admin flag
-      db.prepare('UPDATE users SET pass_hash = ?, is_admin = 1 WHERE id = ?').run(hash, existing.id);
-    } else {
-      db.prepare(`INSERT INTO users (id,email,pass_hash,name,username,city,origin,interests,created_at,is_admin)
-                  VALUES (?,?,?,?,?,?,?,?,?,1)`).run(
-        crypto.randomUUID(), ADMIN_EMAIL.toLowerCase(), hash, ADMIN_NAME, 'admin',
-        '', '', JSON.stringify([]), Date.now());
-      console.log('Seeded admin account:', ADMIN_EMAIL);
-    }
-  } catch (e) { console.log('Admin seed note:', e.message); }
-}
-seedAdmin();
+  ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reactions TEXT;
+  ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
+  ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
 
-// --- Safe migration: add location columns to rounds ---
-try {
-  const rcols = db.prepare("PRAGMA table_info(rounds)").all().map(c => c.name);
-  if (!rcols.includes('lat')) { db.exec("ALTER TABLE rounds ADD COLUMN lat REAL"); console.log('Added rounds.lat'); }
-  if (!rcols.includes('lng')) { db.exec("ALTER TABLE rounds ADD COLUMN lng REAL"); console.log('Added rounds.lng'); }
-  if (!rcols.includes('place')) { db.exec("ALTER TABLE rounds ADD COLUMN place TEXT"); console.log('Added rounds.place'); }
-  if (!rcols.includes('photo')) { db.exec("ALTER TABLE rounds ADD COLUMN photo TEXT"); console.log('Added rounds.photo'); }
-  if (!rcols.includes('link')) { db.exec("ALTER TABLE rounds ADD COLUMN link TEXT"); console.log('Added rounds.link'); }
-  if (!rcols.includes('event_at')) { db.exec("ALTER TABLE rounds ADD COLUMN event_at INTEGER"); console.log('Added rounds.event_at'); }
-  // round reactions (like/love), one row per user per round per type
-  db.exec(`CREATE TABLE IF NOT EXISTS round_reactions (
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS lat REAL;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS lng REAL;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS place TEXT;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS photo TEXT;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS link TEXT;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS event_at BIGINT;
+
+  ALTER TABLE memberships ADD COLUMN IF NOT EXISTS rsvp TEXT;
+
+  CREATE TABLE IF NOT EXISTS round_reactions (
     round_id TEXT NOT NULL, user_id TEXT NOT NULL, type TEXT NOT NULL,
-    created_at INTEGER, PRIMARY KEY (round_id, user_id, type)
-  )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS saved_rounds (
-    round_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at INTEGER,
+    created_at BIGINT, PRIMARY KEY (round_id, user_id, type)
+  );
+  CREATE TABLE IF NOT EXISTS saved_rounds (
+    round_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at BIGINT,
     PRIMARY KEY (round_id, user_id)
-  )`);
-  // Temporary profile posts (like stories) — auto-expire after 24h, max 10/day per user.
-  db.exec(`CREATE TABLE IF NOT EXISTS moments (
+  );
+  CREATE TABLE IF NOT EXISTS moments (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     text TEXT,
     photo TEXT,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`);
-  const momCols = db.prepare("PRAGMA table_info(moments)").all().map(c => c.name);
-  if (!momCols.includes('media')) { db.exec("ALTER TABLE moments ADD COLUMN media TEXT"); console.log('Added moments.media'); }
-} catch (e) { console.log('Migration note:', e.message); }
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL
+  );
+  ALTER TABLE moments ADD COLUMN IF NOT EXISTS media TEXT;
 
-// --- Membership RSVP + custom category support ---
-try {
-  const mcols = db.prepare("PRAGMA table_info(memberships)").all().map(c => c.name);
-  if (!mcols.includes('rsvp')) { db.exec("ALTER TABLE memberships ADD COLUMN rsvp TEXT"); console.log('Added memberships.rsvp'); }
-  const ucols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
-  if (!ucols.includes('premium')) { db.exec("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"); console.log('Added users.premium'); }
-  if (!ucols.includes('bio')) { db.exec("ALTER TABLE users ADD COLUMN bio TEXT"); console.log('Added users.bio'); }
-  if (!ucols.includes('is_private')) { db.exec("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0"); console.log('Added users.is_private'); }
-  if (!ucols.includes('lat')) { db.exec("ALTER TABLE users ADD COLUMN lat REAL"); console.log('Added users.lat'); }
-  if (!ucols.includes('lng')) { db.exec("ALTER TABLE users ADD COLUMN lng REAL"); console.log('Added users.lng'); }
-  if (!ucols.includes('relationship')) { db.exec("ALTER TABLE users ADD COLUMN relationship TEXT"); console.log('Added users.relationship'); }
-  if (!ucols.includes('phone')) { db.exec("ALTER TABLE users ADD COLUMN phone TEXT"); console.log('Added users.phone'); }
-  if (!ucols.includes('incognito')) { db.exec("ALTER TABLE users ADD COLUMN incognito INTEGER DEFAULT 0"); console.log('Added users.incognito'); }
-  if (!ucols.includes('read_receipts')) { db.exec("ALTER TABLE users ADD COLUMN read_receipts INTEGER DEFAULT 1"); console.log('Added users.read_receipts'); }
-  if (!ucols.includes('gallery')) { db.exec("ALTER TABLE users ADD COLUMN gallery TEXT"); console.log('Added users.gallery'); }
-  // custom categories table
-  db.exec(`CREATE TABLE IF NOT EXISTS categories (
-    name TEXT PRIMARY KEY, emoji TEXT, created_by TEXT, approved INTEGER DEFAULT 0, created_at INTEGER
-  )`);
-  // Public events table — source-agnostic so paid feeds (Ticketmaster, Eventbrite, etc.)
-  // can be ingested later as just another 'source' without schema changes.
-  db.exec(`CREATE TABLE IF NOT EXISTS events (
+  CREATE TABLE IF NOT EXISTS categories (
+    name TEXT PRIMARY KEY, emoji TEXT, created_by TEXT, approved INTEGER DEFAULT 0, created_at BIGINT
+  );
+  CREATE TABLE IF NOT EXISTS events (
     id          TEXT PRIMARY KEY,
-    source      TEXT DEFAULT 'community',   -- 'community' | 'ticketmaster' | 'eventbrite' | ...
-    source_id   TEXT,                       -- external provider's id (for dedupe on re-import)
+    source      TEXT DEFAULT 'community',
+    source_id   TEXT,
     title       TEXT NOT NULL,
     description TEXT,
     category    TEXT,
@@ -297,37 +226,54 @@ try {
     place       TEXT,
     lat         REAL,
     lng         REAL,
-    starts_at   INTEGER,
-    ends_at     INTEGER,
-    posted_by   TEXT,                       -- user id for community events; null for imported
-    approved    INTEGER DEFAULT 1,          -- community events can be moderated if needed
-    created_at  INTEGER NOT NULL
-  )`);
-} catch (e) { console.log('Migration note:', e.message); }
-
-// --- Seed a few starter Rounds so the app isn't empty on first run ---
-function seedRounds() {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM rounds').get().c;
-  if (count > 0) return;
-  const systemHost = 'system';
-  const seed = [
-    ['Sunday Sancocho & Domino Nights', '🍳', 'Food', 'Cook, play dominoes, swap stories. Newcomers welcome — just come hungry.'],
-    ['Global Book Club', '📚', 'Book Club', 'One book a month, honest conversation, new friends.'],
-    ['Weekend Wanderers', '✈️', 'Travel', 'Plan trips together and explore as a group.'],
-    ['Newborns & Coffee', '👶', 'New Parents', 'New parents meeting up for walks and cafecito.'],
-    ['Foreign Film Fridays', '🎬', 'Movies', 'Watch a film, then talk it over.'],
-    ['Saturday Morning Fútbol', '⚽', 'Sports', 'Friendly pickup games every weekend.']
-  ];
-  const insert = db.prepare(
-    'INSERT INTO rounds (id, title, emoji, category, blurb, host_id, created_at) VALUES (?,?,?,?,?,?,?)'
+    starts_at   BIGINT,
+    ends_at     BIGINT,
+    posted_by   TEXT,
+    approved    INTEGER DEFAULT 1,
+    created_at  BIGINT NOT NULL
   );
-  const now = Date.now();
-  for (const [title, emoji, category, blurb] of seed) {
-    insert.run(crypto.randomUUID(), title, emoji, category, blurb, systemHost, now);
+`);
+
+  // Seed the admin/owner account
+  {
+    const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL.toLowerCase());
+    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    if (existing) {
+      await db.prepare('UPDATE users SET pass_hash = ?, is_admin = 1 WHERE id = ?').run(hash, existing.id);
+    } else {
+      await db.prepare(`INSERT INTO users (id,email,pass_hash,name,username,city,origin,interests,created_at,is_admin)
+                  VALUES (?,?,?,?,?,?,?,?,?,1)`).run(
+        crypto.randomUUID(), ADMIN_EMAIL.toLowerCase(), hash, ADMIN_NAME, 'admin',
+        '', '', JSON.stringify([]), Date.now());
+      console.log('Seeded admin account:', ADMIN_EMAIL);
+    }
   }
-  console.log('Seeded starter Rounds.');
-}
-seedRounds();
+
+  // Seed a few starter Rounds so the app isn't empty on first run
+  {
+    const row = await db.prepare('SELECT COUNT(*) AS c FROM rounds').get();
+    const count = row ? Number(row.c) : 0;
+    if (count === 0) {
+      const systemHost = 'system';
+      const seed = [
+        ['Sunday Sancocho & Domino Nights', '🍳', 'Food', 'Cook, play dominoes, swap stories. Newcomers welcome — just come hungry.'],
+        ['Global Book Club', '📚', 'Book Club', 'One book a month, honest conversation, new friends.'],
+        ['Weekend Wanderers', '✈️', 'Travel', 'Plan trips together and explore as a group.'],
+        ['Newborns & Coffee', '👶', 'New Parents', 'New parents meeting up for walks and cafecito.'],
+        ['Foreign Film Fridays', '🎬', 'Movies', 'Watch a film, then talk it over.'],
+        ['Saturday Morning Fútbol', '⚽', 'Sports', 'Friendly pickup games every weekend.']
+      ];
+      const nowTs = Date.now();
+      for (const [title, emoji, category, blurb] of seed) {
+        await db.prepare('INSERT INTO rounds (id, title, emoji, category, blurb, host_id, created_at) VALUES (?,?,?,?,?,?,?)')
+          .run(crypto.randomUUID(), title, emoji, category, blurb, systemHost, nowTs);
+      }
+      console.log('Seeded starter Rounds.');
+    }
+  }
+
+  console.log('Database ready (Neon Postgres).');
+} // end initDb
 
 // --- Helpers ---
 const id = () => crypto.randomUUID();
@@ -337,20 +283,20 @@ function makeToken(user) {
   return jwt.sign({ uid: user.id, name: user.name }, JWT_SECRET, { expiresIn: '30d' });
 }
 
-function authFromToken(token) {
+async function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin, lang FROM users WHERE id = ?').get(payload.uid);
+    return await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin, lang FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
 }
 
 // Express middleware that requires a valid Bearer token
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const user = token && authFromToken(token);
+  const user = token ? await authFromToken(token) : null;
   if (!user) return res.status(401).json({ error: 'Please log in again.' });
   req.user = user;
   next();
@@ -386,16 +332,16 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ---- Auth ----
 // Quick check whether an email is already registered (used during signup)
-app.post('/api/check-email', (req, res) => {
+app.post('/api/check-email', async (req, res) => {
   const { email } = req.body || {};
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase());
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase());
   res.json({ available: !existing });
 });
 
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', async (req, res) => {
   const { email, password, name, phone, city, origin, interests, lang } = req.body || {};
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
@@ -403,7 +349,7 @@ app.post('/api/signup', (req, res) => {
   if (String(password).length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
   }
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
   if (existing) return res.status(409).json({ error: 'That email is already registered. Try logging in.' });
 
   const user = {
@@ -418,13 +364,13 @@ app.post('/api/signup', (req, res) => {
     lang: (lang && ['en', 'es'].includes(lang)) ? lang : 'en',
     created_at: now()
   };
-  db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,created_at)
+  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,created_at)
               VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@created_at)`).run(user);
 
   res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   // Accept email, username, or phone in the "email" field (kept name for compatibility) or "identifier"
   const idRaw = (req.body && (req.body.identifier || req.body.email)) || '';
   const password = req.body && req.body.password;
@@ -433,9 +379,9 @@ app.post('/api/login', (req, res) => {
   const lower = identifier.toLowerCase();
   const digits = identifier.replace(/[^0-9+]/g, '');
   // Try email, then username, then phone
-  let row = db.prepare('SELECT * FROM users WHERE email = ?').get(lower);
-  if (!row) row = db.prepare('SELECT * FROM users WHERE username = ?').get(lower.replace(/^@/, ''));
-  if (!row && digits.length >= 6) row = db.prepare('SELECT * FROM users WHERE phone = ?').get(digits);
+  let row = await db.prepare('SELECT * FROM users WHERE email = ?').get(lower);
+  if (!row) row = await db.prepare('SELECT * FROM users WHERE username = ?').get(lower.replace(/^@/, ''));
+  if (!row && digits.length >= 6) row = await db.prepare('SELECT * FROM users WHERE phone = ?').get(digits);
   if (!row || !bcrypt.compareSync(String(password), row.pass_hash)) {
     return res.status(401).json({ error: 'Wrong login or password.' });
   }
@@ -446,18 +392,18 @@ app.post('/api/login', (req, res) => {
 });
 
 // Return the current user (used on app load to restore session)
-app.get('/api/me', requireAuth, (req, res) => {
+app.get('/api/me', requireAuth, async (req, res) => {
   // Include email + phone for the logged-in user's own profile (never exposed via publicUser to others)
-  const full = db.prepare('SELECT email, phone, incognito, read_receipts FROM users WHERE id = ?').get(req.user.id) || {};
+  const full = await db.prepare('SELECT email, phone, incognito, read_receipts FROM users WHERE id = ?').get(req.user.id) || {};
   res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0 } });
 });
 
 // Presence of my friends (respects their incognito setting)
-app.get('/api/friends/presence', requireAuth, (req, res) => {
-  const friendIds = db.prepare('SELECT friend_id AS fid FROM friendships WHERE user_id = ?').all(req.user.id).map(r => r.fid);
+app.get('/api/friends/presence', requireAuth, async (req, res) => {
+  const friendIds = (await db.prepare('SELECT friend_id AS fid FROM friendships WHERE user_id = ?').all(req.user.id)).map(r => r.fid);
   const presence = {};
   for (const fid of friendIds) {
-    const u = db.prepare('SELECT incognito FROM users WHERE id = ?').get(fid);
+    const u = await db.prepare('SELECT incognito FROM users WHERE id = ?').get(fid);
     // If the friend is incognito, always report offline
     presence[fid] = (u && u.incognito) ? false : isUserOnline(fid);
   }
@@ -465,25 +411,53 @@ app.get('/api/friends/presence', requireAuth, (req, res) => {
 });
 
 // Toggle my incognito (appear offline to friends)
-app.post('/api/me/incognito', requireAuth, (req, res) => {
+app.post('/api/me/incognito', requireAuth, async (req, res) => {
   const on = req.body && req.body.incognito ? 1 : 0;
-  db.prepare('UPDATE users SET incognito = ? WHERE id = ?').run(on, req.user.id);
+  await db.prepare('UPDATE users SET incognito = ? WHERE id = ?').run(on, req.user.id);
   res.json({ incognito: !!on });
 });
 
 // Toggle my read receipts
-app.post('/api/me/read-receipts', requireAuth, (req, res) => {
+app.post('/api/me/read-receipts', requireAuth, async (req, res) => {
   const on = req.body && req.body.readReceipts ? 1 : 0;
-  db.prepare('UPDATE users SET read_receipts = ? WHERE id = ?').run(on, req.user.id);
+  await db.prepare('UPDATE users SET read_receipts = ? WHERE id = ?').run(on, req.user.id);
   res.json({ readReceipts: !!on });
 });
 
-// ---- Secure change: email / phone / password (requires current password) ----
-app.post('/api/me/secure-change', requireAuth, (req, res) => {
+// ---- Link preview: fetch a URL and extract Open Graph title/description/image ----
+app.get('/api/link-preview', requireAuth, async (req, res) => {
+  const raw = String((req.query && req.query.url) || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return res.status(400).json({ error: 'Invalid URL.' });
+  if (urlIsBlocked(raw)) return res.status(400).json({ error: 'blocked' });
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(raw, { signal: ctrl.signal, headers: { 'User-Agent': 'ShowUppBot/1.0 (+link-preview)' } });
+    clearTimeout(timer);
+    const html = (await r.text()).slice(0, 200000);
+    const pick = (prop) => {
+      const re = new RegExp('<meta[^>]+(?:property|name)=["\']' + prop + '["\'][^>]*content=["\']([^"\']+)["\']', 'i');
+      const m = html.match(re);
+      return m ? m[1] : '';
+    };
+    let title = pick('og:title') || pick('twitter:title');
+    if (!title) { const tm = html.match(/<title[^>]*>([^<]+)<\/title>/i); title = tm ? tm[1].trim() : ''; }
+    const desc = pick('og:description') || pick('twitter:description') || pick('description');
+    let image = pick('og:image') || pick('twitter:image');
+    let host = ''; try { host = new URL(raw).hostname.replace(/^www\./, ''); } catch (e) {}
+    // Resolve protocol-relative or root-relative image URLs
+    if (image && image.startsWith('//')) image = 'https:' + image;
+    else if (image && image.startsWith('/')) { try { image = new URL(raw).origin + image; } catch (e) {} }
+    res.json({ url: raw, title: (title || '').slice(0, 160), description: (desc || '').slice(0, 240), image: (image || '').slice(0, 500), site: host });
+  } catch (e) {
+    res.json({ url: raw, title: '', description: '', image: '', site: '', error: 'unreachable' });
+  }
+});
+app.post('/api/me/secure-change', requireAuth, async (req, res) => {
   const { field, currentPassword, newValue } = req.body || {};
   if (!['email', 'phone', 'password'].includes(field)) return res.status(400).json({ error: 'Invalid field.' });
   if (!currentPassword) return res.status(400).json({ error: 'Enter your current password.' });
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const row = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!row || !bcrypt.compareSync(String(currentPassword), row.pass_hash)) {
     return res.status(401).json({ error: 'Current password is incorrect.' });
   }
@@ -491,30 +465,30 @@ app.post('/api/me/secure-change', requireAuth, (req, res) => {
   if (field === 'email') {
     const email = val.toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
-    const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.user.id);
+    const taken = await db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.user.id);
     if (taken) return res.status(409).json({ error: 'That email is already in use.' });
-    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
+    await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
   } else if (field === 'phone') {
     const phone = val.replace(/[^0-9+]/g, '').slice(0, 20);
-    db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
+    await db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
   } else if (field === 'password') {
     if (val.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters.' });
     const hash = bcrypt.hashSync(val, 10);
-    db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, req.user.id);
+    await db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, req.user.id);
   }
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
 });
 
 // ---- Forgot email: look up a (masked) email by username or phone ----
-app.post('/api/forgot-email', (req, res) => {
+app.post('/api/forgot-email', async (req, res) => {
   const idRaw = (req.body && req.body.identifier) || '';
   const identifier = String(idRaw).trim();
   if (!identifier) return res.status(400).json({ error: 'Enter your username or phone number.' });
   const lower = identifier.toLowerCase().replace(/^@/, '');
   const digits = identifier.replace(/[^0-9+]/g, '');
-  let row = db.prepare('SELECT email FROM users WHERE username = ?').get(lower);
-  if (!row && digits.length >= 6) row = db.prepare('SELECT email FROM users WHERE phone = ?').get(digits);
+  let row = await db.prepare('SELECT email FROM users WHERE username = ?').get(lower);
+  if (!row && digits.length >= 6) row = await db.prepare('SELECT email FROM users WHERE phone = ?').get(digits);
   if (!row) return res.status(404).json({ error: 'No account found with that username or phone.' });
   // mask the email: keep first char + domain
   const em = row.email || '';
@@ -557,11 +531,11 @@ async function sendEmail(to, subject, html) {
 app.post('/api/forgot-password', async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Enter your email.' });
-  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase());
+  const row = await db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase());
   let resetUrl = null;
   if (row) {
     const token = crypto.randomBytes(24).toString('hex');
-    db.prepare('INSERT INTO reset_tokens (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)')
+    await db.prepare('INSERT INTO reset_tokens (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)')
       .run(token, row.id, now() + 60 * 60 * 1000, now()); // valid 1 hour
     const base = APP_URL || (req.headers.origin || '');
     resetUrl = base + '/?reset=' + token;
@@ -581,30 +555,30 @@ app.post('/api/forgot-password', async (req, res) => {
 });
 
 // Step 2: complete the reset with the token + new password.
-app.post('/api/reset-password', (req, res) => {
+app.post('/api/reset-password', async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ error: 'Missing token or password.' });
   if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-  const row = db.prepare('SELECT * FROM reset_tokens WHERE token = ?').get(String(token));
+  const row = await db.prepare('SELECT * FROM reset_tokens WHERE token = ?').get(String(token));
   if (!row || row.used || row.expires_at < now()) {
     return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
   }
   const hash = bcrypt.hashSync(String(password), 10);
-  db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, row.user_id);
-  db.prepare('UPDATE reset_tokens SET used = 1 WHERE token = ?').run(String(token));
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  await db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, row.user_id);
+  await db.prepare('UPDATE reset_tokens SET used = 1 WHERE token = ?').run(String(token));
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
   res.json({ ok: true, token: makeToken(user), user: publicUser(user) });
 });
 
 // Update the current user's profile (name, username, city, interests, lang)
-app.post('/api/me/update', requireAuth, (req, res) => {
+app.post('/api/me/update', requireAuth, async (req, res) => {
   const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone } = req.body || {};
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
     cleanUser = String(username).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
     if (cleanUser.length < 3) return res.status(400).json({ error: 'Username needs at least 3 letters/numbers.' });
-    const taken = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
+    const taken = await db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
     if (taken) return res.status(409).json({ error: 'That username is taken. Try another.' });
   }
   // Email: validate + enforce uniqueness if changing
@@ -612,7 +586,7 @@ app.post('/api/me/update', requireAuth, (req, res) => {
   if (email !== undefined && email !== null && String(email).trim()) {
     cleanEmail = String(email).trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
-    const emailTaken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(cleanEmail, req.user.id);
+    const emailTaken = await db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(cleanEmail, req.user.id);
     if (emailTaken) return res.status(409).json({ error: 'That email is already in use.' });
   }
   // Phone: optional, store digits/plus only
@@ -626,7 +600,7 @@ app.post('/api/me/update', requireAuth, (req, res) => {
   if (Array.isArray(gallery)) {
     cleanGallery = JSON.stringify(gallery.filter(g => typeof g === 'string' && g.startsWith('data:image')).slice(0, 10).map(g => g.slice(0, 2000000)));
   }
-  db.prepare(`UPDATE users SET
+  await db.prepare(`UPDATE users SET
       name = COALESCE(?, name),
       username = COALESCE(?, username),
       city = COALESCE(?, city),
@@ -652,12 +626,12 @@ app.post('/api/me/update', requireAuth, (req, res) => {
     cleanPhone,
     req.user.id
   );
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
 });
 
 // Upload / change profile picture (stored as a data URL; kept small)
-app.post('/api/me/avatar', requireAuth, (req, res) => {
+app.post('/api/me/avatar', requireAuth, async (req, res) => {
   const { avatar } = req.body || {};
   if (typeof avatar !== 'string' || !avatar.startsWith('data:image/')) {
     return res.status(400).json({ error: 'Please choose a valid image.' });
@@ -666,63 +640,60 @@ app.post('/api/me/avatar', requireAuth, (req, res) => {
   if (avatar.length > 700000) {
     return res.status(413).json({ error: 'That image is too large. Please pick a smaller one.' });
   }
-  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatar, req.user.id);
-  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  await db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatar, req.user.id);
+  const updated = await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
 // Remove profile picture (revert to initial)
-app.post('/api/me/avatar/remove', requireAuth, (req, res) => {
-  db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
-  const updated = db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+app.post('/api/me/avatar/remove', requireAuth, async (req, res) => {
+  await db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
+  const updated = await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
 // Permanently delete the current user's account and all their data
-app.post('/api/me/delete', requireAuth, (req, res) => {
+app.post('/api/me/delete', requireAuth, async (req, res) => {
   const uid = req.user.id;
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM messages WHERE user_id = ?').run(uid);
-    db.prepare('DELETE FROM memberships WHERE user_id = ?').run(uid);
-    db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(uid, uid);
-    // Rounds they host: remove the round and its data
-    const hosted = db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(uid);
-    for (const r of hosted) {
-      db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
-      db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
-      db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
-    }
-    db.prepare('DELETE FROM users WHERE id = ?').run(uid);
-  });
-  tx();
+  await db.prepare('DELETE FROM messages WHERE user_id = ?').run(uid);
+  await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(uid);
+  await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(uid, uid);
+  // Rounds they host: remove the round and its data
+  const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(uid);
+  for (const r of hosted) {
+    await db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
+    await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
+    await db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
+  }
+  await db.prepare('DELETE FROM users WHERE id = ?').run(uid);
   res.json({ ok: true });
 });
 
 // ---- Friends, requests, blocks, reports ----
 // Helper: are two users friends (either direction stored both ways on accept)
-function areFriends(a, b) {
-  return !!db.prepare('SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b);
+async function areFriends(a, b) {
+  return !!(await db.prepare('SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b));
 }
-function isBlocked(a, b) { // has a blocked b OR b blocked a
-  return !!db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(a, b, b, a);
+async function isBlocked(a, b) { // has a blocked b OR b blocked a
+  return !!(await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(a, b, b, a));
 }
 
 // Search users by username or name, excluding yourself and anyone blocked
 // View a user's profile — respects privacy. Friends always see full profile.
 // Non-friends see full profile only if the user is public. Private users show limited info.
-app.get('/api/users/:id/profile', requireAuth, (req, res) => {
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
+  const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!u) return res.status(404).json({ error: 'User not found.' });
-  if (isBlocked(req.user.id, u.id)) return res.status(403).json({ error: 'Unavailable.' });
-  const friends = areFriends(req.user.id, u.id);
+  if (await isBlocked(req.user.id, u.id)) return res.status(403).json({ error: 'Unavailable.' });
+  const friends = await areFriends(req.user.id, u.id);
   const isSelf = req.user.id === u.id;
   const canSeeFull = isSelf || friends || !u.is_private;
   // Interest-picture gallery is visible ONLY to the person themselves and their friends.
   // Non-friends (even on public profiles) see just the main avatar.
   const canSeeGallery = isSelf || friends;
   // relationship status for the button
-  const sent = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(req.user.id, u.id);
-  const incoming = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(u.id, req.user.id);
+  const sent = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(req.user.id, u.id);
+  const incoming = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(u.id, req.user.id);
   const status = friends ? 'friend' : (sent ? 'pending' : (incoming ? 'incoming' : 'none'));
   if (canSeeFull) {
     res.json({
@@ -746,16 +717,16 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
 });
 
 // ---- Save the user's approximate location (for "find similar people" & distance) ----
-app.post('/api/me/location', requireAuth, (req, res) => {
+app.post('/api/me/location', requireAuth, async (req, res) => {
   const { lat, lng } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Invalid location.' });
-  db.prepare('UPDATE users SET lat = ?, lng = ? WHERE id = ?').run(lat, lng, req.user.id);
+  await db.prepare('UPDATE users SET lat = ?, lng = ? WHERE id = ?').run(lat, lng, req.user.id);
   res.json({ ok: true });
 });
 
 // ---- Find people with similar interests (5+ shared) within a distance range ----
-app.get('/api/discover-people', requireAuth, (req, res) => {
-  const me = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+app.get('/api/discover-people', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const myInterests = me.interests ? JSON.parse(me.interests) : [];
   const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 500);
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
@@ -763,10 +734,10 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
   const mode = req.query.mode || 'distance'; // 'distance' | 'country'
   const country = (req.query.country || '').trim().toLowerCase();
   const MIN_SHARED = 5;
-  const others = db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
+  const others = await db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
   const matches = [];
   for (const u of others) {
-    if (isBlocked(req.user.id, u.id)) continue;
+    if (await isBlocked(req.user.id, u.id)) continue;
     const theirInterests = u.interests ? JSON.parse(u.interests) : [];
     const shared = theirInterests.filter(x => myInterests.includes(x));
     if (shared.length < MIN_SHARED) continue;
@@ -788,7 +759,7 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
       city: u.city, interests: theirInterests, sharedCount: shared.length,
       sharedInterests: shared, distance: dist, isPrivate: !!u.is_private,
       lat: (typeof u.lat === 'number') ? u.lat : null, lng: (typeof u.lng === 'number') ? u.lng : null,
-      isFriend: areFriends(req.user.id, u.id)
+      isFriend: await areFriends(req.user.id, u.id)
     });
   }
   matches.sort((a, b) => b.sharedCount - a.sharedCount || (a.distance ?? 1e9) - (b.distance ?? 1e9));
@@ -798,12 +769,12 @@ app.get('/api/discover-people', requireAuth, (req, res) => {
 // ---- Moments: temporary 24h profile posts ----
 const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
 const MOMENT_DAILY_MAX = 10;
-function pruneMoments() {
-  db.prepare('DELETE FROM moments WHERE expires_at < ?').run(now());
+async function pruneMoments() {
+  await db.prepare('DELETE FROM moments WHERE expires_at < ?').run(now());
 }
 // Create a moment
-app.post('/api/moments', requireAuth, (req, res) => {
-  pruneMoments();
+app.post('/api/moments', requireAuth, async (req, res) => {
+  await pruneMoments();
   const { text, photo, media } = req.body || {};
   const cleanText = String(text || '').slice(0, 500);
   // media: array of {type:'image'|'video', data:dataURL}. Cap total size ~12MB.
@@ -825,7 +796,7 @@ app.post('/api/moments', requireAuth, (req, res) => {
   if (cleanPhoto && !cleanMedia.length) cleanMedia.push({ type: 'image', data: cleanPhoto });
   if (!cleanText.trim() && !cleanMedia.length) return res.status(400).json({ error: 'Write something or add a photo/video.' });
   const since = now() - MOMENT_TTL;
-  const count = db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since).c;
+  const count = Number((await db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since)).c) || 0;
   if (count >= MOMENT_DAILY_MAX) return res.status(429).json({ error: "You've reached the limit of 10 posts in 24 hours. Try again later." });
   const firstPhoto = cleanMedia.find(x => x.type === 'image');
   const m = {
@@ -834,49 +805,55 @@ app.post('/api/moments', requireAuth, (req, res) => {
     media: JSON.stringify(cleanMedia),
     created_at: now(), expires_at: now() + MOMENT_TTL
   };
-  db.prepare('INSERT INTO moments (id,user_id,text,photo,media,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@created_at,@expires_at)').run(m);
+  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@created_at,@expires_at)').run(m);
   const remaining = MOMENT_DAILY_MAX - (count + 1);
   res.json({ moment: m, remaining });
 });
 // Get my own active moments
-app.get('/api/moments/mine', requireAuth, (req, res) => {
-  pruneMoments();
-  const rows = db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
+app.get('/api/moments/mine', requireAuth, async (req, res) => {
+  await pruneMoments();
+  const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
   const since = now() - MOMENT_TTL;
-  const used = db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since).c;
+  const used = Number((await db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since)).c) || 0;
   res.json({ moments: rows, remaining: Math.max(0, MOMENT_DAILY_MAX - used) });
 });
 // Get a user's active moments — only if self or friends
-app.get('/api/users/:id/moments', requireAuth, (req, res) => {
-  pruneMoments();
+app.get('/api/users/:id/moments', requireAuth, async (req, res) => {
+  await pruneMoments();
   const targetId = req.params.id;
-  if (targetId !== req.user.id && !areFriends(req.user.id, targetId)) {
+  if (targetId !== req.user.id && !await areFriends(req.user.id, targetId)) {
     return res.status(403).json({ error: 'Only friends can see these posts.' });
   }
-  const rows = db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now());
+  const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now());
   res.json({ moments: rows });
 });
 // Delete a moment (own only)
-app.post('/api/moments/:id/delete', requireAuth, (req, res) => {
-  const m = db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
+app.post('/api/moments/:id/delete', requireAuth, async (req, res) => {
+  const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Post not found.' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
-  db.prepare('DELETE FROM moments WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM moments WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/users/search', requireAuth, (req, res) => {
+app.get('/api/users/search', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase().replace(/^@/, '');
   if (q.length < 2) return res.json({ users: [] });
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT id, name, username, avatar, city FROM users
     WHERE id != ? AND (LOWER(username) LIKE ? OR LOWER(name) LIKE ?)
     LIMIT 20
   `).all(req.user.id, '%' + q + '%', '%' + q + '%');
-  const friendIds = new Set(db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id).map(r => r.friend_id));
-  const sentIds = new Set(db.prepare('SELECT to_id FROM friend_requests WHERE from_id = ?').all(req.user.id).map(r => r.to_id));
+  const friendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id);
+  const friendIds = new Set(friendRows.map(r => r.friend_id));
+  const sentRows = await db.prepare('SELECT to_id FROM friend_requests WHERE from_id = ?').all(req.user.id);
+  const sentIds = new Set(sentRows.map(r => r.to_id));
+  // Fetch everyone this user has blocked or been blocked by, once, so filtering stays synchronous
+  const blockRows = await db.prepare('SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?').all(req.user.id, req.user.id);
+  const blockedSet = new Set();
+  for (const b of blockRows) { blockedSet.add(b.user_id === req.user.id ? b.blocked_id : b.user_id); }
   const out = rows
-    .filter(u => u.username && !isBlocked(req.user.id, u.id))
+    .filter(u => u.username && !blockedSet.has(u.id))
     .map(u => ({
       id: u.id, name: u.name, username: u.username, avatar: u.avatar || '', city: u.city,
       status: friendIds.has(u.id) ? 'friend' : (sentIds.has(u.id) ? 'pending' : 'none')
@@ -885,32 +862,29 @@ app.get('/api/users/search', requireAuth, (req, res) => {
 });
 
 // Send a friend request
-app.post('/api/friends/request', requireAuth, (req, res) => {
+app.post('/api/friends/request', requireAuth, async (req, res) => {
   const { toId } = req.body || {};
   if (!toId || toId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
-  if (isBlocked(req.user.id, toId)) return res.status(403).json({ error: 'Unavailable.' });
-  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(toId);
+  if (await isBlocked(req.user.id, toId)) return res.status(403).json({ error: 'Unavailable.' });
+  const exists = await db.prepare('SELECT id FROM users WHERE id = ?').get(toId);
   if (!exists) return res.status(404).json({ error: 'User not found.' });
-  if (areFriends(req.user.id, toId)) return res.json({ ok: true, status: 'friend' });
+  if (await areFriends(req.user.id, toId)) return res.json({ ok: true, status: 'friend' });
   // If they already sent YOU a request, accept it instead
-  const incoming = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(toId, req.user.id);
+  const incoming = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(toId, req.user.id);
   if (incoming) {
-    const t = db.transaction(() => {
-      db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(req.user.id, toId, now());
-      db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(toId, req.user.id, now());
-      db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(toId, req.user.id);
-    });
-    t();
+    await db.prepare('INSERT INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, toId, now());
+    await db.prepare('INSERT INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(toId, req.user.id, now());
+    await db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(toId, req.user.id);
     return res.json({ ok: true, status: 'friend' });
   }
-  db.prepare('INSERT OR IGNORE INTO friend_requests (from_id,to_id,created_at) VALUES (?,?,?)').run(req.user.id, toId, now());
-  pushNotif(toId, 'friend_request', 'New friend request', (req.user.name || 'Someone') + ' wants to be friends', 'friends:requests');
+  await db.prepare('INSERT INTO friend_requests (from_id,to_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, toId, now());
+  await pushNotif(toId, 'friend_request', 'New friend request', (req.user.name || 'Someone') + ' wants to be friends', 'friends:requests');
   res.json({ ok: true, status: 'pending' });
 });
 
 // Incoming friend requests (people who want to add me)
-app.get('/api/friends/requests', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/friends/requests', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT u.id, u.name, u.username, u.avatar, u.city
     FROM friend_requests fr JOIN users u ON u.id = fr.from_id
     WHERE fr.to_id = ? ORDER BY fr.created_at DESC
@@ -919,38 +893,35 @@ app.get('/api/friends/requests', requireAuth, (req, res) => {
 });
 
 // Accept a request
-app.post('/api/friends/accept', requireAuth, (req, res) => {
+app.post('/api/friends/accept', requireAuth, async (req, res) => {
   const { fromId } = req.body || {};
-  const pending = db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(fromId, req.user.id);
+  const pending = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(fromId, req.user.id);
   if (!pending) return res.status(404).json({ error: 'No such request.' });
-  const t = db.transaction(() => {
-    db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(req.user.id, fromId, now());
-    db.prepare('INSERT OR IGNORE INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?)').run(fromId, req.user.id, now());
-    db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
-  });
-  t();
-  pushNotif(fromId, 'friend_accept', 'Friend request accepted', (req.user.name || 'Someone') + ' accepted your friend request 🎉', 'friends:friends');
+  await db.prepare('INSERT INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, fromId, now());
+  await db.prepare('INSERT INTO friendships (user_id,friend_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(fromId, req.user.id, now());
+  await db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
+  await pushNotif(fromId, 'friend_accept', 'Friend request accepted', (req.user.name || 'Someone') + ' accepted your friend request 🎉', 'friends:friends');
   res.json({ ok: true });
 });
 
 // Decline a request
-app.post('/api/friends/decline', requireAuth, (req, res) => {
+app.post('/api/friends/decline', requireAuth, async (req, res) => {
   const { fromId } = req.body || {};
-  db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
+  await db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(fromId, req.user.id);
   res.json({ ok: true });
 });
 
 // Remove a friend (both directions)
-app.post('/api/friends/remove', requireAuth, (req, res) => {
+app.post('/api/friends/remove', requireAuth, async (req, res) => {
   const { friendId } = req.body || {};
-  db.prepare('DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)')
+  await db.prepare('DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)')
     .run(req.user.id, friendId, friendId, req.user.id);
   res.json({ ok: true });
 });
 
 // List my friends
-app.get('/api/friends', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/friends', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT u.id, u.name, u.username, u.avatar, u.city
     FROM friendships f JOIN users u ON u.id = f.friend_id
     WHERE f.user_id = ? ORDER BY f.created_at DESC
@@ -959,28 +930,25 @@ app.get('/api/friends', requireAuth, (req, res) => {
 });
 
 // Block a user (also removes friendship + pending requests both ways)
-app.post('/api/block', requireAuth, (req, res) => {
+app.post('/api/block', requireAuth, async (req, res) => {
   const { userId } = req.body || {};
   if (!userId || userId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
-  const t = db.transaction(() => {
-    db.prepare('INSERT OR IGNORE INTO blocks (user_id,blocked_id,created_at) VALUES (?,?,?)').run(req.user.id, userId, now());
-    db.prepare('DELETE FROM friendships WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)').run(req.user.id, userId, userId, req.user.id);
-    db.prepare('DELETE FROM friend_requests WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)').run(req.user.id, userId, userId, req.user.id);
-  });
-  t();
+  await db.prepare('INSERT INTO blocks (user_id,blocked_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, userId, now());
+  await db.prepare('DELETE FROM friendships WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)').run(req.user.id, userId, userId, req.user.id);
+  await db.prepare('DELETE FROM friend_requests WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)').run(req.user.id, userId, userId, req.user.id);
   res.json({ ok: true });
 });
 
 // Unblock
-app.post('/api/unblock', requireAuth, (req, res) => {
+app.post('/api/unblock', requireAuth, async (req, res) => {
   const { userId } = req.body || {};
-  db.prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(req.user.id, userId);
+  await db.prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(req.user.id, userId);
   res.json({ ok: true });
 });
 
 // List people I've blocked
-app.get('/api/blocks', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/blocks', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT u.id, u.name, u.username, u.avatar
     FROM blocks b JOIN users u ON u.id = b.blocked_id
     WHERE b.user_id = ? ORDER BY b.created_at DESC
@@ -989,9 +957,9 @@ app.get('/api/blocks', requireAuth, (req, res) => {
 });
 
 // Report a user / content
-app.post('/api/report', requireAuth, (req, res) => {
+app.post('/api/report', requireAuth, async (req, res) => {
   const { reportedId, context, reason } = req.body || {};
-  db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
     .run(id(), req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), now());
   res.json({ ok: true });
 });
@@ -1002,9 +970,9 @@ function isUserOnline(userId) {
   wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) online = true; });
   return online;
 }
-function pushNotif(userId, type, title, body, link) {
+async function pushNotif(userId, type, title, body, link) {
   try {
-    db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
+    await db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
       .run(id(), userId, type, title || '', body || '', link || '', now());
     // live ping over WS if they're connected
     const payload = JSON.stringify({ type: 'notify' });
@@ -1012,67 +980,68 @@ function pushNotif(userId, type, title, body, link) {
   } catch (e) { /* ignore */ }
 }
 
-app.get('/api/notifications', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(req.user.id);
+app.get('/api/notifications', requireAuth, async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(req.user.id);
   res.json({ notifications: rows });
 });
 
 // Unread counts for the badge (notifications + unread DMs)
-app.get('/api/notifications/counts', requireAuth, (req, res) => {
+app.get('/api/notifications/counts', requireAuth, async (req, res) => {
   // Bell = non-message notifications only (friend requests, accepts, group events).
   // Message notifications are surfaced separately on the Chats icon.
-  const notif = db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0 AND type != 'dm'").get(req.user.id).c;
-  const convs = db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
+  const notif = Number((await db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0 AND type != 'dm'").get(req.user.id)).c) || 0;
+  const convs = await db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
   let unreadDms = 0;
   for (const cm of convs) {
-    const c = db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
+    const c = await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
       .get(cm.conv_id, cm.last_read || 0, req.user.id).c;
     if (c > 0) unreadDms++;
   }
   res.json({ notifications: notif, dms: unreadDms, total: notif + unreadDms });
 });
 
-app.post('/api/notifications/read', requireAuth, (req, res) => {
-  db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.user.id);
+app.post('/api/notifications/read', requireAuth, async (req, res) => {
+  await db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.user.id);
   res.json({ ok: true });
 });
 
 // ---- Direct messages / friend group chats ----
 // List my conversations with last message + unread flag
-app.get('/api/conversations', requireAuth, (req, res) => {
-  const convs = db.prepare(`
+app.get('/api/conversations', requireAuth, async (req, res) => {
+  const convs = await db.prepare(`
     SELECT c.*, cm.last_read FROM conversations c
     JOIN conversation_members cm ON cm.conv_id = c.id
     WHERE cm.user_id = ? ORDER BY c.created_at DESC
   `).all(req.user.id);
-  const out = convs.map(c => {
-    const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(c.id);
+  const out = [];
+  for (const c of convs) {
+    const members = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(c.id);
     const others = members.filter(m => m.id !== req.user.id);
-    const last = db.prepare('SELECT body,kind,created_at,user_id FROM dm_messages WHERE conv_id=? ORDER BY created_at DESC LIMIT 1').get(c.id);
-    const unread = db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id=? AND created_at > ? AND user_id != ?').get(c.id, c.last_read || 0, req.user.id).c;
+    const last = await db.prepare('SELECT body,kind,created_at,user_id FROM dm_messages WHERE conv_id=? ORDER BY created_at DESC LIMIT 1').get(c.id);
+    const unread = Number((await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id=? AND created_at > ? AND user_id != ?').get(c.id, c.last_read || 0, req.user.id)).c) || 0;
     let title = c.title;
     if (!c.is_group) title = others[0] ? others[0].name : 'Conversation';
-    return {
+    out.push({
       id: c.id, is_group: !!c.is_group, title,
       members: others,
       avatar: (!c.is_group && others[0]) ? (others[0].avatar || '') : '',
       last: last ? { body: last.kind === 'gif' ? '📷 GIF' : last.body, created_at: last.created_at, mine: last.user_id === req.user.id } : null,
       unread
-    };
-  });
+    });
+  }
   res.json({ conversations: out });
 });
 
 // Open (or create) a 1-on-1 conversation with a friend
-app.post('/api/conversations/open', requireAuth, (req, res) => {
+app.post('/api/conversations/open', requireAuth, async (req, res) => {
   const { friendId } = req.body || {};
   if (!friendId || friendId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
   // must be friends
-  const friend = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, friendId);
+  const friend = await db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, friendId);
   if (!friend) return res.status(403).json({ error: 'You can only message friends.' });
-  if (isBlocked(req.user.id, friendId)) return res.status(403).json({ error: 'Unavailable.' });
+  if (await isBlocked(req.user.id, friendId)) return res.status(403).json({ error: 'Unavailable.' });
   // find an existing 1-on-1 between exactly these two
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT c.id FROM conversations c
     WHERE c.is_group = 0
       AND EXISTS(SELECT 1 FROM conversation_members m WHERE m.conv_id=c.id AND m.user_id=?)
@@ -1082,39 +1051,39 @@ app.post('/api/conversations/open', requireAuth, (req, res) => {
   let convId = existing ? existing.id : null;
   if (!convId) {
     convId = id();
-    db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,0,?,?,?)').run(convId, '', req.user.id, now());
-    db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
-    db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, friendId);
+    await db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,0,?,?,?)').run(convId, '', req.user.id, now());
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, friendId);
   }
   res.json({ conversationId: convId });
 });
 
 // Create a friend group chat
-app.post('/api/conversations/group', requireAuth, (req, res) => {
+app.post('/api/conversations/group', requireAuth, async (req, res) => {
   const { title, memberIds } = req.body || {};
   const ids = Array.isArray(memberIds) ? memberIds.filter(x => x && x !== req.user.id) : [];
   if (!ids.length) return res.status(400).json({ error: 'Pick at least one friend.' });
   // all must be friends
   for (const fid of ids) {
-    const ok = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, fid);
+    const ok = await db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, fid);
     if (!ok) return res.status(403).json({ error: 'You can only add friends to a group.' });
   }
   const convId = id();
-  db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,1,?,?,?)')
+  await db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,1,?,?,?)')
     .run(convId, String(title || 'Group chat').slice(0, 60), req.user.id, now());
-  db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
+  await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
   for (const fid of ids) {
-    db.prepare('INSERT OR IGNORE INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, fid);
-    pushNotif(fid, 'group', 'New group chat', (req.user.name || 'A friend') + ' added you to "' + (title || 'Group chat') + '"', 'dm:' + convId);
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0) ON CONFLICT DO NOTHING').run(convId, fid);
+    await pushNotif(fid, 'group', 'New group chat', (req.user.name || 'A friend') + ' added you to "' + (title || 'Group chat') + '"', 'dm:' + convId);
   }
   res.json({ conversationId: convId });
 });
 
 // Get messages in a conversation (and mark read)
-app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
-  const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
+app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
+  const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview
     FROM dm_messages m JOIN users u ON u.id=m.user_id
     WHERE m.conv_id=? ORDER BY m.created_at ASC LIMIT 300
@@ -1125,37 +1094,37 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
     reactions: m.reactions ? JSON.parse(m.reactions) : {},
     reply_to: m.reply_to || null, reply_preview: m.reply_preview || null
   }));
-  db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
-  const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
-  const members = db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(req.params.id);
+  await db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
+  const members = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=?`).all(req.params.id);
   const others = members.filter(m => m.id !== req.user.id);
   const title = conv.is_group ? conv.title : (others[0] ? others[0].name : 'Conversation');
   // Read-receipt info for 1-on-1 chats: the other member's last_read time and whether they + I have receipts on
   let otherLastRead = 0, receiptsOn = false;
   if (!conv.is_group && others[0]) {
-    const om = db.prepare('SELECT last_read FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, others[0].id);
+    const om = await db.prepare('SELECT last_read FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, others[0].id);
     otherLastRead = (om && om.last_read) || 0;
-    const meRow = db.prepare('SELECT read_receipts FROM users WHERE id=?').get(req.user.id);
-    const otherRow = db.prepare('SELECT read_receipts FROM users WHERE id=?').get(others[0].id);
+    const meRow = await db.prepare('SELECT read_receipts FROM users WHERE id=?').get(req.user.id);
+    const otherRow = await db.prepare('SELECT read_receipts FROM users WHERE id=?').get(others[0].id);
     receiptsOn = (meRow && meRow.read_receipts !== 0) && (otherRow && otherRow.read_receipts !== 0);
   }
   res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others, other_last_read: otherLastRead, receipts_on: receiptsOn } });
 });
 
 // React to a DM message
-app.post('/api/dm/:id/react', requireAuth, (req, res) => {
+app.post('/api/dm/:id/react', requireAuth, async (req, res) => {
   const { emoji } = req.body || {};
   if (!emoji) return res.status(400).json({ error: 'No emoji.' });
-  const m = db.prepare('SELECT id, conv_id, reactions FROM dm_messages WHERE id = ?').get(req.params.id);
+  const m = await db.prepare('SELECT id, conv_id, reactions FROM dm_messages WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Message gone.' });
-  const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(m.conv_id, req.user.id);
+  const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(m.conv_id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
   const reactions = m.reactions ? JSON.parse(m.reactions) : {};
   const users = reactions[emoji] || [];
   const idx = users.indexOf(req.user.id);
   if (idx >= 0) users.splice(idx, 1); else users.push(req.user.id);
   if (users.length) reactions[emoji] = users; else delete reactions[emoji];
-  db.prepare('UPDATE dm_messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
+  await db.prepare('UPDATE dm_messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
   const payload = JSON.stringify({ type: 'dmReaction', convId: m.conv_id, messageId: req.params.id, reactions });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
   res.json({ ok: true, reactions });
@@ -1169,61 +1138,60 @@ function requireAdmin(req, res, next) {
 }
 
 // Confirm whether current user is an admin (used by the app to show/hide the panel)
-app.get('/api/admin/check', requireAuth, (req, res) => {
+app.get('/api/admin/check', requireAuth, async (req, res) => {
   res.json({ isAdmin: !!req.user.is_admin });
 });
 
 // List all users (admin only)
-app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   let rows;
   if (q) {
-    rows = db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,created_at
+    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,created_at
       FROM users WHERE LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?
       ORDER BY created_at DESC LIMIT 200`).all('%'+q+'%','%'+q+'%','%'+q+'%');
   } else {
-    rows = db.prepare('SELECT id,name,username,email,city,suspended,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+    rows = await db.prepare('SELECT id,name,username,email,city,suspended,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
   }
   res.json({ users: rows });
 });
 
 // Suspend / unsuspend a user (admin only)
-app.post('/api/admin/suspend', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/suspend', requireAuth, requireAdmin, async (req, res) => {
   const { userId, suspend } = req.body || {};
-  const target = db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  const target = await db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_admin) return res.status(400).json({ error: 'You cannot suspend an admin account.' });
-  db.prepare('UPDATE users SET suspended = ? WHERE id = ?').run(suspend ? 1 : 0, userId);
+  await db.prepare('UPDATE users SET suspended = ? WHERE id = ?').run(suspend ? 1 : 0, userId);
   res.json({ ok: true });
 });
 
 // Permanently delete a user and their data (admin only)
-app.post('/api/admin/delete', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/delete', requireAuth, requireAdmin, async (req, res) => {
   const { userId } = req.body || {};
-  const target = db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  const target = await db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_admin) return res.status(400).json({ error: 'You cannot delete an admin account.' });
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
-    db.prepare('DELETE FROM friend_requests WHERE from_id = ? OR to_id = ?').run(userId, userId);
-    db.prepare('DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?').run(userId, userId);
-    const hosted = db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(userId);
+  await db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
+  await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
+  await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
+  await db.prepare('DELETE FROM friend_requests WHERE from_id = ? OR to_id = ?').run(userId, userId);
+  await db.prepare('DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?').run(userId, userId);
+  {
+    const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(userId);
     for (const r of hosted) {
-      db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
-      db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
-      db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
+      await db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
+      await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
+      await db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
     }
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-  });
-  tx();
+  }
+  await db.prepare('DELETE FROM users WHERE id = ?').run(userId);
   res.json({ ok: true });
 });
 
 // View reports (admin only)
-app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/admin/reports', requireAuth, requireAdmin, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT r.id, r.context, r.reason, r.created_at,
       reporter.name AS reporter_name, reporter.username AS reporter_username,
       reported.id AS reported_id, reported.name AS reported_name, reported.username AS reported_username
@@ -1237,8 +1205,8 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
 
 
 // ---- Rounds ----
-app.get('/api/rounds', requireAuth, (req, res) => {
-  const rounds = db.prepare(`
+app.get('/api/rounds', requireAuth, async (req, res) => {
+  const rounds = await db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
@@ -1251,7 +1219,7 @@ app.get('/api/rounds', requireAuth, (req, res) => {
     FROM rounds r ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
   // attach up to 4 member avatars for the card preview
-  const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
+  const avStmt = await db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
   for (const r of rounds) {
     r.member_avatars = avStmt.all(r.id).map(x => x.avatar || '').filter(Boolean);
   }
@@ -1259,18 +1227,18 @@ app.get('/api/rounds', requireAuth, (req, res) => {
 });
 
 // Toggle save/bookmark on a Round
-app.post('/api/rounds/:id/save', requireAuth, (req, res) => {
-  const round = db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
+app.post('/api/rounds/:id/save', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
-  const existing = db.prepare('SELECT 1 FROM saved_rounds WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
-  if (existing) db.prepare('DELETE FROM saved_rounds WHERE round_id=? AND user_id=?').run(req.params.id, req.user.id);
-  else db.prepare('INSERT OR IGNORE INTO saved_rounds (round_id,user_id,created_at) VALUES (?,?,?)').run(req.params.id, req.user.id, now());
+  const existing = await db.prepare('SELECT 1 FROM saved_rounds WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (existing) await db.prepare('DELETE FROM saved_rounds WHERE round_id=? AND user_id=?').run(req.params.id, req.user.id);
+  else await db.prepare('INSERT INTO saved_rounds (round_id,user_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.params.id, req.user.id, now());
   res.json({ ok: true, saved: !existing });
 });
 
 // List Rounds the user has saved
-app.get('/api/saved-rounds', requireAuth, (req, res) => {
-  const rounds = db.prepare(`
+app.get('/api/saved-rounds', requireAuth, async (req, res) => {
+  const rounds = await db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
@@ -1282,34 +1250,54 @@ app.get('/api/saved-rounds', requireAuth, (req, res) => {
 });
 
 // Toggle a like/love reaction on a Round
-app.post('/api/rounds/:id/react', requireAuth, (req, res) => {
+app.post('/api/rounds/:id/react', requireAuth, async (req, res) => {
   const { type } = req.body || {};
   if (!['like', 'love'].includes(type)) return res.status(400).json({ error: 'Invalid reaction.' });
-  const round = db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
+  const round = await db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
-  const existing = db.prepare('SELECT 1 FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').get(req.params.id, req.user.id, type);
+  const existing = await db.prepare('SELECT 1 FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').get(req.params.id, req.user.id, type);
   if (existing) {
-    db.prepare('DELETE FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').run(req.params.id, req.user.id, type);
+    await db.prepare('DELETE FROM round_reactions WHERE round_id=? AND user_id=? AND type=?').run(req.params.id, req.user.id, type);
   } else {
-    db.prepare('INSERT OR IGNORE INTO round_reactions (round_id,user_id,type,created_at) VALUES (?,?,?,?)').run(req.params.id, req.user.id, type, now());
+    await db.prepare('INSERT INTO round_reactions (round_id,user_id,type,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING').run(req.params.id, req.user.id, type, now());
   }
-  const like_count = db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='like'").get(req.params.id).c;
-  const love_count = db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='love'").get(req.params.id).c;
+  const like_count = Number((await db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='like'").get(req.params.id)).c) || 0;
+  const love_count = Number((await db.prepare("SELECT COUNT(*) c FROM round_reactions WHERE round_id=? AND type='love'").get(req.params.id)).c) || 0;
   res.json({ ok: true, like_count, love_count, active: !existing });
 });
 
 
 // Basic safe-URL check: only http/https, reasonable length
+// Domains/keywords we refuse to attach to Rounds. Not exhaustive — a first line of defense.
+const BLOCKED_URL_PATTERNS = [
+  'porn', 'xxx', 'xvideos', 'xnxx', 'pornhub', 'redtube', 'youporn', 'xhamster',
+  'onlyfans', 'brazzers', 'nsfw', 'escort', 'camgirl', 'sex-', 'adult-', 'hentai',
+  'darkweb', 'silkroad', 'drugs-', 'buyweed', 'cocaine', 'counterfeit', 'stolen',
+  'warez', 'crackz', 'torrent', 'piratebay', '1337x', 'gambling', 'casino-', 'betting-'
+];
+function urlIsBlocked(s) {
+  const low = s.toLowerCase();
+  let host = '';
+  try { host = new URL(low).hostname; } catch (e) { host = low; }
+  return BLOCKED_URL_PATTERNS.some(p => host.includes(p) || low.includes(p));
+}
 function safeUrl(u) {
   if (!u) return null;
   const s = String(u).trim();
   if (!/^https?:\/\/[^\s]+\.[^\s]+/i.test(s)) return null;
+  if (urlIsBlocked(s)) return null; // silently drop unsafe links
   return s.slice(0, 500);
 }
 
-app.post('/api/rounds', requireAuth, (req, res) => {
+app.post('/api/rounds', requireAuth, async (req, res) => {
   const { title, emoji, category, blurb, lat, lng, place, photo, link, event_at } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Give your Round a name.' });
+  // Validate/flag any attached link
+  if (link && String(link).trim()) {
+    const raw = String(link).trim();
+    if (!/^https?:\/\//i.test(raw)) return res.status(400).json({ error: 'Links must start with http:// or https://' });
+    if (urlIsBlocked(raw)) return res.status(400).json({ error: '🚫 That link was blocked. Links to adult or unsafe sites are not allowed on ShowUpp.' });
+  }
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
     category: category || 'General', blurb: blurb || '',
@@ -1321,21 +1309,21 @@ app.post('/api/rounds', requireAuth, (req, res) => {
     link: safeUrl(link),
     event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
   };
-  db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
               VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at)`).run(round);
-  db.prepare('INSERT OR IGNORE INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?)')
+  await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
     .run(round.id, req.user.id, now());
   res.json({ round });
 });
 
 // Edit a Round — only the host
-app.post('/api/rounds/:id/edit', requireAuth, (req, res) => {
-  const round = db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id);
+app.post('/api/rounds/:id/edit', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
   if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can edit this Round.' });
   const { title, emoji, category, blurb, place, photo, link, event_at, removePhoto } = req.body || {};
   const newPhoto = removePhoto ? null : ((photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : round.photo);
-  db.prepare(`UPDATE rounds SET
+  await db.prepare(`UPDATE rounds SET
       title = COALESCE(?, title),
       emoji = COALESCE(?, emoji),
       category = COALESCE(?, category),
@@ -1354,37 +1342,37 @@ app.post('/api/rounds/:id/edit', requireAuth, (req, res) => {
     (typeof event_at === 'number') ? (event_at > 0 ? event_at : null) : round.event_at,
     req.params.id
   );
-  res.json({ round: db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id) });
+  res.json({ round: await db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id) });
 });
 
 // Remove / block a member from a Round — only the host
-app.post('/api/rounds/:id/remove-member', requireAuth, (req, res) => {
-  const round = db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
+app.post('/api/rounds/:id/remove-member', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
   if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can remove members.' });
   const { userId } = req.body || {};
   if (!userId || userId === req.user.id) return res.status(400).json({ error: 'Invalid member.' });
-  db.prepare('DELETE FROM memberships WHERE round_id = ? AND user_id = ?').run(req.params.id, userId);
+  await db.prepare('DELETE FROM memberships WHERE round_id = ? AND user_id = ?').run(req.params.id, userId);
   res.json({ ok: true });
 });
 
 // List members of a Round (host sees a manage list)
-app.get('/api/rounds/:id/members', requireAuth, (req, res) => {
-  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+app.get('/api/rounds/:id/members', requireAuth, async (req, res) => {
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Join to see members.' });
-  const round = db.prepare('SELECT host_id FROM rounds WHERE id=?').get(req.params.id);
-  const rows = db.prepare(`SELECT u.id,u.name,u.username,u.avatar,m.rsvp FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC`).all(req.params.id);
+  const round = await db.prepare('SELECT host_id FROM rounds WHERE id=?').get(req.params.id);
+  const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,m.rsvp FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC`).all(req.params.id);
   res.json({ members: rows, host_id: round ? round.host_id : null, isHost: round && round.host_id === req.user.id });
 });
 
 // RSVP to a Round event
-app.post('/api/rounds/:id/rsvp', requireAuth, (req, res) => {
+app.post('/api/rounds/:id/rsvp', requireAuth, async (req, res) => {
   const { rsvp } = req.body || {};
   if (!['going', 'maybe', 'no'].includes(rsvp)) return res.status(400).json({ error: 'Invalid RSVP.' });
-  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Join the Round first.' });
-  db.prepare('UPDATE memberships SET rsvp = ? WHERE round_id = ? AND user_id = ?').run(rsvp, req.params.id, req.user.id);
-  const counts = db.prepare(`SELECT rsvp, COUNT(*) AS c FROM memberships WHERE round_id=? AND rsvp IS NOT NULL GROUP BY rsvp`).all(req.params.id);
+  await db.prepare('UPDATE memberships SET rsvp = ? WHERE round_id = ? AND user_id = ?').run(rsvp, req.params.id, req.user.id);
+  const counts = await db.prepare(`SELECT rsvp, COUNT(*) AS c FROM memberships WHERE round_id=? AND rsvp IS NOT NULL GROUP BY rsvp`).all(req.params.id);
   res.json({ ok: true, counts });
 });
 
@@ -1397,29 +1385,29 @@ function cleanCategoryName(raw) {
   for (const w of BANNED_WORDS) { if (low.includes(w)) return false; }
   return s;
 }
-app.get('/api/categories', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT name, emoji FROM categories WHERE approved = 1 ORDER BY name ASC').all();
+app.get('/api/categories', requireAuth, async (req, res) => {
+  const rows = await db.prepare('SELECT name, emoji FROM categories WHERE approved = 1 ORDER BY name ASC').all();
   res.json({ categories: rows });
 });
-app.post('/api/categories', requireAuth, (req, res) => {
+app.post('/api/categories', requireAuth, async (req, res) => {
   const { name, emoji } = req.body || {};
   const clean = cleanCategoryName(name);
   if (clean === null) return res.status(400).json({ error: 'Category name too short.' });
   if (clean === false) return res.status(400).json({ error: "That category name isn't allowed. Try another." });
-  const existing = db.prepare('SELECT name, approved FROM categories WHERE LOWER(name) = LOWER(?)').get(clean);
+  const existing = await db.prepare('SELECT name, approved FROM categories WHERE LOWER(name) = LOWER(?)').get(clean);
   if (existing) return res.json({ ok: true, name: existing.name, approved: !!existing.approved });
-  db.prepare('INSERT INTO categories (name,emoji,created_by,approved,created_at) VALUES (?,?,?,0,?)')
+  await db.prepare('INSERT INTO categories (name,emoji,created_by,approved,created_at) VALUES (?,?,?,0,?)')
     .run(clean, emoji || '✨', req.user.id, now());
   res.json({ ok: true, name: clean, approved: false, pending: true });
 });
-app.get('/api/admin/categories', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT * FROM categories ORDER BY approved ASC, created_at DESC').all();
+app.get('/api/admin/categories', requireAdmin, async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM categories ORDER BY approved ASC, created_at DESC').all();
   res.json({ categories: rows });
 });
-app.post('/api/admin/categories/approve', requireAdmin, (req, res) => {
+app.post('/api/admin/categories/approve', requireAdmin, async (req, res) => {
   const { name, approve } = req.body || {};
-  if (approve) db.prepare('UPDATE categories SET approved = 1 WHERE name = ?').run(name);
-  else db.prepare('DELETE FROM categories WHERE name = ?').run(name);
+  if (approve) await db.prepare('UPDATE categories SET approved = 1 WHERE name = ?').run(name);
+  else await db.prepare('DELETE FROM categories WHERE name = ?').run(name);
   res.json({ ok: true });
 });
 
@@ -1482,7 +1470,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const hasLoc = !isNaN(lat) && !isNaN(lng);
 
   // 1) community events from our DB (only upcoming, approved)
-  let community = db.prepare(`SELECT * FROM events WHERE approved = 1 AND source = 'community'
+  let community = await db.prepare(`SELECT * FROM events WHERE approved = 1 AND source = 'community'
     AND (starts_at IS NULL OR starts_at > ?) ORDER BY starts_at ASC LIMIT 200`).all(now() - 6 * 3600 * 1000);
   community = community.map(e => ({ ...e, source_label: 'Community' }));
 
@@ -1508,7 +1496,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
 });
 
 // Post a community event
-app.post('/api/events', requireAuth, (req, res) => {
+app.post('/api/events', requireAuth, async (req, res) => {
   const { title, description, category, emoji, photo, link, place, lat, lng, starts_at, ends_at } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Give the event a name.' });
   const ev = {
@@ -1524,17 +1512,17 @@ app.post('/api/events', requireAuth, (req, res) => {
     ends_at: (typeof ends_at === 'number' && ends_at > 0) ? ends_at : null,
     posted_by: req.user.id, approved: 1, created_at: now()
   };
-  db.prepare(`INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at)
+  await db.prepare(`INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at)
     VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at)`).run(ev);
   res.json({ event: ev });
 });
 
 // Delete a community event (poster or admin)
-app.post('/api/events/:id/delete', requireAuth, (req, res) => {
-  const ev = db.prepare('SELECT posted_by FROM events WHERE id = ?').get(req.params.id);
+app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
+  const ev = await db.prepare('SELECT posted_by FROM events WHERE id = ?').get(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found.' });
   if (ev.posted_by !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'Not allowed.' });
-  db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1542,30 +1530,27 @@ app.post('/api/events/:id/delete', requireAuth, (req, res) => {
 
 
 // Delete a Round — only the host (creator) can do this
-app.post('/api/rounds/:id/delete', requireAuth, (req, res) => {
-  const round = db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
+app.post('/api/rounds/:id/delete', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
   if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can delete this Round.' });
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
-  });
-  tx();
+  await db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.post('/api/rounds/:id/join', requireAuth, (req, res) => {
-  const round = db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
+app.post('/api/rounds/:id/join', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
-  db.prepare('INSERT OR IGNORE INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?)')
+  await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
     .run(req.params.id, req.user.id, now());
   res.json({ ok: true });
 });
 
 // Rounds the current user belongs to (their "Circles")
-app.get('/api/my-rounds', requireAuth, (req, res) => {
-  const rounds = db.prepare(`
+app.get('/api/my-rounds', requireAuth, async (req, res) => {
+  const rounds = await db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       (r.host_id = ?) AS is_host
@@ -1578,11 +1563,11 @@ app.get('/api/my-rounds', requireAuth, (req, res) => {
 });
 
 // ---- Messages (history) ----
-app.get('/api/rounds/:id/messages', requireAuth, (req, res) => {
-  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
+app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
     .get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Join this Round to see its chat.' });
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT m.id, m.body, m.created_at, m.user_id, u.name AS sender,
            m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by
     FROM messages m JOIN users u ON u.id = m.user_id
@@ -1594,11 +1579,11 @@ app.get('/api/rounds/:id/messages', requireAuth, (req, res) => {
     if (m.ephemeral && m.user_id !== req.user.id) {
       const seen = m.seen_by ? JSON.parse(m.seen_by) : [];
       if (seen.includes(req.user.id)) {
-        db.prepare('DELETE FROM messages WHERE id = ?').run(m.id); // it's been read once by this viewer
+        await db.prepare('DELETE FROM messages WHERE id = ?').run(m.id); // it's been read once by this viewer
         continue;
       } else {
         seen.push(req.user.id);
-        db.prepare('UPDATE messages SET seen_by = ? WHERE id = ?').run(JSON.stringify(seen), m.id);
+        await db.prepare('UPDATE messages SET seen_by = ? WHERE id = ?').run(JSON.stringify(seen), m.id);
       }
     }
     out.push({
@@ -1612,19 +1597,19 @@ app.get('/api/rounds/:id/messages', requireAuth, (req, res) => {
 });
 
 // React to a message (toggle emoji)
-app.post('/api/messages/:id/react', requireAuth, (req, res) => {
+app.post('/api/messages/:id/react', requireAuth, async (req, res) => {
   const { emoji } = req.body || {};
   if (!emoji) return res.status(400).json({ error: 'No emoji.' });
-  const m = db.prepare('SELECT id, round_id, reactions FROM messages WHERE id = ?').get(req.params.id);
+  const m = await db.prepare('SELECT id, round_id, reactions FROM messages WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Message gone.' });
-  const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(m.round_id, req.user.id);
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(m.round_id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not a member.' });
   const reactions = m.reactions ? JSON.parse(m.reactions) : {};
   const users = reactions[emoji] || [];
   const idx = users.indexOf(req.user.id);
   if (idx >= 0) users.splice(idx, 1); else users.push(req.user.id);
   if (users.length) reactions[emoji] = users; else delete reactions[emoji];
-  db.prepare('UPDATE messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
+  await db.prepare('UPDATE messages SET reactions = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
   // broadcast the reaction update
   const payload = JSON.stringify({ type: 'reaction', roundId: m.round_id, messageId: req.params.id, reactions });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
@@ -1647,12 +1632,12 @@ wss.on('connection', (ws) => {
   ws.user = null;
   ws.rooms = new Set();
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     if (msg.type === 'auth') {
-      const user = authFromToken(msg.token);
+      const user = await authFromToken(msg.token);
       if (!user) { ws.send(JSON.stringify({ type: 'error', error: 'auth failed' })); return; }
       ws.user = user;
       ws.send(JSON.stringify({ type: 'ready' }));
@@ -1662,7 +1647,7 @@ wss.on('connection', (ws) => {
     if (!ws.user) { ws.send(JSON.stringify({ type: 'error', error: 'not authed' })); return; }
 
     if (msg.type === 'join') {
-      const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
+      const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
         .get(msg.roundId, ws.user.id);
       if (member) ws.rooms.add(msg.roundId);
       return;
@@ -1676,7 +1661,7 @@ wss.on('connection', (ws) => {
       const mediaUrl = (kind !== 'text') ? String(msg.mediaUrl || '').slice(0, 8500000) : null;
       if (kind === 'text' && !body) return;
       if (kind !== 'text' && !mediaUrl) return;
-      const member = db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
+      const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
         .get(msg.roundId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not a member' })); return; }
 
@@ -1689,7 +1674,7 @@ wss.on('connection', (ws) => {
         reply_to: replyTo, reply_preview: replyPreview, kind, media_url: mediaUrl,
         ephemeral, seen_by: JSON.stringify([])
       };
-      db.prepare(`INSERT INTO messages (id,round_id,user_id,body,created_at,reply_to,reply_preview,kind,media_url,ephemeral,seen_by)
+      await db.prepare(`INSERT INTO messages (id,round_id,user_id,body,created_at,reply_to,reply_preview,kind,media_url,ephemeral,seen_by)
         VALUES (@id,@round_id,@user_id,@body,@created_at,@reply_to,@reply_preview,@kind,@media_url,@ephemeral,@seen_by)`).run(record);
 
       const outbound = JSON.stringify({
@@ -1715,13 +1700,13 @@ wss.on('connection', (ws) => {
       const mediaUrl = (kind !== 'text') ? String(msg.mediaUrl || '').slice(0, 8500000) : null;
       if (kind === 'text' && !body) return;
       if (kind !== 'text' && !mediaUrl) return;
-      const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
+      const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not in conversation' })); return; }
 
       const record = { id: id(), conv_id: msg.convId, user_id: ws.user.id, body, kind, media_url: mediaUrl, created_at: now(),
         reply_to: msg.replyTo ? String(msg.replyTo) : null,
         reply_preview: msg.replyPreview ? String(msg.replyPreview).slice(0, 120) : null };
-      db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,media_url,created_at,reply_to,reply_preview) VALUES (@id,@conv_id,@user_id,@body,@kind,@media_url,@created_at,@reply_to,@reply_preview)').run(record);
+      await db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,media_url,created_at,reply_to,reply_preview) VALUES (@id,@conv_id,@user_id,@body,@kind,@media_url,@created_at,@reply_to,@reply_preview)').run(record);
 
       const outbound = JSON.stringify({
         type: 'dm',
@@ -1729,7 +1714,7 @@ wss.on('connection', (ws) => {
         message: { id: record.id, body, kind, media_url: mediaUrl, created_at: record.created_at, user_id: ws.user.id, sender: ws.user.name, avatar: ws.user.avatar || '', reply_to: record.reply_to, reply_preview: record.reply_preview, reactions: {} }
       });
       // deliver to connected members in that conversation room; notify the rest
-      const members = db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=?').all(msg.convId).map(r => r.user_id);
+      const members = (await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=?').all(msg.convId)).map(r => r.user_id);
       const connectedUserIds = new Set();
       wss.clients.forEach((client) => {
         if (client.readyState === 1 && client.dmRooms && client.dmRooms.has(msg.convId)) {
@@ -1741,14 +1726,33 @@ wss.on('connection', (ws) => {
       for (const uid of members) {
         if (uid === ws.user.id) continue;
         if (!connectedUserIds.has(uid)) {
-          pushNotif(uid, 'dm', ws.user.name || 'New message', kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80), 'dm:' + msg.convId);
+          await pushNotif(uid, 'dm', ws.user.name || 'New message', kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80), 'dm:' + msg.convId);
         }
       }
     }
 
     if (msg.type === 'joinDm') {
-      const member = db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
+      const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
       if (member) { ws.dmRooms = ws.dmRooms || new Set(); ws.dmRooms.add(msg.convId); }
+      // Mark this conversation read for the joiner and notify the room (live read receipts)
+      if (member) {
+        const ts = now();
+        await db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(ts, msg.convId, ws.user.id);
+        const meRow = await db.prepare('SELECT read_receipts FROM users WHERE id=?').get(ws.user.id);
+        const payload = JSON.stringify({ type: 'dmRead', convId: msg.convId, readerId: ws.user.id, readAt: ts, receiptsOn: (meRow && meRow.read_receipts !== 0) });
+        wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(msg.convId)) c.send(payload); });
+      }
+      return;
+    }
+    if (msg.type === 'dmRead') {
+      const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
+      if (member) {
+        const ts = now();
+        await db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(ts, msg.convId, ws.user.id);
+        const meRow = await db.prepare('SELECT read_receipts FROM users WHERE id=?').get(ws.user.id);
+        const payload = JSON.stringify({ type: 'dmRead', convId: msg.convId, readerId: ws.user.id, readAt: ts, receiptsOn: (meRow && meRow.read_receipts !== 0) });
+        wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(msg.convId)) c.send(payload); });
+      }
       return;
     }
     if (msg.type === 'leaveDm') {
@@ -1766,11 +1770,11 @@ wss.on('connection', (ws) => {
 
       // For a new offer, verify caller and callee are friends (or in a friend group together).
       if (msg.type === 'call-offer') {
-        const areFriends = db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(ws.user.id, targetId);
+        const areFriends = await db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(ws.user.id, targetId);
         let shareFriendGroup = false;
         if (!areFriends) {
           // check they share a non-Round conversation (friend group chat)
-          shareFriendGroup = !!db.prepare(`
+          shareFriendGroup = !!await db.prepare(`
             SELECT 1 FROM conversation_members a
             JOIN conversation_members b ON a.conv_id = b.conv_id
             WHERE a.user_id = ? AND b.user_id = ?
@@ -1780,7 +1784,7 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'call-error', error: 'You can only call friends.' }));
           return;
         }
-        if (isBlocked(ws.user.id, targetId)) {
+        if (await isBlocked(ws.user.id, targetId)) {
           ws.send(JSON.stringify({ type: 'call-error', error: 'Unavailable.' }));
           return;
         }
@@ -1812,7 +1816,15 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`ShowUpp backend running on port ${PORT}`);
-  console.log(`Open http://localhost:${PORT} to use the app.`);
-});
+initDb()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`ShowUpp backend running on port ${PORT}`);
+      console.log(`Open http://localhost:${PORT} to use the app.`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to initialize the database. Is DATABASE_URL correct?');
+    console.error(err.message);
+    process.exit(1);
+  });
