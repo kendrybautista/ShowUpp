@@ -1027,6 +1027,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <option value="Just here for friends">Just here for friends</option>
       </select>
     </div>
+    <div class="field"><label>Date of birth</label>
+      <input type="date" id="edDob" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px;box-sizing:border-box">
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.4">Used to confirm you're 18+. Your birthday is never shown — only your age, and only if you turn on "Show my age" below.</div>
+    </div>
     <div class="field"><label>Gender <span style="color:var(--muted);font-weight:400">(optional)</span></label>
       <select id="edGender" onchange="document.getElementById('edGenderCustom').style.display=(this.value==='Prefer to self-describe')?'block':'none'" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px">
         <option value="">Prefer not to say</option>
@@ -4825,6 +4829,7 @@ function openPublic(){
   if(me.gender&&!stdGenders.includes(me.gender)&&me.gender!==''){gSel.value='Prefer to self-describe';gCustom.value=me.gender;gCustom.style.display='block';}
   else{gSel.value=me.gender||'';gCustom.value='';gCustom.style.display='none';}
   document.getElementById('edShowAge').checked=!!me.showAge;
+  document.getElementById('edDob').value=me.dob||'';
   renderEditGallery();
   document.getElementById('publicSheet').classList.add('open');
 }
@@ -4836,8 +4841,16 @@ async function savePublic(){
   const gSel=document.getElementById('edGender').value;
   const gender=(gSel==='Prefer to self-describe')?(document.getElementById('edGenderCustom').value.trim()||'Prefer to self-describe'):gSel;
   const showAge=document.getElementById('edShowAge').checked;
+  const dob=document.getElementById('edDob').value;
+  // Friendly client-side check before saving (server enforces this too)
+  if(dob){
+    const a=ageFromDob(dob);
+    if(a===null){toast('Please enter a valid date of birth.');return;}
+    if(a<18){toast('You must be 18 or older to use ShowUpp.');return;}
+  }
+  if(showAge&&!dob&&!me.dob){toast('Add your date of birth first to show your age.');return;}
   try{
-    const data=await api('/api/me/update','POST',{bio,gallery:editGallery,isPrivate,relationship,gender,showAge});
+    const data=await api('/api/me/update','POST',{bio,gallery:editGallery,isPrivate,relationship,gender,showAge,dob});
     me=data.user;closePublic();renderProfile();toast('Public profile updated ✓');
   }catch(e){toast(e.message);}
 }
@@ -5264,7 +5277,7 @@ function loadUnit(){
 
 // ---- Boot ----
 async function boot(){
-  console.log('ShowUpp build: 2026-08-30-P (conv-swipe-delete, dark-back-icons, age-display, age-privacy, gender-field)');
+  console.log('ShowUpp build: 2026-08-30-Q (edit-dob-field, dob-18plus-enforced)');
   if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   if(typeof attachAllSearchClears==='function')attachAllSearchClears();
   renderCats('');
