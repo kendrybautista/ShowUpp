@@ -943,6 +943,25 @@ app.get('/api/moments/mine', requireAuth, async (req, res) => {
   res.json({ moments: rows, remaining: Math.max(0, MOMENT_DAILY_MAX - used) });
 });
 // Get a user's active moments — only if self or friends
+// All friends who currently have active daily updates, each with their posts.
+// Powers the "Daily Updates" tab under Circles > Friends.
+app.get('/api/friends/moments', requireAuth, async (req, res) => {
+  await pruneMoments();
+  const friendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id);
+  const out = [];
+  for (const fr of friendRows) {
+    const u = await db.prepare('SELECT id,name,username,avatar FROM users WHERE id = ?').get(fr.friend_id);
+    if (!u) continue;
+    const moments = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC').all(fr.friend_id, now());
+    if (moments.length) {
+      out.push({ user: u, moments, latest: moments[moments.length - 1].created_at });
+    }
+  }
+  // Most recently updated friends first
+  out.sort((a, b) => b.latest - a.latest);
+  res.json({ feed: out });
+});
+
 app.get('/api/users/:id/moments', requireAuth, async (req, res) => {
   await pruneMoments();
   const targetId = req.params.id;
@@ -1146,6 +1165,12 @@ app.post('/api/notifications/read', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Delete a single notification (used by swipe-to-delete)
+app.post('/api/notifications/:id/delete', requireAuth, async (req, res) => {
+  await db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+
 // ---- Direct messages / friend group chats ----
 // List my conversations with last message + unread flag
 app.get('/api/conversations', requireAuth, async (req, res) => {
@@ -1165,7 +1190,7 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
     out.push({
       id: c.id, is_group: !!c.is_group, title,
       members: others,
-      avatar: (!c.is_group && others[0]) ? (others[0].avatar || '') : '',
+      avatar: c.is_group ? (c.avatar || '') : (others[0] ? (others[0].avatar || '') : ''),
       last: last ? { body: last.kind === 'gif' ? '📷 GIF' : last.body, created_at: last.created_at, mine: last.user_id === req.user.id } : null,
       unread
     });
