@@ -181,6 +181,9 @@ await db.exec(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS gallery TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS dob TEXT;
 
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS avatar TEXT;
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS description TEXT;
+
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
@@ -1246,7 +1249,93 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     const otherRow = await db.prepare('SELECT read_receipts FROM users WHERE id=?').get(others[0].id);
     receiptsOn = (meRow && meRow.read_receipts !== 0) && (otherRow && otherRow.read_receipts !== 0);
   }
-  res.json({ messages: msgs, conversation: { id: conv.id, is_group: !!conv.is_group, title, members: others, other_last_read: otherLastRead, receipts_on: receiptsOn } });
+  res.json({ messages: msgs, conversation: {
+    id: conv.id, is_group: !!conv.is_group, title, members: others,
+    all_members: members, owner_id: conv.created_by || null, is_owner: conv.created_by === req.user.id,
+    avatar: conv.avatar || '', description: conv.description || '',
+    other_last_read: otherLastRead, receipts_on: receiptsOn
+  } });
+});
+
+// ---- Group chat management ----
+// Helper: is this user a member of the conversation?
+async function isConvMember(convId, userId) {
+  return !!await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(convId, userId);
+}
+
+// Update group picture and/or description — ANY member may do this.
+app.post('/api/conversations/:id/info', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv || !conv.is_group) return res.status(404).json({ error: 'Group not found.' });
+  if (!await isConvMember(convId, req.user.id)) return res.status(403).json({ error: 'Not in this group.' });
+  const { avatar, description } = req.body || {};
+  if (typeof avatar === 'string') {
+    // avatar is a data URL image (or empty string to clear)
+    const clean = avatar && avatar.startsWith('data:image') ? avatar.slice(0, 2000000) : (avatar === '' ? '' : null);
+    if (clean !== null) await db.prepare('UPDATE conversations SET avatar=? WHERE id=?').run(clean, convId);
+  }
+  if (typeof description === 'string') {
+    await db.prepare('UPDATE conversations SET description=? WHERE id=?').run(description.slice(0, 300), convId);
+  }
+  res.json({ ok: true });
+});
+
+// Rename the group — OWNER only.
+app.post('/api/conversations/:id/rename', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv || !conv.is_group) return res.status(404).json({ error: 'Group not found.' });
+  if (conv.created_by !== req.user.id) return res.status(403).json({ error: 'Only the group creator can rename it.' });
+  const title = String((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'Enter a group name.' });
+  await db.prepare('UPDATE conversations SET title=? WHERE id=?').run(title.slice(0, 60), convId);
+  res.json({ ok: true, title: title.slice(0, 60) });
+});
+
+// Add members — OWNER only, and only their friends.
+app.post('/api/conversations/:id/add-members', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv || !conv.is_group) return res.status(404).json({ error: 'Group not found.' });
+  if (conv.created_by !== req.user.id) return res.status(403).json({ error: 'Only the group creator can add people.' });
+  const ids = Array.isArray(req.body && req.body.memberIds) ? req.body.memberIds.filter(x => x && x !== req.user.id) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Pick at least one friend.' });
+  let added = 0;
+  for (const fid of ids) {
+    const friend = await db.prepare('SELECT 1 FROM friendships WHERE user_id=? AND friend_id=?').get(req.user.id, fid);
+    if (!friend) continue;
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0) ON CONFLICT DO NOTHING').run(convId, fid);
+    await pushNotif(fid, 'group', 'Added to a group', (req.user.name || 'A friend') + ' added you to "' + (conv.title || 'a group') + '"', 'dm:' + convId);
+    added++;
+  }
+  res.json({ ok: true, added });
+});
+
+// Remove a member — OWNER only (owner can't remove themselves this way; they'd use leave/transfer).
+app.post('/api/conversations/:id/remove-member', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv || !conv.is_group) return res.status(404).json({ error: 'Group not found.' });
+  if (conv.created_by !== req.user.id) return res.status(403).json({ error: 'Only the group creator can remove people.' });
+  const uid = String((req.body && req.body.userId) || '');
+  if (!uid || uid === req.user.id) return res.status(400).json({ error: 'Invalid member.' });
+  await db.prepare('DELETE FROM conversation_members WHERE conv_id=? AND user_id=?').run(convId, uid);
+  res.json({ ok: true });
+});
+
+// Leave a group — ANY member. If the owner leaves, hand ownership to the oldest remaining member.
+app.post('/api/conversations/:id/leave', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv || !conv.is_group) return res.status(404).json({ error: 'Group not found.' });
+  if (!await isConvMember(convId, req.user.id)) return res.status(403).json({ error: 'Not in this group.' });
+  await db.prepare('DELETE FROM conversation_members WHERE conv_id=? AND user_id=?').run(convId, req.user.id);
+  if (conv.created_by === req.user.id) {
+    const next = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=? ORDER BY last_read ASC LIMIT 1').get(convId);
+    if (next) await db.prepare('UPDATE conversations SET created_by=? WHERE id=?').run(next.user_id, convId);
+  }
+  res.json({ ok: true });
 });
 
 // React to a DM message
