@@ -477,21 +477,67 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <div class="notch"></div>
 <div class="loading" id="loading"><img src="/icons/showupp-mark-300.png" alt="ShowUpp" width="120" height="120" style="display:block;border-radius:24px"></div>
 
+<!-- Animated logo transition shown after login while the app loads -->
+<div id="loginTransition" style="display:none;position:absolute;inset:0;z-index:400;background:radial-gradient(120% 90% at 50% 40%,#241a3e 0%,#16162b 45%,#0d0d1a 100%);overflow:hidden;align-items:center;justify-content:center">
+  <div class="lt-rings"><span></span><span></span><span></span></div>
+  <div class="lt-sparks"></div>
+  <div class="lt-logo-wrap">
+    <img src="/icons/showupp-logo-clean.png" alt="ShowUpp" class="lt-logo">
+    <div class="lt-glow"></div>
+  </div>
+  <div class="lt-tagline">MEET PEOPLE. <span>MAKE MEMORIES.</span></div>
+</div>
+
+<!-- AUTH -->
+<style>
+#loginTransition.show{display:flex}
+.lt-logo-wrap{position:relative;display:flex;align-items:center;justify-content:center;z-index:3}
+.lt-logo{width:200px;height:200px;object-fit:contain;border-radius:28px;
+  animation:ltPop 1.1s cubic-bezier(.22,1.2,.36,1) both;
+  filter:drop-shadow(0 12px 40px rgba(240,160,60,.45));}
+.lt-glow{position:absolute;width:240px;height:240px;border-radius:50%;z-index:-1;
+  background:radial-gradient(circle,rgba(255,176,58,.55) 0%,rgba(255,176,58,0) 65%);
+  animation:ltGlow 2.2s ease-in-out infinite;}
+@keyframes ltPop{
+  0%{opacity:0;transform:scale(.4) rotate(-14deg)}
+  55%{opacity:1;transform:scale(1.08) rotate(3deg)}
+  100%{opacity:1;transform:scale(1) rotate(0)}
+}
+@keyframes ltGlow{0%,100%{opacity:.5;transform:scale(.9)}50%{opacity:1;transform:scale(1.15)}}
+.lt-tagline{position:absolute;bottom:24%;left:0;right:0;text-align:center;
+  font-size:12px;font-weight:800;letter-spacing:3px;color:rgba(255,255,255,.6);
+  opacity:0;animation:ltFadeUp .7s ease .55s forwards}
+.lt-tagline span{color:var(--mango)}
+@keyframes ltFadeUp{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}
+.lt-rings{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:1}
+.lt-rings span{position:absolute;width:200px;height:200px;border-radius:50%;
+  border:1.5px solid rgba(120,140,255,.5);animation:ltRing 2.4s ease-out infinite}
+.lt-rings span:nth-child(2){animation-delay:.8s;border-color:rgba(255,176,58,.5)}
+.lt-rings span:nth-child(3){animation-delay:1.6s;border-color:rgba(180,150,255,.45)}
+@keyframes ltRing{0%{transform:scale(.5);opacity:.9}100%{transform:scale(2.6);opacity:0}}
+.lt-sparks{position:absolute;width:320px;height:320px;z-index:1;animation:ltSpin 6s linear infinite}
+.lt-sparks::before,.lt-sparks::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%}
+.lt-sparks::before{top:6px;left:50%;background:#8B9BFF;box-shadow:0 0 14px #8B9BFF}
+.lt-sparks::after{bottom:10px;left:30%;background:#FFB03A;box-shadow:0 0 14px #FFB03A}
+@keyframes ltSpin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+.lt-fadeout{animation:ltFadeOut .5s ease forwards}
+@keyframes ltFadeOut{0%{opacity:1}100%{opacity:0}}
+</style>
+
 <!-- AUTH -->
 <div class="screen" id="s-auth">
   <div class="auth">
     <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
-    <div class="auth-scroll">
-      <div class="astep on" id="a-intro">
-        <img src="/icons/showupp-mark-300.png" alt="ShowUpp" width="88" height="88" style="display:block;margin-bottom:10px;border-radius:20px">
-        <div class="logo">Show<span>Upp</span></div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,.55);margin-top:8px">MEET PEOPLE. <span style="color:var(--mango)">MAKE MEMORIES.</span></div>
-        <h2 style="margin-top:18px">Find your people.</h2>
-        <p class="lead">Real friendships start by showing up. Join small groups that meet a few times — enough to actually become friends.</p>
-        <div class="safety-card" style="margin-top:26px"><svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><div><b>Built safe from day one</b><p>Real accounts, your data stays yours, and one-tap reporting.</p></div></div>
-        <div class="auth-foot"><button class="btn btn-primary" onclick="authStep('a-signup')">Create your account</button><div class="small-link">Already here? <a onclick="authStep('a-login')">Log in</a></div></div>
+    <!-- Landing screen: the uploaded ShowUpp front-page design fills the whole phone screen -->
+    <div class="astep on" id="a-intro" style="position:absolute;inset:0;z-index:5;flex-direction:column">
+      <div style="position:absolute;inset:0;background:#101020 url('/icons/showupp-landing.jpg') center top / cover no-repeat;z-index:0"></div>
+      <div style="position:absolute;left:0;right:0;bottom:0;height:38%;background:linear-gradient(to bottom, rgba(16,16,31,0), rgba(16,16,31,.5) 50%, rgba(16,16,31,.92));z-index:1"></div>
+      <div style="position:relative;z-index:2;margin-top:auto;padding:24px 28px 32px;display:flex;flex-direction:column;gap:12px">
+        <button class="btn btn-primary" style="box-shadow:0 8px 30px rgba(91,127,255,.5)" onclick="authStep('a-signup')" data-i18n="create_account">Create your account</button>
+        <div class="small-link" style="text-align:center">Already here? <a onclick="authStep('a-login')" style="font-weight:800" data-i18n="log_in">Log in</a></div>
       </div>
-
+    </div>
+    <div class="auth-scroll">
       <div class="astep" id="a-login">
         <img src="/icons/showupp-mark-300.png" alt="ShowUpp" width="60" height="60" style="display:block;margin-bottom:6px;border-radius:14px">
         <div class="logo" style="font-size:30px">Show<span>Upp</span></div>
@@ -1925,14 +1971,37 @@ async function doSignup(){
     const gender=(genderSel==='Prefer to self-describe')?(document.getElementById('suGenderCustom').value.trim()||'Prefer to self-describe'):genderSel;
     const data=await api('/api/signup','POST',{name,email,phone,password,city,origin:'',interests:signupInterests,lang:LANG,dob,gender});
     token=data.token;saveToken(token,true);me=data.user;
+    showLoginTransition();const _sAt=Date.now();
     connectWS();enterApp();
+    runLoginTransition(_sAt,1700);
   }catch(e){showErr('finalErr',e.message);}
+}
+// ---- Animated logo transition (plays after login while the app loads) ----
+function showLoginTransition(){
+  const el=document.getElementById('loginTransition');
+  if(!el)return;
+  el.classList.remove('lt-fadeout');
+  el.classList.add('show');
+}
+function hideLoginTransition(){
+  const el=document.getElementById('loginTransition');
+  if(!el)return;
+  el.classList.add('lt-fadeout');
+  setTimeout(()=>{el.classList.remove('show','lt-fadeout');},520);
+}
+// Ensures the animation is visible for at least `minMs` so it never just flashes.
+function runLoginTransition(startedAt,minMs){
+  const elapsed=Date.now()-startedAt;
+  const wait=Math.max(0,(minMs||1600)-elapsed);
+  setTimeout(hideLoginTransition,wait);
 }
 async function doLogin(){
   const email=document.getElementById('loginEmail').value.trim();
   const password=document.getElementById('loginPass').value;
   const remember=document.getElementById('rememberMe').checked;
   try{
+    showLoginTransition();
+    const startedAt=Date.now();
     const data=await api('/api/login','POST',{email,password});
     token=data.token;saveToken(token,remember);me=data.user;
     try{
@@ -1940,7 +2009,8 @@ async function doLogin(){
       else localStorage.removeItem('su_email');
     }catch(e){}
     connectWS();enterApp();
-  }catch(e){showErr('loginErr',e.message);}
+    runLoginTransition(startedAt,1700);
+  }catch(e){hideLoginTransition();showErr('loginErr',e.message);}
 }
 function togglePw(id,btn){
   const el=document.getElementById(id);if(!el)return;
@@ -5321,10 +5391,14 @@ async function loginWithBiometric(){
     // Biometric passed — restore the saved session token
     let saved='';try{saved=localStorage.getItem('su_bio_token')||'';}catch(e){}
     if(!saved){toast('No saved session. Please log in once with your password.');return;}
+    showLoginTransition();
+    const startedAt=Date.now();
     token=saved;saveToken(token,true);
     const data=await api('/api/me');me=data.user;
     connectWS();enterApp();
+    runLoginTransition(startedAt,1700);
   }catch(e){
+    hideLoginTransition();
     toast('Face ID / fingerprint sign-in was cancelled or failed.');
   }
 }
@@ -5351,7 +5425,7 @@ function loadUnit(){
 
 // ---- Boot ----
 async function boot(){
-  console.log('ShowUpp build: 2026-08-30-R (friend-age-gender-fix, birthday-notifs, dark-round-icons)');
+  console.log('ShowUpp build: 2026-08-30-S (landing-image-frontpage, login-logo-animation)');
   if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   if(typeof attachAllSearchClears==='function')attachAllSearchClears();
   renderCats('');
