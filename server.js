@@ -85,6 +85,15 @@ await db.exec(`
     PRIMARY KEY (user_id, friend_id)
   );
 
+  CREATE TABLE IF NOT EXISTS gallery_reactions (
+    owner_id   TEXT NOT NULL,
+    pic_index  INTEGER NOT NULL,
+    reactor_id TEXT NOT NULL,
+    reaction   TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (owner_id, pic_index, reactor_id)
+  );
+
   CREATE TABLE IF NOT EXISTS friend_requests (
     from_id    TEXT NOT NULL,
     to_id      TEXT NOT NULL,
@@ -770,6 +779,62 @@ app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
       }
     });
   }
+});
+
+// Reactions (like/love) on a person's interest pictures — friends only.
+app.get('/api/users/:id/gallery-reactions', requireAuth, async (req, res) => {
+  const ownerId = req.params.id;
+  const isSelf = ownerId === req.user.id;
+  const friends = await areFriends(req.user.id, ownerId);
+  if (!isSelf && !friends) return res.status(403).json({ error: 'Friends only.' });
+  const rows = await db.prepare('SELECT pic_index, reactor_id, reaction FROM gallery_reactions WHERE owner_id = ?').all(ownerId);
+  // Summarize per picture: counts by type, plus what the current viewer reacted.
+  const byPic = {};
+  for (const r of rows) {
+    const k = r.pic_index;
+    if (!byPic[k]) byPic[k] = { like: 0, love: 0, mine: null };
+    if (r.reaction === 'like') byPic[k].like++;
+    else if (r.reaction === 'love') byPic[k].love++;
+    if (r.reactor_id === req.user.id) byPic[k].mine = r.reaction;
+  }
+  res.json({ reactions: byPic });
+});
+
+app.post('/api/users/:id/gallery-reactions', requireAuth, async (req, res) => {
+  const ownerId = req.params.id;
+  if (ownerId === req.user.id) return res.status(400).json({ error: "You can't react to your own pictures." });
+  const friends = await areFriends(req.user.id, ownerId);
+  if (!friends) return res.status(403).json({ error: 'You can only react to friends\' pictures.' });
+  const picIndex = parseInt(req.body && req.body.picIndex, 10);
+  const reaction = String(req.body && req.body.reaction || '');
+  if (isNaN(picIndex) || picIndex < 0) return res.status(400).json({ error: 'Invalid picture.' });
+  if (!['like', 'love', 'none'].includes(reaction)) return res.status(400).json({ error: 'Invalid reaction.' });
+  // Verify the picture actually exists on the owner's gallery
+  const owner = await db.prepare('SELECT gallery FROM users WHERE id = ?').get(ownerId);
+  let gallery = [];
+  try { gallery = owner && owner.gallery ? JSON.parse(owner.gallery) : []; } catch (e) { gallery = []; }
+  if (picIndex >= gallery.length) return res.status(400).json({ error: 'That picture no longer exists.' });
+  if (reaction === 'none') {
+    await db.prepare('DELETE FROM gallery_reactions WHERE owner_id = ? AND pic_index = ? AND reactor_id = ?')
+      .run(ownerId, picIndex, req.user.id);
+  } else {
+    // upsert
+    const existing = await db.prepare('SELECT 1 FROM gallery_reactions WHERE owner_id = ? AND pic_index = ? AND reactor_id = ?')
+      .get(ownerId, picIndex, req.user.id);
+    if (existing) {
+      await db.prepare('UPDATE gallery_reactions SET reaction = ?, created_at = ? WHERE owner_id = ? AND pic_index = ? AND reactor_id = ?')
+        .run(reaction, now(), ownerId, picIndex, req.user.id);
+    } else {
+      await db.prepare('INSERT INTO gallery_reactions (owner_id,pic_index,reactor_id,reaction,created_at) VALUES (?,?,?,?,?)')
+        .run(ownerId, picIndex, req.user.id, reaction, now());
+      // Notify the owner that a friend reacted (best-effort)
+      try {
+        const me2 = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+        await pushNotif(ownerId, 'gallery', (me2 ? me2.name : 'A friend') + (reaction === 'love' ? ' loved' : ' liked') + ' one of your pictures 💛');
+      } catch (e) {}
+    }
+  }
+  res.json({ ok: true });
 });
 
 // ---- Save the user's approximate location (for "find similar people" & distance) ----
@@ -1852,6 +1917,61 @@ wss.on('connection', (ws) => {
     // ---- Voice / video call signaling (friend-only) ----
     // Calls are ONLY allowed between people who share a conversation that is either
     // a 1-on-1 friend DM or a friend group chat. Never for Rounds.
+    // ---- Group calls (mesh) for Rounds and friend group chats ----
+    // roomType: 'round' | 'conv'; roomId: the round or conversation id.
+    if (msg.type === 'group-call-invite' || msg.type === 'group-call-join' ||
+        msg.type === 'group-call-leave' || msg.type === 'group-call-offer' ||
+        msg.type === 'group-call-answer' || msg.type === 'group-call-ice') {
+      if (!ws.user) return;
+
+      // Resolve who is allowed in this call (members of the round or conversation).
+      async function roomMemberIds(roomType, roomId) {
+        if (roomType === 'round') {
+          const rows = await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(roomId);
+          return rows.map(r => r.user_id);
+        } else {
+          const rows = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id = ?').all(roomId);
+          return rows.map(r => r.user_id);
+        }
+      }
+
+      // The caller must be a member of the room they're signaling in.
+      if (msg.type === 'group-call-invite' || msg.type === 'group-call-join') {
+        const members = await roomMemberIds(msg.roomType, msg.roomId);
+        if (!members.includes(ws.user.id)) {
+          ws.send(JSON.stringify({ type: 'call-error', error: 'You are not in this chat.' }));
+          return;
+        }
+      }
+
+      // Broadcast invite/join/leave to all OTHER members; relay targeted offer/answer/ice to one peer.
+      if (msg.type === 'group-call-invite' || msg.type === 'group-call-join' || msg.type === 'group-call-leave') {
+        const members = await roomMemberIds(msg.roomType, msg.roomId);
+        const payload = JSON.stringify({
+          type: msg.type, from: ws.user.id, fromName: ws.user.name, fromAvatar: ws.user.avatar || '',
+          roomType: msg.roomType, roomId: msg.roomId, media: msg.media || 'video'
+        });
+        wss.clients.forEach(client => {
+          if (client.readyState === 1 && client.user && client.user.id !== ws.user.id && members.includes(client.user.id)) {
+            client.send(payload);
+          }
+        });
+      } else {
+        // targeted signaling (offer/answer/ice) to a specific peer in the room
+        const targetId = msg.to;
+        if (!targetId) return;
+        const payload = JSON.stringify({
+          type: msg.type, from: ws.user.id, fromName: ws.user.name, fromAvatar: ws.user.avatar || '',
+          roomType: msg.roomType, roomId: msg.roomId, media: msg.media || 'video',
+          sdp: msg.sdp || null, candidate: msg.candidate || null
+        });
+        wss.clients.forEach(client => {
+          if (client.readyState === 1 && client.user && client.user.id === targetId) client.send(payload);
+        });
+      }
+      return;
+    }
+
     if (msg.type === 'call-offer' || msg.type === 'call-answer' || msg.type === 'call-ice' ||
         msg.type === 'call-end' || msg.type === 'call-decline') {
       const targetId = msg.to;
