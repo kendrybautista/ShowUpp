@@ -184,6 +184,9 @@ await db.exec(`
   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS avatar TEXT;
   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS description TEXT;
 
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS show_age INTEGER DEFAULT 0;
+
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
@@ -317,7 +320,18 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+function ageFromDob(dob) {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return (age >= 0 && age < 130) ? age : null;
+}
 function publicUser(u) {
+  const age = ageFromDob(u.dob);
   return {
     id: u.id,
     name: u.name,
@@ -331,6 +345,10 @@ function publicUser(u) {
     premium: !!u.premium,
     isPrivate: !!u.is_private,
     relationship: u.relationship || '',
+    gender: u.gender || '',
+    showAge: !!u.show_age,
+    // Age is only exposed publicly when the person chose to show it.
+    age: u.show_age ? age : null,
     isAdmin: !!u.is_admin,
     lang: u.lang || 'en'
   };
@@ -357,7 +375,7 @@ app.post('/api/check-email', async (req, res) => {
 });
 
 app.post('/api/signup', async (req, res) => {
-  const { email, password, name, phone, city, origin, interests, lang, dob } = req.body || {};
+  const { email, password, name, phone, city, origin, interests, lang, dob, gender } = req.body || {};
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
@@ -393,10 +411,11 @@ app.post('/api/signup', async (req, res) => {
     interests: JSON.stringify(Array.isArray(interests) ? interests : []),
     lang: (lang && ['en', 'es'].includes(lang)) ? lang : 'en',
     dob: String(dob).slice(0, 10),
+    gender: gender ? String(gender).slice(0, 40) : '',
     created_at: now()
   };
-  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,created_at)
-              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@created_at)`).run(user);
+  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,gender,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
 
   res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
 });
@@ -427,7 +446,8 @@ app.get('/api/me', requireAuth, async (req, res) => {
   // Read the full, current record from the DB — the token snapshot can be stale
   // (e.g. relationship/bio set after login), which would blank fields on refresh.
   const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) || req.user;
-  res.json({ user: { ...publicUser(full), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0 } });
+  res.json({ user: { ...publicUser(full), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0,
+    dob: full.dob || '', age: ageFromDob(full.dob), gender: full.gender || '', showAge: !!full.show_age } });
 });
 
 // Presence of my friends (respects their incognito setting)
@@ -633,7 +653,17 @@ app.post('/api/reset-password', async (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, async (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone, gender, showAge } = req.body || {};
+  // Gender: restricted to a small, standard, inclusive set.
+  const GENDERS = ['Woman', 'Man', 'Non-binary', 'Prefer to self-describe', 'Prefer not to say'];
+  let cleanGender = null;
+  if (gender !== undefined && gender !== null) {
+    const g = String(gender).slice(0, 40);
+    // Accept a listed value, an empty string (clear), or a custom self-description
+    cleanGender = (g === '' || GENDERS.includes(g)) ? g : g; // free text allowed for self-describe
+  }
+  let cleanShowAge = null;
+  if (typeof showAge === 'boolean') cleanShowAge = showAge ? 1 : 0;
   // If a username is provided, enforce simple rules + uniqueness
   let cleanUser = null;
   if (username && String(username).trim()) {
@@ -678,6 +708,8 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
       gallery = COALESCE(?, gallery),
       is_private = COALESCE(?, is_private),
       relationship = COALESCE(?, relationship),
+      gender = COALESCE(?, gender),
+      show_age = COALESCE(?, show_age),
       email = COALESCE(?, email),
       phone = COALESCE(?, phone)
     WHERE id = ?`).run(
@@ -690,12 +722,15 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
     cleanGallery,
     (typeof isPrivate === 'boolean') ? (isPrivate ? 1 : 0) : null,
     (relationship !== undefined && relationship !== null) ? String(relationship).slice(0, 40) : null,
+    cleanGender,
+    cleanShowAge,
     cleanEmail,
     cleanPhone,
     req.user.id
   );
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
+  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '',
+    dob: updated.dob || '', age: ageFromDob(updated.dob), gender: updated.gender || '', showAge: !!updated.show_age } });
 });
 
 // Upload / change profile picture (stored as a data URL; kept small)
@@ -1359,6 +1394,29 @@ app.post('/api/conversations/:id/leave', requireAuth, async (req, res) => {
   if (conv.created_by === req.user.id) {
     const next = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=? ORDER BY last_read ASC LIMIT 1').get(convId);
     if (next) await db.prepare('UPDATE conversations SET created_by=? WHERE id=?').run(next.user_id, convId);
+  }
+  res.json({ ok: true });
+});
+
+// Remove a conversation from MY chat list (swipe-to-delete).
+// For a group this is the same as leaving; for a 1-on-1 it just hides it for me
+// (the other person keeps their copy). If everyone has left, the conversation is cleaned up.
+app.post('/api/conversations/:id/delete', requireAuth, async (req, res) => {
+  const convId = req.params.id;
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(convId);
+  if (!conv) return res.json({ ok: true }); // already gone
+  if (!await isConvMember(convId, req.user.id)) return res.status(403).json({ error: 'Not in this conversation.' });
+  await db.prepare('DELETE FROM conversation_members WHERE conv_id=? AND user_id=?').run(convId, req.user.id);
+  // If the owner of a group leaves, hand ownership to someone else
+  if (conv.is_group && conv.created_by === req.user.id) {
+    const next = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id=? ORDER BY last_read ASC LIMIT 1').get(convId);
+    if (next) await db.prepare('UPDATE conversations SET created_by=? WHERE id=?').run(next.user_id, convId);
+  }
+  // If nobody is left in the conversation, delete it and its messages entirely
+  const remaining = Number((await db.prepare('SELECT COUNT(*) AS c FROM conversation_members WHERE conv_id=?').get(convId)).c) || 0;
+  if (remaining === 0) {
+    await db.prepare('DELETE FROM dm_messages WHERE conv_id=?').run(convId);
+    await db.prepare('DELETE FROM conversations WHERE id=?').run(convId);
   }
   res.json({ ok: true });
 });
