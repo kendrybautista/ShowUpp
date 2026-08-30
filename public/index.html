@@ -245,6 +245,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
    NOT override Leaflet's own pane z-indexes — it relies on them to layer tiles/markers/popups. */
 #mapView,#eventsMapView{position:relative;z-index:0;isolation:isolate}
 .leaflet-container{z-index:1}
+.map-popup-title{font-size:14px;font-weight:700;color:var(--night)}
+.map-popup-meta{font-size:12.5px;color:var(--muted);margin-top:2px}
+.map-popup-open{margin-top:8px;width:100%;border:none;border-radius:10px;padding:7px 10px;font-size:12.5px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--coral),var(--mango));cursor:pointer}
+.phone[data-theme="dark"] .map-popup-title{color:#EDEEF7}
+.leaflet-popup-content{margin:10px 12px}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card)}
 .navbtn{background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;color:var(--muted);font-size:10.5px;font-weight:600;flex:1;position:relative}
 .navbtn svg{width:24px;height:24px}
 .navbtn.on{color:var(--coral)}
@@ -2550,7 +2556,15 @@ function renderEventsMap(list){
   else eventsMap.setView([center.lat,center.lng],11);
   eventsMapMarkers.forEach(m=>eventsMap.removeLayer(m));eventsMapMarkers=[];
   if(userLoc){const me2=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(eventsMap);eventsMapMarkers.push(me2);}
-  list.forEach(e=>{if(e.lat==null||e.lng==null)return;const mk=L.marker([e.lat,e.lng]).addTo(eventsMap);mk.bindPopup('<b>'+esc(e.title)+'</b><br>'+(e.emoji||'')+' '+esc(e.category||'')+(e.place?'<br>'+esc(e.place):''));eventsMapMarkers.push(mk);});
+  list.forEach(e=>{
+    if(e.lat==null||e.lng==null)return;
+    const mk=L.marker([e.lat,e.lng]).addTo(eventsMap);
+    const popupHtml='<div class="map-popup-title">'+esc(e.title)+'</div>'
+      +'<div class="map-popup-meta">'+(e.emoji||'')+' '+esc(e.category||'')+(e.place?'<br>'+esc(e.place):'')+'</div>'
+      +'<button type="button" class="map-popup-open" onclick="openEventDetail(\''+e.id+'\')">'+t('Open Event')+'</button>';
+    mk.bindPopup(popupHtml);
+    eventsMapMarkers.push(mk);
+  });
   setTimeout(()=>eventsMap.invalidateSize(),100);
 }
 function openEventDetail(eid){
@@ -2745,7 +2759,10 @@ function renderMap(list){
   list.forEach(r=>{
     if(r.lat==null||r.lng==null)return;
     const mk=L.marker([r.lat,r.lng]).addTo(leafletMap);
-    mk.bindPopup('<b>'+esc(r.title)+'</b><br>'+(r.emoji||'')+' '+t(r.category||'')+(r.place?'<br>'+esc(r.place):''));
+    const popupHtml='<div class="map-popup-title">'+esc(r.title)+'</div>'
+      +'<div class="map-popup-meta">'+(r.emoji||'')+' '+t(r.category||'')+(r.place?'<br>'+esc(r.place):'')+'</div>'
+      +'<button type="button" class="map-popup-open" onclick="openDetail(\''+r.id+'\')">'+t('Open Round')+'</button>';
+    mk.bindPopup(popupHtml);
     mapMarkers.push(mk);plotted++;
   });
   // Let the host know if their Rounds have no location saved (created before a place was added)
