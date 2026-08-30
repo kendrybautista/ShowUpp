@@ -308,12 +308,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .check-row a{color:var(--mango);font-weight:600;text-decoration:none}
 .err{background:rgba(255,107,91,.15);border:1px solid rgba(255,107,91,.4);color:#ffd9d3;font-size:13px;padding:11px 14px;border-radius:12px;margin-top:14px;display:none}
 .err.show{display:block}
-.detail-hero{height:210px;position:relative;display:flex;align-items:flex-end;padding:22px;overflow:hidden}
-.detail-hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:65%;background:linear-gradient(to bottom,rgba(0,0,0,0),rgba(0,0,0,.5));z-index:1;pointer-events:none}
+.detail-hero{height:210px;position:relative;display:flex;align-items:flex-end;padding:22px;overflow:hidden;background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,var(--detail-bg,#EDEBF7) 100%)}
+.detail-hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:55%;background:linear-gradient(to bottom,rgba(183,214,254,0),var(--detail-bg,#EDEBF7));z-index:1;pointer-events:none}
 .back{position:absolute;top:16px;left:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;border:none;box-shadow:0 2px 10px rgba(0,0,0,.15)}
 .back svg{width:20px;height:20px;color:var(--night)}
-.detail-hero .emoji-lg{position:absolute;top:58px;right:24px;font-size:56px;filter:drop-shadow(0 4px 14px rgba(0,0,0,.4));z-index:2}
-.detail-hero h1{font-family:'Fraunces',serif;color:#fff;font-size:28px;font-weight:600;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.9);position:relative;z-index:2}
+.detail-hero .emoji-lg{position:absolute;top:58px;right:24px;font-size:56px;filter:drop-shadow(0 2px 8px rgba(27,27,58,.18));z-index:2}
+.detail-hero h1{font-family:'Fraunces',serif;color:var(--night);font-size:28px;font-weight:600;line-height:1.15;text-shadow:none;position:relative;z-index:2}
 /* Softer, airier detail body on a tinted backdrop, with content in clean white cards */
 .detail-body{padding:20px 20px 8px;margin-top:-22px;background:var(--detail-bg,#EDEBF7);border-radius:26px 26px 0 0;position:relative;z-index:3}
 .detail-card{background:#fff;border-radius:18px;padding:16px 16px;margin-bottom:14px;box-shadow:0 2px 14px rgba(40,40,80,.06)}
@@ -684,7 +684,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- DETAIL -->
 <div class="screen" id="s-detail">
   <div class="scroll" style="padding-bottom:24px">
-    <div class="detail-hero" id="detailHero" style="background:linear-gradient(135deg,#FF6B5B,#FFB03A)">
+    <div class="detail-hero" id="detailHero" style="background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,#EDEBF7 100%)">
       <button class="back" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
       <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle">Round</h1>
     </div>
@@ -1692,7 +1692,7 @@ const CATEGORIES=[
   {e:'🎹',n:'Instruments'},{e:'📻',n:'Podcasts'},{e:'🛍️',n:'Fashion'},{e:'💄',n:'Beauty'},
   {e:'🐕',n:'Dog Lovers'},{e:'🐱',n:'Cat Lovers'},{e:'🌍',n:'Culture'},{e:'🗣️',n:'Debate'}
 ];
-const GRADS=['linear-gradient(135deg,#FF6B5B,#FFB03A)','linear-gradient(135deg,#2DD4BF,#1B1B3A)','linear-gradient(135deg,#FFB03A,#FF6B5B)','linear-gradient(135deg,#2DD4BF,#FFB03A)','linear-gradient(135deg,#1B1B3A,#FF6B5B)','linear-gradient(135deg,#FFB03A,#2DD4BF)'];
+const GRADS=['linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,#EDEBF7 100%)','linear-gradient(180deg,#BEDBFF 0%,#D2CDF8 55%,#EDEBF7 100%)','linear-gradient(180deg,#AFD0FE 0%,#C6C4F4 55%,#EDEBF7 100%)'];
 function gradFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return GRADS[h%GRADS.length];}
 
 // ---- Countries (ISO code + name). Flags render as images so they show on every device. ----
@@ -3078,7 +3078,7 @@ async function loadCircles(){
     list.innerHTML=data.rounds.map(r=>{
       const inner='<div class="cc">'+(r.emoji||'✨')+'</div><div class="ci"><b>'+esc(r.title)+'</b><span>'+r.member_count+' member'+(r.member_count===1?'':'s')+(r.is_host?' · you host':'')+'</span></div>';
       if(r.is_host){
-        return '<div class="swipe-wrap" id="sw-'+r.id+'"><div class="del-bg" onclick="confirmDeleteRound(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</div><div class="circle-card" onclick="toggleSwipe(event,\''+r.id+'\')" ontouchstart="swipeStart(event)" ontouchend="swipeEnd(event,\''+r.id+'\')">'+inner+'</div></div>';
+        return '<div class="swipe-wrap" id="sw-'+r.id+'"><div class="del-bg" onclick="confirmDeleteRoundSwipe(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</div><div class="circle-card" onclick="toggleSwipe(event,\''+r.id+'\')" ontouchstart="swipeStart(event)" ontouchend="swipeEnd(event,\''+r.id+'\')">'+inner+'</div></div>';
       }
       return '<div class="circle-card" onclick="openThreadById(\''+r.id+'\')" style="margin:0 22px 14px">'+inner+'</div>';
     }).join('');
@@ -3089,7 +3089,7 @@ let swX=0;
 function swipeStart(e){swX=e.changedTouches[0].clientX;}
 function swipeEnd(e,rid){const dx=e.changedTouches[0].clientX-swX;const w=document.getElementById('sw-'+rid);if(dx<-40)w.classList.add('swiped');else if(dx>40)w.classList.remove('swiped');else openThreadById(rid);}
 function toggleSwipe(e,rid){/* desktop: click card opens chat unless already swiped */const w=document.getElementById('sw-'+rid);if(w.classList.contains('swiped')){w.classList.remove('swiped');}else{openThreadById(rid);}}
-function confirmDeleteRound(rid,title){
+function confirmDeleteRoundSwipe(rid,title){
   if(confirm('Delete "'+title+'"? This removes the Round and its chat for everyone. This cannot be undone.')){
     api('/api/rounds/'+rid+'/delete','POST',{}).then(()=>{toast('Round deleted');loadCircles();}).catch(e=>toast(e.message));
   }
