@@ -94,6 +94,13 @@ await db.exec(`
     PRIMARY KEY (owner_id, pic_index, reactor_id)
   );
 
+  CREATE TABLE IF NOT EXISTS birthday_notifs (
+    user_id   TEXT NOT NULL,
+    friend_id TEXT NOT NULL,
+    year      INTEGER NOT NULL,
+    PRIMARY KEY (user_id, friend_id, year)
+  );
+
   CREATE TABLE IF NOT EXISTS friend_requests (
     from_id    TEXT NOT NULL,
     to_id      TEXT NOT NULL,
@@ -815,7 +822,10 @@ app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
         id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
         city: u.city, origin: u.origin, interests: u.interests ? JSON.parse(u.interests) : [],
         bio: u.bio || '', gallery: canSeeGallery && u.gallery ? JSON.parse(u.gallery) : [],
-        isPrivate: !!u.is_private, full: true, status, isFriend: friends, relationship: u.relationship || ''
+        isPrivate: !!u.is_private, full: true, status, isFriend: friends, relationship: u.relationship || '',
+        gender: u.gender || '',
+        // Age only shows if the person turned on "Show my age" (or you're viewing yourself)
+        age: (isSelf || u.show_age) ? ageFromDob(u.dob) : null
       }
     });
   } else {
@@ -824,7 +834,8 @@ app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
       profile: {
         id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
         city: u.city, interests: [], bio: '', gallery: [],
-        isPrivate: true, full: false, status, isFriend: false
+        isPrivate: true, full: false, status, isFriend: false,
+        gender: '', age: null
       }
     });
   }
@@ -1167,6 +1178,35 @@ async function pushNotif(userId, type, title, body, link) {
     // live ping over WS if they're connected
     const payload = JSON.stringify({ type: 'notify' });
     wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) c.send(payload); });
+  } catch (e) { /* ignore */ }
+}
+
+// Notify people when a friend has a birthday today. Runs on startup and once a day.
+// Each person is told about each friend's birthday at most once per year.
+async function checkBirthdays() {
+  try {
+    const today = new Date();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const year = today.getFullYear();
+    // Everyone with a birthday matching today's month + day (dob stored as YYYY-MM-DD)
+    const birthdayPeople = await db.prepare("SELECT id, name, dob FROM users WHERE dob IS NOT NULL AND SUBSTR(dob,6,5) = ?").all(mm + '-' + dd);
+    for (const bp of birthdayPeople) {
+      // Find their friends (people who should be told)
+      const friendRows = await db.prepare('SELECT user_id FROM friendships WHERE friend_id = ?').all(bp.id);
+      for (const fr of friendRows) {
+        const already = await db.prepare('SELECT 1 FROM birthday_notifs WHERE user_id = ? AND friend_id = ? AND year = ?').get(fr.user_id, bp.id, year);
+        if (already) continue;
+        const firstName = (bp.name || 'Your friend').split(' ')[0];
+        await pushNotif(
+          fr.user_id, 'birthday',
+          '🎂 ' + firstName + "'s birthday is today!",
+          'Make their day — reach out and celebrate ' + firstName + '.',
+          'birthday:' + bp.id
+        );
+        await db.prepare('INSERT INTO birthday_notifs (user_id, friend_id, year) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(fr.user_id, bp.id, year);
+      }
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -2214,6 +2254,9 @@ initDb()
       console.log(`ShowUpp backend running on port ${PORT}`);
       console.log(`Open http://localhost:${PORT} to use the app.`);
     });
+    // Birthday notifications: check shortly after boot, then once every 24 hours.
+    setTimeout(() => { checkBirthdays(); }, 15000);
+    setInterval(() => { checkBirthdays(); }, 24 * 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to initialize the database. Is DATABASE_URL correct?');
