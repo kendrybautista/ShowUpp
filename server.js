@@ -412,9 +412,10 @@ app.post('/api/login', async (req, res) => {
 
 // Return the current user (used on app load to restore session)
 app.get('/api/me', requireAuth, async (req, res) => {
-  // Include email + phone for the logged-in user's own profile (never exposed via publicUser to others)
-  const full = await db.prepare('SELECT email, phone, incognito, read_receipts FROM users WHERE id = ?').get(req.user.id) || {};
-  res.json({ user: { ...publicUser(req.user), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0 } });
+  // Read the full, current record from the DB — the token snapshot can be stale
+  // (e.g. relationship/bio set after login), which would blank fields on refresh.
+  const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) || req.user;
+  res.json({ user: { ...publicUser(full), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0 } });
 });
 
 // Presence of my friends (respects their incognito setting)
@@ -470,6 +471,35 @@ app.get('/api/link-preview', requireAuth, async (req, res) => {
     res.json({ url: raw, title: (title || '').slice(0, 160), description: (desc || '').slice(0, 240), image: (image || '').slice(0, 500), site: host });
   } catch (e) {
     res.json({ url: raw, title: '', description: '', image: '', site: '', error: 'unreachable' });
+  }
+});
+
+// Server-side geocoding (address -> lat/lng). Runs here so we can send a proper
+// User-Agent, which OpenStreetMap's Nominatim requires — browser calls are often blocked.
+app.get('/api/geocode', requireAuth, async (req, res) => {
+  const q = String((req.query && req.query.q) || '').trim();
+  if (!q || q.length < 3) return res.status(400).json({ error: 'Enter an address.' });
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q=' + encodeURIComponent(q);
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'ShowUppApp/1.0 (friendship app; contact admin@showupp.app)', 'Accept': 'application/json' }
+    });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ found: false });
+    const arr = await r.json();
+    if (Array.isArray(arr) && arr.length) {
+      const it = arr[0];
+      let name = '';
+      if (it.namedetails && it.namedetails.name) name = it.namedetails.name;
+      else if (it.type && ['office', 'shop', 'restaurant', 'cafe', 'bar', 'amenity'].some(k => (it.class === k || it.type === k))) name = (it.display_name || '').split(',')[0];
+      return res.json({ found: true, lat: parseFloat(it.lat), lng: parseFloat(it.lon), name: name || '', display: it.display_name || '' });
+    }
+    res.json({ found: false });
+  } catch (e) {
+    res.json({ found: false, error: 'geocode-failed' });
   }
 });
 app.post('/api/me/secure-change', requireAuth, async (req, res) => {
@@ -1394,10 +1424,11 @@ app.post('/api/rounds/:id/remove-member', requireAuth, async (req, res) => {
 
 // List members of a Round (host sees a manage list)
 app.get('/api/rounds/:id/members', requireAuth, async (req, res) => {
-  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
-  if (!member) return res.status(403).json({ error: 'Join to see members.' });
+  // Anyone signed in can see who's in a Round — this helps people decide whether to join.
+  // Only public fields are returned (never email/phone).
   const round = await db.prepare('SELECT host_id FROM rounds WHERE id=?').get(req.params.id);
-  const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,m.rsvp FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC`).all(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,u.city,m.rsvp FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC`).all(req.params.id);
   res.json({ members: rows, host_id: round ? round.host_id : null, isHost: round && round.host_id === req.user.id });
 });
 
