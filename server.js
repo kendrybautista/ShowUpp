@@ -644,10 +644,17 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
     cleanPhone = String(phone).replace(/[^0-9+]/g, '').slice(0, 20);
   }
   const cleanLang = (lang && ['en', 'es'].includes(lang)) ? lang : null;
-  // gallery: array of image data URLs, max 10, each capped
+  // gallery: array of pictures, max 15. Each item is {url, caption} (older data may be a plain URL string).
   let cleanGallery = null;
   if (Array.isArray(gallery)) {
-    cleanGallery = JSON.stringify(gallery.filter(g => typeof g === 'string' && g.startsWith('data:image')).slice(0, 10).map(g => g.slice(0, 2000000)));
+    const cleaned = gallery.map(g => {
+      // Normalize both shapes to {url, caption}
+      const url = (g && typeof g === 'object') ? g.url : g;
+      const caption = (g && typeof g === 'object' && typeof g.caption === 'string') ? g.caption : '';
+      if (typeof url !== 'string' || !url.startsWith('data:image')) return null;
+      return { url: url.slice(0, 2000000), caption: caption.slice(0, 80) };
+    }).filter(Boolean).slice(0, 15);
+    cleanGallery = JSON.stringify(cleaned);
   }
   await db.prepare(`UPDATE users SET
       name = COALESCE(?, name),
@@ -826,18 +833,19 @@ app.post('/api/moments', requireAuth, async (req, res) => {
   await pruneMoments();
   const { text, photo, media } = req.body || {};
   const cleanText = String(text || '').slice(0, 500);
-  // media: array of {type:'image'|'video', data:dataURL}. Cap total size ~12MB.
+  // media: array of {type:'image'|'video', data:dataURL, caption?}. Cap total size.
   let cleanMedia = [];
   if (Array.isArray(media)) {
-    let budget = 12 * 1024 * 1024;
-    for (const item of media.slice(0, 10)) {
+    let budget = 20 * 1024 * 1024;
+    for (const item of media.slice(0, 20)) {
       if (!item || typeof item.data !== 'string') continue;
       const isImg = item.data.startsWith('data:image');
       const isVid = item.data.startsWith('data:video');
       if (!isImg && !isVid) continue;
       if (item.data.length > budget) continue;
       budget -= item.data.length;
-      cleanMedia.push({ type: isVid ? 'video' : 'image', data: item.data });
+      const caption = (typeof item.caption === 'string') ? item.caption.slice(0, 80) : '';
+      cleanMedia.push({ type: isVid ? 'video' : 'image', data: item.data, caption });
     }
   }
   // legacy single-photo support
