@@ -170,6 +170,7 @@ await db.exec(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS incognito INTEGER DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts INTEGER DEFAULT 1;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS gallery TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS dob TEXT;
 
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
@@ -182,6 +183,8 @@ await db.exec(`
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
+
+  ALTER TABLE memberships ADD COLUMN IF NOT EXISTS last_read BIGINT DEFAULT 0;
 
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS lat REAL;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS lng REAL;
@@ -342,12 +345,27 @@ app.post('/api/check-email', async (req, res) => {
 });
 
 app.post('/api/signup', async (req, res) => {
-  const { email, password, name, phone, city, origin, interests, lang } = req.body || {};
+  const { email, password, name, phone, city, origin, interests, lang, dob } = req.body || {};
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
   if (String(password).length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+  // Age gate — ShowUpp is strictly 18+. Enforced on the server so it can't be bypassed.
+  const birth = dob ? new Date(dob) : null;
+  if (!birth || isNaN(birth.getTime())) {
+    return res.status(400).json({ error: 'A valid date of birth is required.' });
+  }
+  const nowD = new Date();
+  let age = nowD.getFullYear() - birth.getFullYear();
+  const mm = nowD.getMonth() - birth.getMonth();
+  if (mm < 0 || (mm === 0 && nowD.getDate() < birth.getDate())) age--;
+  if (age < 18) {
+    return res.status(403).json({ error: 'You must be 18 or older to use ShowUpp.' });
+  }
+  if (age > 120) {
+    return res.status(400).json({ error: 'Please enter a valid date of birth.' });
   }
   const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
   if (existing) return res.status(409).json({ error: 'That email is already registered. Try logging in.' });
@@ -362,10 +380,11 @@ app.post('/api/signup', async (req, res) => {
     origin: origin || '',
     interests: JSON.stringify(Array.isArray(interests) ? interests : []),
     lang: (lang && ['en', 'es'].includes(lang)) ? lang : 'en',
+    dob: String(dob).slice(0, 10),
     created_at: now()
   };
-  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,created_at)
-              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@created_at)`).run(user);
+  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@created_at)`).run(user);
 
   res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
 });
@@ -985,19 +1004,35 @@ app.get('/api/notifications', requireAuth, async (req, res) => {
   res.json({ notifications: rows });
 });
 
-// Unread counts for the badge (notifications + unread DMs)
+// Unread counts for the badge (notifications + unread messages), broken down by category
 app.get('/api/notifications/counts', requireAuth, async (req, res) => {
   // Bell = non-message notifications only (friend requests, accepts, group events).
-  // Message notifications are surfaced separately on the Chats icon.
   const notif = Number((await db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0 AND type != 'dm'").get(req.user.id)).c) || 0;
+
+  // Friends (DMs): total unread messages across all conversations
   const convs = await db.prepare('SELECT conv_id, last_read FROM conversation_members WHERE user_id = ?').all(req.user.id);
-  let unreadDms = 0;
+  let dmMessages = 0;
   for (const cm of convs) {
-    const c = Number((await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
+    dmMessages += Number((await db.prepare('SELECT COUNT(*) AS c FROM dm_messages WHERE conv_id = ? AND created_at > ? AND user_id != ?')
       .get(cm.conv_id, cm.last_read || 0, req.user.id)).c) || 0;
-    if (c > 0) unreadDms++;
   }
-  res.json({ notifications: notif, dms: unreadDms, total: notif + unreadDms });
+
+  // Round chats: total unread messages across all Rounds the user belongs to
+  const mems = await db.prepare('SELECT round_id, last_read FROM memberships WHERE user_id = ?').all(req.user.id);
+  let roundMessages = 0;
+  for (const mm of mems) {
+    roundMessages += Number((await db.prepare('SELECT COUNT(*) AS c FROM messages WHERE round_id = ? AND created_at > ? AND user_id != ?')
+      .get(mm.round_id, mm.last_read || 0, req.user.id)).c) || 0;
+  }
+
+  const chatsTotal = dmMessages + roundMessages;
+  res.json({
+    notifications: notif,
+    rounds: roundMessages,
+    dms: dmMessages,
+    chatsTotal,
+    total: notif + chatsTotal
+  });
 });
 
 app.post('/api/notifications/read', requireAuth, async (req, res) => {
@@ -1554,13 +1589,27 @@ app.get('/api/my-rounds', requireAuth, async (req, res) => {
   const rounds = await db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
-      (r.host_id = ?) AS is_host
+      (r.host_id = ?) AS is_host,
+      COALESCE(mm.last_read, 0) AS my_last_read
     FROM rounds r
     JOIN memberships mm ON mm.round_id = r.id
     WHERE mm.user_id = ?
     ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id);
+  // Attach how many messages in each Round the user hasn't seen yet
+  for (const r of rounds) {
+    r.unread = Number((await db.prepare(
+      'SELECT COUNT(*) AS c FROM messages WHERE round_id = ? AND created_at > ? AND user_id != ?'
+    ).get(r.id, r.my_last_read || 0, req.user.id)).c) || 0;
+  }
   res.json({ rounds });
+});
+
+// Mark a Round's chat as read up to now
+app.post('/api/rounds/:id/read', requireAuth, async (req, res) => {
+  await db.prepare('UPDATE memberships SET last_read = ? WHERE round_id = ? AND user_id = ?')
+    .run(now(), req.params.id, req.user.id);
+  res.json({ ok: true });
 });
 
 // ---- Messages (history) ----
