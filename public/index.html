@@ -1981,13 +1981,16 @@ function showLoginTransition(){
   const el=document.getElementById('loginTransition');
   if(!el)return;
   el.classList.remove('lt-fadeout');
+  el.style.display='flex';
   el.classList.add('show');
+  // restart the CSS animations by forcing a reflow
+  void el.offsetWidth;
 }
 function hideLoginTransition(){
   const el=document.getElementById('loginTransition');
   if(!el)return;
   el.classList.add('lt-fadeout');
-  setTimeout(()=>{el.classList.remove('show','lt-fadeout');},520);
+  setTimeout(()=>{el.classList.remove('show','lt-fadeout');el.style.display='none';},520);
 }
 // Ensures the animation is visible for at least `minMs` so it never just flashes.
 function runLoginTransition(startedAt,minMs){
@@ -5425,7 +5428,7 @@ function loadUnit(){
 
 // ---- Boot ----
 async function boot(){
-  console.log('ShowUpp build: 2026-08-30-S (landing-image-frontpage, login-logo-animation)');
+  console.log('ShowUpp build: 2026-08-30-T (login-animation-fix-inline-display, boot-animation)');
   if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   if(typeof attachAllSearchClears==='function')attachAllSearchClears();
   renderCats('');
@@ -5438,8 +5441,15 @@ async function boot(){
   initCountryPicker('suCountry','Dominican Republic');
   initPullToRefresh();
   if(token){
-    try{const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();}connectWS();document.getElementById('loading').style.display='none';enterApp();checkResetLink();return;}
-    catch{token=null;clearToken();}
+    try{
+      showLoginTransition();const _bootAt=Date.now();
+      document.getElementById('loading').style.display='none';
+      const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();}
+      connectWS();enterApp();checkResetLink();
+      runLoginTransition(_bootAt,1700);
+      return;
+    }
+    catch{token=null;clearToken();hideLoginTransition();}
   }
   // Not logged in → the sign-up/login screen always starts in English.
   // The user picks their language on step 2 of onboarding.
