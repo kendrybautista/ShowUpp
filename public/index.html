@@ -118,7 +118,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .scroll{flex:1;overflow-y:auto;padding-bottom:96px}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
-.hdr-logo{width:85px;height:85px;border-radius:18px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
+.hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
 .topbar-3{display:flex;align-items:center;justify-content:space-between;padding:10px 18px 8px;gap:10px}
 .topbar-3 .tb-center{position:absolute;left:50%;transform:translateX(-50%);font-family:'Fraunces',serif;font-weight:600;font-size:19px;color:var(--night);pointer-events:none}
 .fixed-head>*{position:relative;z-index:1}
@@ -602,6 +602,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           <button class="rsvp-btn" id="rsvp-going" onclick="doRsvp('going')">✅ Going</button>
           <button class="rsvp-btn" id="rsvp-maybe" onclick="doRsvp('maybe')">🤔 Maybe</button>
           <button class="rsvp-btn" id="rsvp-no" onclick="doRsvp('no')">❌ Can't</button>
+        </div>
+        <div style="display:flex;gap:14px;margin-top:8px">
+          <span onclick="openRsvpList('going')" style="font-size:12.5px;color:var(--turq);font-weight:700;cursor:pointer">See who's going ›</span>
+          <span onclick="openRsvpList('maybe')" style="font-size:12.5px;color:var(--muted);font-weight:700;cursor:pointer">See maybes ›</span>
         </div>
         <button class="btn" style="margin-top:10px;background:var(--bone);color:var(--night)" onclick="downloadIcs()">📅 Add to calendar</button>
       </div>
@@ -1187,6 +1191,15 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><label>Link</label><input type="url" id="erLink" placeholder="https://…"></div>
     <button class="btn btn-mango" onclick="saveEditRound()">Save changes</button>
     <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:6px" onclick="closeEditRound()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="attendeesSheet" onclick="if(event.target===this)closeAttendees()">
+  <div class="sheet-inner" style="max-height:80%;overflow-y:auto"><div class="grabber"></div>
+    <h3 id="attendeesTitle">Who's in this Round</h3>
+    <p style="font-size:13px;color:var(--muted)">See who's already joined before you decide.</p>
+    <div id="attendeesList"></div>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:6px" onclick="closeAttendees()">Close</div>
   </div>
 </div>
 
@@ -1914,12 +1927,16 @@ function pickAvatar(){document.getElementById('avatarInput').click();}
 function openAvatarViewer(avatar,name,isMe){
   const initial=(name||'?')[0].toUpperCase();
   const img=document.getElementById('avatarViewerImg');
+  const isLogo=(avatar===SHOWUPP_LOGO);
   if(avatar){img.src=avatar;img.style.display='block';}
   else{
     // no photo — render a colored initial as an SVG data URL so the viewer still shows something nice
     const c=encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF6B5B"/><stop offset="1" stop-color="#FFB03A"/></linearGradient></defs><rect width="400" height="400" fill="url(%23g)"/><text x="50%" y="50%" font-size="200" fill="white" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-weight="bold">'+initial+'</text></svg>');
     img.src='data:image/svg+xml,'+c;img.style.display='block';
   }
+  // The header logo is a small mark; show it 2.5x its natural size (capped so it never overflows)
+  if(isLogo){img.style.width='auto';img.style.height='auto';img.style.maxWidth='min(85%, 250px)';img.style.maxHeight='min(70%, 250px)';img.style.transform='scale(2.5)';}
+  else{img.style.transform='';img.style.maxWidth='88%';img.style.maxHeight='70%';img.style.width='';img.style.height='';}
   document.getElementById('avatarViewerName').textContent=name||'';
   document.getElementById('avatarViewerEdit').style.display=isMe?'inline-block':'none';
   document.getElementById('avatarViewer').style.display='flex';
@@ -2489,7 +2506,7 @@ function openDetail(rid){
   document.getElementById('detailTitle').textContent=activeRound.title;
   document.getElementById('detailHero').style.background=gradFor(activeRound.id);
   document.getElementById('detailBlurb').textContent=t(activeRound.blurb||'A small group that meets a few times.');
-  document.getElementById('detailPills').innerHTML='<div class="pill">'+t(activeRound.category||'Round')+'</div><div class="pill">👥 '+activeRound.member_count+' '+t('members')+'</div>';
+  document.getElementById('detailPills').innerHTML='<div class="pill">'+t(activeRound.category||'Round')+'</div><div class="pill" style="cursor:pointer" onclick="openAttendees()">👥 '+activeRound.member_count+' '+t('members')+' ›</div>';
   // photo
   const ph=document.getElementById('detailPhoto');
   if(activeRound.photo){document.getElementById('detailPhotoImg').src=activeRound.photo;ph.style.display='block';}else{ph.style.display='none';}
@@ -2643,6 +2660,41 @@ async function openManageMembers(){
   }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+e.message+'</p>';}
 }
 function closeManageMembers(){document.getElementById('manageMembersSheet').classList.remove('open');}
+// View-only attendee list — anyone can see who's joined a Round before deciding to join
+async function openAttendees(){
+  if(!activeRound)return;
+  document.getElementById('attendeesSheet').classList.add('open');
+  const box=document.getElementById('attendeesList');
+  box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+t('Loading…')+'</p>';
+  try{
+    const r=await api('/api/rounds/'+activeRound.id+'/members');
+    if(!r.members||!r.members.length){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">No one has joined yet — be the first!</p>';return;}
+    box.innerHTML=r.members.map(u=>{
+      const isHost=u.id===r.host_id;
+      const tag=isHost?'<span style="font-size:11px;color:var(--mango);font-weight:700">HOST</span>':'';
+      return '<div class="friend-row" onclick="viewProfile(\''+u.id+'\')" style="cursor:pointer">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username||'')+(u.city?' · '+esc(u.city):'')+'</span></div>'+tag+'</div>';
+    }).join('');
+  }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+e.message+'</p>';}
+}
+function closeAttendees(){document.getElementById('attendeesSheet').classList.remove('open');}
+// Show only the Going or Maybe attendees for an event Round
+async function openRsvpList(status){
+  if(!activeRound)return;
+  document.getElementById('attendeesSheet').classList.add('open');
+  document.getElementById('attendeesTitle').textContent=status==='going'?"Who's going":"Maybes";
+  const box=document.getElementById('attendeesList');
+  box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+t('Loading…')+'</p>';
+  try{
+    const r=await api('/api/rounds/'+activeRound.id+'/members');
+    const filtered=(r.members||[]).filter(u=>u.rsvp===status);
+    if(!filtered.length){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+(status==='going'?'No one has said they\'re going yet.':'No maybes yet.')+'</p>';return;}
+    box.innerHTML=filtered.map(u=>{
+      const isHost=u.id===r.host_id;
+      const tag=isHost?'<span style="font-size:11px;color:var(--mango);font-weight:700">HOST</span>':'';
+      return '<div class="friend-row" onclick="viewProfile(\''+u.id+'\')" style="cursor:pointer">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username||'')+(u.city?' · '+esc(u.city):'')+'</span></div>'+tag+'</div>';
+    }).join('');
+  }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+e.message+'</p>';}
+}
 async function removeMember(uid){
   try{await api('/api/rounds/'+activeRound.id+'/remove-member','POST',{userId:uid});toast('Removed');openManageMembers();}catch(e){toast(e.message);}
 }
@@ -2919,7 +2971,14 @@ async function loadDMs(){
     const list=document.getElementById('dmList');
     if(!data.conversations.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px;font-size:14px">No direct chats yet.<br>Message a friend from the Circles → Friends tab, or start a group above.</p>';return;}
     list.innerHTML=data.conversations.map(c=>{
-      const av=c.is_group?'<div class="cav">👥</div>':(c.avatar?'<div class="cav" style="background-image:url('+JSON.stringify(c.avatar)+');background-size:cover;background-position:center;background-repeat:no-repeat;font-size:0;color:transparent"></div>':'<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>');
+      let av;
+      if(c.is_group){av='<div class="cav">👥</div>';}
+      else if(c.avatar){
+        const ini=(c.title||'?')[0].toUpperCase();
+        // Real <img> with a letter fallback if it fails to load — most robust across data URLs
+        av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\''+ini+'\'"></div>';
+      }
+      else{av='<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>';}
       const prev=c.last?((c.last.mine?'You: ':'')+esc(c.last.body||'')):'Tap to start chatting';
       const unread=c.unread?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px">'+c.unread+'</span>':'';
       return '<div class="chat-item" onclick="openDm(\''+c.id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(c.title)+'</b>'+unread+'</div><div class="prev">'+prev+'</div></div></div>';
@@ -3980,20 +4039,10 @@ async function loadLinkPreview(url){
   }catch(e){box.style.display='none';}
 }
 async function geocodeAddress(addr){
-  // Free geocoding via OpenStreetMap Nominatim (no key). Returns {lat,lng,name} or null.
+  // Geocode via our own server (which sets the required User-Agent). Returns {lat,lng,name} or null.
   try{
-    const url='https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q='+encodeURIComponent(addr);
-    const r=await fetch(url,{headers:{'Accept':'application/json'}});
-    if(!r.ok)return null;
-    const arr=await r.json();
-    if(Array.isArray(arr)&&arr.length){
-      const it=arr[0];
-      // Prefer an actual business/place name if the geocoder recognized one
-      let name='';
-      if(it.namedetails&&it.namedetails.name)name=it.namedetails.name;
-      else if(it.type&&['office','shop','restaurant','cafe','bar','amenity'].some(k=>(it.class===k||it.type===k)))name=(it.display_name||'').split(',')[0];
-      return {lat:parseFloat(it.lat),lng:parseFloat(it.lon),name:name||''};
-    }
+    const r=await api('/api/geocode?q='+encodeURIComponent(addr));
+    if(r&&r.found)return {lat:r.lat,lng:r.lng,name:r.name||''};
   }catch(e){}
   return null;
 }
@@ -4479,7 +4528,7 @@ function loadUnit(){
 
 // ---- Boot ----
 async function boot(){
-  console.log('ShowUpp build: 2026-08-28-H (logo-2.5x, notif-breakdown, map-zindex, round-emoji-sync, chat-avatar-v2, dropdown-autoclose, age-gate-18plus)');
+  console.log('ShowUpp build: 2026-08-28-J (logo-viewer-2.5x, server-geocode, chat-avatar-img, relationship-fresh-me, round-attendees, rsvp-lists)');
   if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   if(typeof attachAllSearchClears==='function')attachAllSearchClears();
   renderCats('');
