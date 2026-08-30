@@ -312,8 +312,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .detail-hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:55%;background:linear-gradient(to bottom,rgba(183,214,254,0),var(--detail-bg,#EDEBF7));z-index:1;pointer-events:none}
 .back{position:absolute;top:16px;left:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;border:none;box-shadow:0 2px 10px rgba(0,0,0,.15)}
 .back svg{width:20px;height:20px;color:var(--night)}
+.detail-hero .hero-waves{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
 .detail-hero .emoji-lg{position:absolute;top:58px;right:24px;font-size:56px;filter:drop-shadow(0 2px 8px rgba(27,27,58,.18));z-index:2}
-.detail-hero h1{font-family:'Fraunces',serif;color:var(--night);font-size:28px;font-weight:600;line-height:1.15;text-shadow:none;position:relative;z-index:2}
+.detail-hero h1{display:flex;flex-direction:column;gap:2px;position:relative;z-index:2}
+.detail-hero .dt-lead{font-family:'Fraunces',serif;color:var(--night);font-size:26px;font-weight:600;line-height:1.15}
+.detail-hero .dt-name{font-family:'Fraunces',serif;font-size:30px;font-weight:700;line-height:1.15;background:linear-gradient(90deg,#4183FA,#BA5CD6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
 /* Softer, airier detail body on a tinted backdrop, with content in clean white cards */
 .detail-body{padding:20px 20px 8px;margin-top:-22px;background:var(--detail-bg,#EDEBF7);border-radius:26px 26px 0 0;position:relative;z-index:3}
 .detail-card{background:#fff;border-radius:18px;padding:16px 16px;margin-bottom:14px;box-shadow:0 2px 14px rgba(40,40,80,.06)}
@@ -685,8 +688,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <div class="screen" id="s-detail">
   <div class="scroll" style="padding-bottom:24px">
     <div class="detail-hero" id="detailHero" style="background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,#EDEBF7 100%)">
+      <svg class="hero-waves" viewBox="0 0 400 210" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M40,50 C170,-10 260,100 430,25" stroke="rgba(255,255,255,.65)" stroke-width="2" fill="none"/>
+        <path d="M60,85 C190,30 280,140 440,60" stroke="rgba(255,255,255,.4)" stroke-width="2" fill="none"/>
+        <path d="M0,125 C150,80 260,175 420,100" stroke="rgba(255,255,255,.28)" stroke-width="2" fill="none"/>
+      </svg>
       <button class="back" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
-      <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle">Round</h1>
+      <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle"><span class="dt-lead">Let's</span><span class="dt-name" id="detailTitleName">Round</span></h1>
     </div>
     <div class="detail-body">
       <div id="detailPhoto" style="display:none;margin-bottom:14px"><img id="detailPhotoImg" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px"></div>
@@ -2745,7 +2753,7 @@ function renderMap(list){
 function openDetail(rid){
   activeRound=allRounds.find(r=>r.id===rid)||(savedRoundsList&&savedRoundsList.find(r=>r.id===rid));if(!activeRound)return;
   document.getElementById('detailEmoji').textContent=activeRound.emoji||'✨';
-  document.getElementById('detailTitle').textContent=activeRound.title;
+  document.getElementById('detailTitleName').textContent=activeRound.title;
   document.getElementById('detailHero').style.background=gradFor(activeRound.id);
   document.getElementById('detailBlurb').textContent=t(activeRound.blurb||'A small group that meets a few times.');
   document.getElementById('detailPills').innerHTML='<div class="pill">'+t(activeRound.category||'Round')+'</div><div class="pill" style="cursor:pointer" onclick="openAttendees()">👥 '+activeRound.member_count+' '+t('members')+' ›</div>';
