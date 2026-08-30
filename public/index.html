@@ -689,9 +689,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="scroll" style="padding-bottom:24px">
     <div class="detail-hero" id="detailHero" style="background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,#EDEBF7 100%)">
       <svg class="hero-waves" viewBox="0 0 400 210" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M40,50 C170,-10 260,100 430,25" stroke="rgba(255,255,255,.65)" stroke-width="2" fill="none"/>
-        <path d="M60,85 C190,30 280,140 440,60" stroke="rgba(255,255,255,.4)" stroke-width="2" fill="none"/>
-        <path d="M0,125 C150,80 260,175 420,100" stroke="rgba(255,255,255,.28)" stroke-width="2" fill="none"/>
+        <defs>
+          <filter id="waveBlur" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="4"/>
+          </filter>
+        </defs>
+        <path filter="url(#waveBlur)" fill="rgba(255,255,255,.55)" d="M0,55 C47,58 94,90 141,108 C175,120 211,66 258,33 C281,19 328,3 400,3 L400,210 L0,210 Z"/>
+        <path filter="url(#waveBlur)" fill="rgba(255,255,255,.32)" d="M258,144 C281,160 305,149 328,166 C352,160 375,177 400,166 L400,210 L258,210 Z"/>
       </svg>
       <button class="back" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
       <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle"><span class="dt-lead">Let's</span><span class="dt-name" id="detailTitleName">Round</span></h1>
