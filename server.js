@@ -653,7 +653,16 @@ app.post('/api/reset-password', async (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, async (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone, gender, showAge } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone, gender, showAge, dob } = req.body || {};
+  // Date of birth: if provided, validate it and enforce the 18+ rule (same as signup).
+  let cleanDob = null;
+  if (dob !== undefined && dob !== null && String(dob).trim() !== '') {
+    const a = ageFromDob(dob);
+    if (a === null) return res.status(400).json({ error: 'Please enter a valid date of birth.' });
+    if (a < 18) return res.status(403).json({ error: 'You must be 18 or older to use ShowUpp.' });
+    if (a > 120) return res.status(400).json({ error: 'Please enter a valid date of birth.' });
+    cleanDob = String(dob).slice(0, 10);
+  }
   // Gender: restricted to a small, standard, inclusive set.
   const GENDERS = ['Woman', 'Man', 'Non-binary', 'Prefer to self-describe', 'Prefer not to say'];
   let cleanGender = null;
@@ -710,6 +719,7 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
       relationship = COALESCE(?, relationship),
       gender = COALESCE(?, gender),
       show_age = COALESCE(?, show_age),
+      dob = COALESCE(?, dob),
       email = COALESCE(?, email),
       phone = COALESCE(?, phone)
     WHERE id = ?`).run(
@@ -724,6 +734,7 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
     (relationship !== undefined && relationship !== null) ? String(relationship).slice(0, 40) : null,
     cleanGender,
     cleanShowAge,
+    cleanDob,
     cleanEmail,
     cleanPhone,
     req.user.id
