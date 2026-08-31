@@ -193,6 +193,9 @@ await db.exec(`
 
   ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS show_age INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_expires BIGINT;
 
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
@@ -357,8 +360,54 @@ function publicUser(u) {
     // Age is only exposed publicly when the person chose to show it.
     age: u.show_age ? age : null,
     isAdmin: !!u.is_admin,
-    lang: u.lang || 'en'
+    lang: u.lang || 'en',
+    emailVerified: !!u.email_verified
   };
+}
+
+// --- Outbound email (Resend) ---
+// Sends real email if RESEND_API_KEY is set; otherwise logs and returns a "not sent" flag
+// so callers can fall back to showing a dev link (handy for local testing without email set up).
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'ShowUpp <onboarding@resend.dev>';
+const APP_URL = process.env.APP_URL || '';
+
+async function sendEmail(to, subject, html) {
+  if (!RESEND_API_KEY) {
+    console.log('[email] No RESEND_API_KEY set — skipping real send to', to);
+    return { sent: false };
+  }
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: EMAIL_FROM, to: [to], subject, html })
+    });
+    if (!resp.ok) { console.log('[email] send failed', resp.status); return { sent: false }; }
+    return { sent: true };
+  } catch (e) {
+    console.log('[email] error', e.message);
+    return { sent: false };
+  }
+}
+
+// ---- Email verification ----
+// Generates a fresh verify token for a user, stores it, and emails a confirmation link.
+// Verification is informational only (see /api/login) — unverified users can still use the app.
+async function sendVerificationEmail(user, req) {
+  const token = crypto.randomBytes(24).toString('hex');
+  await db.prepare('UPDATE users SET verify_token = ?, verify_expires = ? WHERE id = ?')
+    .run(token, now() + 24 * 60 * 60 * 1000, user.id); // valid 24 hours
+  const base = APP_URL || (req && req.headers && req.headers.origin) || '';
+  const verifyUrl = base + '/?verify=' + token;
+  const html = `<div style="font-family:sans-serif;max-width:480px;margin:auto">
+    <h2>Confirm your email</h2>
+    <p>Hi ${user.name || ''}, welcome to ShowUpp! Please confirm this is your email address.</p>
+    <p><a href="${verifyUrl}" style="display:inline-block;background:#FF6B5B;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none">Verify my email</a></p>
+    <p style="color:#666;font-size:13px">This link expires in 24 hours. If you didn't create a ShowUpp account, you can ignore this email.</p>
+  </div>`;
+  const result = await sendEmail(user.email, 'Confirm your ShowUpp email', html);
+  return { sent: result.sent, verifyUrl };
 }
 
 // --- App ---
@@ -424,7 +473,39 @@ app.post('/api/signup', async (req, res) => {
   await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,gender,created_at)
               VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
 
-  res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
+  // Fire off a verification email. This never blocks signup/login — it's just a
+  // "please confirm it's really you" nudge shown as a banner in the app.
+  let devVerifyLink = null;
+  try {
+    const result = await sendVerificationEmail(user, req);
+    if (!result.sent) devVerifyLink = result.verifyUrl;
+  } catch (e) {
+    console.log('[verify] failed to send verification email', e.message);
+  }
+
+  res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone }, devVerifyLink });
+});
+
+// Confirm an email address via the token from the verification email link.
+app.post('/api/verify-email', async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Missing verification token.' });
+  const row = await db.prepare('SELECT * FROM users WHERE verify_token = ?').get(String(token));
+  if (!row) return res.status(400).json({ error: 'This verification link is invalid or has already been used.' });
+  if (row.verify_expires && row.verify_expires < now()) {
+    return res.status(400).json({ error: 'This verification link has expired. Request a new one from your profile.' });
+  }
+  await db.prepare('UPDATE users SET email_verified = 1, verify_token = NULL, verify_expires = NULL WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+// Resend a verification email to the logged-in user (e.g. they missed/lost the first one).
+app.post('/api/resend-verification', requireAuth, async (req, res) => {
+  const row = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!row) return res.status(404).json({ error: 'Account not found.' });
+  if (row.email_verified) return res.json({ ok: true, alreadyVerified: true });
+  const result = await sendVerificationEmail(row, req);
+  res.json({ ok: true, emailed: result.sent, devLink: result.sent ? null : result.verifyUrl });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -555,7 +636,11 @@ app.post('/api/me/secure-change', requireAuth, async (req, res) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
     const taken = await db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.user.id);
     if (taken) return res.status(409).json({ error: 'That email is already in use.' });
-    await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
+    await db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run(email, req.user.id);
+    try {
+      const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+      await sendVerificationEmail(fresh, req);
+    } catch (e) { console.log('[verify] resend on email change failed', e.message); }
   } else if (field === 'phone') {
     const phone = val.replace(/[^0-9+]/g, '').slice(0, 20);
     await db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
@@ -592,28 +677,8 @@ app.post('/api/forgot-email', async (req, res) => {
 
 // ---- Password recovery via email ----
 // Sends real email if RESEND_API_KEY is set; otherwise returns the link so it still works in testing.
-const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const EMAIL_FROM = process.env.EMAIL_FROM || 'ShowUpp <onboarding@resend.dev>';
-const APP_URL = process.env.APP_URL || '';
-
-async function sendEmail(to, subject, html) {
-  if (!RESEND_API_KEY) {
-    console.log('[email] No RESEND_API_KEY set — skipping real send to', to);
-    return { sent: false };
-  }
-  try {
-    const resp = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: EMAIL_FROM, to: [to], subject, html })
-    });
-    if (!resp.ok) { console.log('[email] send failed', resp.status); return { sent: false }; }
-    return { sent: true };
-  } catch (e) {
-    console.log('[email] error', e.message);
-    return { sent: false };
-  }
-}
+// (email config + sendEmail() now live near the top of the file, above /api/signup,
+//  so the signup route can send a verification email too.)
 
 // Step 1: request a reset. Always responds success (don't reveal whether an email exists).
 app.post('/api/forgot-password', async (req, res) => {
@@ -1508,13 +1573,25 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   let rows;
   if (q) {
-    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,created_at
+    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,email_verified,created_at
       FROM users WHERE LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?
       ORDER BY created_at DESC LIMIT 200`).all('%'+q+'%','%'+q+'%','%'+q+'%');
   } else {
-    rows = await db.prepare('SELECT id,name,username,email,city,suspended,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+    rows = await db.prepare('SELECT id,name,username,email,city,suspended,is_admin,email_verified,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
   }
   res.json({ users: rows });
+});
+
+// Fetch one user's full editable details (admin only) — used to prefill the edit form.
+app.get('/api/admin/user', requireAuth, requireAdmin, async (req, res) => {
+  const row = await db.prepare('SELECT * FROM users WHERE id = ?').get(String(req.query.id || ''));
+  if (!row) return res.status(404).json({ error: 'User not found.' });
+  res.json({ user: {
+    id: row.id, name: row.name, username: row.username || '', email: row.email || '', phone: row.phone || '',
+    city: row.city || '', origin: row.origin || '', bio: row.bio || '', dob: row.dob || '', gender: row.gender || '',
+    relationship: row.relationship || '', isPrivate: !!row.is_private, showAge: !!row.show_age,
+    emailVerified: !!row.email_verified, isAdmin: !!row.is_admin, suspended: !!row.suspended
+  } });
 });
 
 // Suspend / unsuspend a user (admin only)
@@ -1525,6 +1602,73 @@ app.post('/api/admin/suspend', requireAuth, requireAdmin, async (req, res) => {
   if (target.is_admin) return res.status(400).json({ error: 'You cannot suspend an admin account.' });
   await db.prepare('UPDATE users SET suspended = ? WHERE id = ?').run(suspend ? 1 : 0, userId);
   res.json({ ok: true });
+});
+
+// Update a user's account info (admin only). Admins can edit the full profile —
+// name, username, email, phone, city, origin, bio, dob, gender, relationship,
+// privacy, and show-age. Admin/suspended status are handled by their own endpoints.
+app.post('/api/admin/update-user', requireAuth, requireAdmin, async (req, res) => {
+  const { userId, name, username, email, phone, city, origin, bio, dob, gender, relationship, isPrivate, showAge } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'Missing userId.' });
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+
+  const updates = {};
+
+  if (name !== undefined) {
+    const n = String(name).trim();
+    if (!n) return res.status(400).json({ error: 'Name cannot be empty.' });
+    updates.name = n;
+  }
+  if (username !== undefined) {
+    const u = String(username).trim().toLowerCase().replace(/^@/, '');
+    if (u) {
+      if (!/^[a-z0-9_.]{2,24}$/.test(u)) return res.status(400).json({ error: 'Username must be 2-24 characters (letters, numbers, . or _).' });
+      const taken = await db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(u, userId);
+      if (taken) return res.status(409).json({ error: 'That username is already taken.' });
+    }
+    updates.username = u;
+  }
+  let emailChanged = false;
+  if (email !== undefined) {
+    const em = String(email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const taken = await db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(em, userId);
+    if (taken) return res.status(409).json({ error: 'That email is already in use.' });
+    emailChanged = em !== target.email;
+    updates.email = em;
+  }
+  if (phone !== undefined) updates.phone = String(phone || '').replace(/[^0-9+ ]/g, '').trim().slice(0, 24);
+  if (city !== undefined) updates.city = String(city || '').slice(0, 100);
+  if (origin !== undefined) updates.origin = String(origin || '').slice(0, 100);
+  if (bio !== undefined) updates.bio = String(bio || '').slice(0, 500);
+  if (gender !== undefined) updates.gender = String(gender || '').slice(0, 40);
+  if (relationship !== undefined) updates.relationship = String(relationship || '').slice(0, 40);
+  if (isPrivate !== undefined) updates.is_private = isPrivate ? 1 : 0;
+  if (showAge !== undefined) updates.show_age = showAge ? 1 : 0;
+  if (dob !== undefined && dob !== null && String(dob).trim() !== '') {
+    const a = ageFromDob(dob);
+    if (a === null) return res.status(400).json({ error: 'Please enter a valid date of birth.' });
+    if (a < 18) return res.status(403).json({ error: 'Users must be 18 or older.' });
+    if (a > 120) return res.status(400).json({ error: 'Please enter a valid date of birth.' });
+    updates.dob = String(dob).slice(0, 10);
+  }
+  if (emailChanged) updates.email_verified = 0;
+
+  const keys = Object.keys(updates);
+  if (!keys.length) return res.status(400).json({ error: 'Nothing to update.' });
+  const setClause = keys.map(k => `${k} = @${k}`).join(', ');
+  await db.prepare(`UPDATE users SET ${setClause} WHERE id = @id`).run({ ...updates, id: userId });
+
+  if (emailChanged) {
+    try {
+      const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+      await sendVerificationEmail(fresh, req);
+    } catch (e) { console.log('[verify] resend on admin email change failed', e.message); }
+  }
+
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  res.json({ ok: true, user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '', dob: updated.dob || '' } });
 });
 
 // Permanently delete a user and their data (admin only)
