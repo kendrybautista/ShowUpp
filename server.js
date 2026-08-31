@@ -1911,18 +1911,36 @@ app.post('/api/rounds/:id/join', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Leave a Round the user has joined. This removes them from both the Round and its
+// group chat at once, since Round membership *is* chat membership — there's no
+// separate leave-the-chat-but-stay-in-the-Round state. Hosts can't leave their own
+// Round this way (they'd orphan it); they need to delete it or hand off hosting.
+app.post('/api/rounds/:id/leave', requireAuth, async (req, res) => {
+  const round = await db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  if (round.host_id === req.user.id) {
+    return res.status(400).json({ error: "You're hosting this Round — delete it or transfer hosting instead of leaving." });
+  }
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!member) return res.status(400).json({ error: "You're not a member of this Round." });
+  await db.prepare('DELETE FROM memberships WHERE round_id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+
 // Rounds the current user belongs to (their "Circles")
 app.get('/api/my-rounds', requireAuth, async (req, res) => {
   const rounds = await db.prepare(`
     SELECT r.*,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       (r.host_id = ?) AS is_host,
+      1 AS joined,
+      EXISTS(SELECT 1 FROM saved_rounds sr WHERE sr.round_id = r.id AND sr.user_id = ?) AS i_saved,
       COALESCE(mm.last_read, 0) AS my_last_read
     FROM rounds r
     JOIN memberships mm ON mm.round_id = r.id
     WHERE mm.user_id = ?
     ORDER BY r.created_at DESC
-  `).all(req.user.id, req.user.id);
+  `).all(req.user.id, req.user.id, req.user.id);
   // Attach how many messages in each Round the user hasn't seen yet
   for (const r of rounds) {
     r.unread = Number((await db.prepare(
