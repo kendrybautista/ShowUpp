@@ -636,6 +636,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="chips" id="homeChips"></div>
   </div>
   <div class="scroll">
+    <div id="verifyBanner" style="display:none;margin:12px 18px 0;background:#FFF8EC;border:1px solid #FFE2A8;border-radius:14px;padding:12px 14px;align-items:center;justify-content:space-between;gap:10px">
+      <span style="font-size:13px;color:#8a5a12;line-height:1.4">📧 Please confirm your email address. <span id="verifyBannerLink" style="text-decoration:underline;cursor:pointer;font-weight:700" onclick="resendVerification()">Resend link</span></span>
+      <span style="font-size:18px;line-height:1;cursor:pointer;color:#8a5a12" onclick="dismissVerifyBanner()">×</span>
+    </div>
     <div style="margin:12px 18px 6px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 14px;box-shadow:var(--shadow)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:0 4px">
         <span style="font-weight:700;font-size:15px;color:var(--night)">Quick access</span>
@@ -1282,6 +1286,31 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="field"><input type="password" id="resetPass" placeholder="New password (6+ characters)" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px"></div>
     <div id="resetMsg" style="font-size:13px;margin:8px 0;color:#d94b3b"></div>
     <button class="btn btn-mango" onclick="submitReset()">Save new password</button>
+  </div>
+</div>
+
+<div class="sheet" id="admEditSheet" onclick="if(event.target===this)closeAdmEdit()">
+  <div class="sheet-inner" style="max-height:80vh;overflow-y:auto">
+    <div class="grabber"></div>
+    <h3>Edit account</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Changing the email will mark it unverified again and resend a confirmation.</p>
+    <div id="admEditMsg" style="font-size:13px;margin:0 0 8px;color:#d94b3b"></div>
+    <div style="display:grid;gap:8px">
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Name</label><input id="admEName" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Username</label><input id="admEUsername" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Email</label><input id="admEEmail" type="email" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Phone</label><input id="admEPhone" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">City</label><input id="admECity" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Origin</label><input id="admEOrigin" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Date of birth</label><input id="admEDob" type="date" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Gender</label><input id="admEGender" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Relationship status</label><input id="admERelationship" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
+      <div class="field"><label style="font-size:12px;color:var(--muted)">Bio</label><textarea id="admEBio" rows="3" style="width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px;resize:vertical"></textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--night)"><input type="checkbox" id="admEPrivate"> Private account</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--night)"><input type="checkbox" id="admEShowAge"> Show age publicly</label>
+    </div>
+    <button class="btn btn-mango" style="margin-top:14px" onclick="submitAdmEdit()">Save changes</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:6px" onclick="closeAdmEdit()">Cancel</div>
   </div>
 </div>
 
@@ -2179,10 +2208,45 @@ function enterApp(){
   if(typeof injectHeaderLogos==='function')injectHeaderLogos();
   refreshAvatars();
   updateNotifBadge();
+  updateVerifyBanner();
   if(window._notifPoll)clearInterval(window._notifPoll);
   window._notifPoll=setInterval(updateNotifBadge,30000);
   go('s-home');
   handleDeepLink();
+}
+// ---- Email verification reminder banner ----
+// Purely informational — unverified users can still use the app fully.
+function updateVerifyBanner(){
+  const el=document.getElementById('verifyBanner');
+  if(!el||!me)return;
+  let dismissed=false;
+  try{dismissed=sessionStorage.getItem('su_verify_dismissed_'+me.id)==='1';}catch(e){}
+  el.style.display=(!me.emailVerified&&!dismissed)?'flex':'none';
+}
+function dismissVerifyBanner(){
+  if(me){try{sessionStorage.setItem('su_verify_dismissed_'+me.id,'1');}catch(e){}}
+  document.getElementById('verifyBanner').style.display='none';
+}
+async function resendVerification(){
+  try{
+    const r=await api('/api/resend-verification','POST',{});
+    if(r.alreadyVerified){toast('Your email is already verified ✓');me.emailVerified=true;updateVerifyBanner();return;}
+    if(r.emailed)toast('Verification email sent — check your inbox.');
+    else if(r.devLink)toast('Email isn\'t set up yet. Link: '+r.devLink);
+    else toast('Verification email sent.');
+  }catch(e){toast(e.message);}
+}
+// If the app was opened via a ?verify=TOKEN link, confirm the email automatically.
+async function checkVerifyLink(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const vt=p.get('verify');
+    if(!vt)return;
+    history.replaceState({},'',location.pathname);
+    await api('/api/verify-email','POST',{token:vt});
+    if(me){me.emailVerified=true;updateVerifyBanner();}
+    toast('Email verified ✓');
+  }catch(e){toast(e.message||'That verification link is invalid or expired.');}
 }
 // ---- Profile picture upload ----
 function pickAvatar(){document.getElementById('avatarInput').click();}
@@ -4959,10 +5023,13 @@ function loadAdminUsers(q){
       if(!data.users.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No users found.</p>';return;}
       box.innerHTML=data.users.map(u=>{
         const badge=u.is_admin?'<span style="font-size:10px;background:#FFF8EC;color:#a5701a;padding:2px 6px;border-radius:6px;font-weight:700">ADMIN</span>':(u.suspended?'<span style="font-size:10px;background:#FDECEA;color:#d94b3b;padding:2px 6px;border-radius:6px;font-weight:700">SUSPENDED</span>':'');
-        const actions=u.is_admin?'<span style="font-size:11px;color:var(--muted)">protected</span>':
+        const verifiedBadge=u.email_verified?'':'<span style="font-size:10px;background:#FFF8EC;color:#a5701a;padding:2px 6px;border-radius:6px;font-weight:700;margin-left:4px">UNVERIFIED</span>';
+        const editBtn='<button class="friend-btn" onclick="openAdmEdit(\''+u.id+'\')">Edit</button>';
+        const actions=u.is_admin?editBtn+'<span style="font-size:11px;color:var(--muted)">protected</span>':
+          editBtn+
           '<button class="friend-btn remove" onclick="admSuspend(\''+u.id+'\','+(u.suspended?0:1)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
           '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="admDelete(\''+u.id+'\',\''+esc(u.name).replace(/'/g,"")+'\')">Delete</button>';
-        return '<div class="friend-row"><div class="fi"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px">'+actions+'</div></div>';
+        return '<div class="friend-row"><div class="fi"><b>'+esc(u.name)+' '+badge+verifiedBadge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px;flex-wrap:wrap">'+actions+'</div></div>';
       }).join('');
     }catch(e){toast(e.message);}
   },250);
@@ -4975,6 +5042,54 @@ async function admDelete(uid,name){
   if(!confirm('Permanently delete '+name+'\'s account and all their data? This cannot be undone.'))return;
   try{await api('/api/admin/delete','POST',{userId:uid});toast('Account deleted');loadAdminUsers(document.getElementById('adminSearch').value);}
   catch(e){toast(e.message);}
+}
+let admEditingUserId=null;
+async function openAdmEdit(uid){
+  document.getElementById('admEditMsg').textContent='';
+  try{
+    const data=await api('/api/admin/user?id='+encodeURIComponent(uid));
+    const u=data.user;
+    admEditingUserId=u.id;
+    document.getElementById('admEName').value=u.name||'';
+    document.getElementById('admEUsername').value=u.username||'';
+    document.getElementById('admEEmail').value=u.email||'';
+    document.getElementById('admEPhone').value=u.phone||'';
+    document.getElementById('admECity').value=u.city||'';
+    document.getElementById('admEOrigin').value=u.origin||'';
+    document.getElementById('admEDob').value=u.dob||'';
+    document.getElementById('admEGender').value=u.gender||'';
+    document.getElementById('admERelationship').value=u.relationship||'';
+    document.getElementById('admEBio').value=u.bio||'';
+    document.getElementById('admEPrivate').checked=!!u.isPrivate;
+    document.getElementById('admEShowAge').checked=!!u.showAge;
+    document.getElementById('admEditSheet').classList.add('open');
+  }catch(e){toast(e.message);}
+}
+function closeAdmEdit(){document.getElementById('admEditSheet').classList.remove('open');admEditingUserId=null;}
+async function submitAdmEdit(){
+  if(!admEditingUserId)return;
+  const msg=document.getElementById('admEditMsg');msg.textContent='';
+  const body={
+    userId: admEditingUserId,
+    name: document.getElementById('admEName').value.trim(),
+    username: document.getElementById('admEUsername').value.trim(),
+    email: document.getElementById('admEEmail').value.trim(),
+    phone: document.getElementById('admEPhone').value.trim(),
+    city: document.getElementById('admECity').value.trim(),
+    origin: document.getElementById('admEOrigin').value.trim(),
+    dob: document.getElementById('admEDob').value,
+    gender: document.getElementById('admEGender').value.trim(),
+    relationship: document.getElementById('admERelationship').value.trim(),
+    bio: document.getElementById('admEBio').value.trim(),
+    isPrivate: document.getElementById('admEPrivate').checked,
+    showAge: document.getElementById('admEShowAge').checked
+  };
+  try{
+    await api('/api/admin/update-user','POST',body);
+    toast('Account updated ✓');
+    closeAdmEdit();
+    loadAdminUsers(document.getElementById('adminSearch').value);
+  }catch(e){msg.textContent=e.message;}
 }
 async function loadAdminReports(){
   try{
@@ -5496,7 +5611,7 @@ async function boot(){
       showLoginTransition();const _bootAt=Date.now();
       document.getElementById('loading').style.display='none';
       const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();}
-      connectWS();enterApp();checkResetLink();
+      connectWS();enterApp();checkResetLink();checkVerifyLink();
       runLoginTransition(_bootAt,1700);
       return;
     }
@@ -5509,6 +5624,7 @@ async function boot(){
   go('s-auth');
   translatePage();
   checkResetLink();
+  checkVerifyLink();
 }
 boot();
 </script>
