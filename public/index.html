@@ -736,6 +736,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <button class="btn detail-surface-btn" style="background:#fff;color:var(--night);margin-bottom:10px;box-shadow:0 2px 12px rgba(40,40,80,.08);border:none;font-weight:700" onclick="openManageMembers()">👥 Manage members</button>
         <button class="btn" style="background:#FDECEC;color:#d94b3b;border:none;font-weight:700" onclick="confirmDeleteRound()">🗑️ Delete this Round</button>
       </div>
+      <div id="detailLeaveWrap" style="display:none;margin-top:6px;padding-top:16px;border-top:1px solid rgba(40,40,80,.1)">
+        <button class="btn" style="background:#FDECEC;color:#d94b3b;border:none;font-weight:700" onclick="confirmLeaveRound()">🚪 Leave this Round</button>
+      </div>
     </div>
   </div>
   <div class="attend">
@@ -847,7 +850,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="tt"><b id="threadName">Round</b><span id="threadSub">Group chat</span></div>
     <button class="back" onclick="startRoundCall()" style="background:var(--bone)" title="Group video call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></button>
     <button class="back" onclick="openChatBg()" style="background:var(--bone)" title="Chat background"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
-    <button class="back" onclick="openReport()" style="background:var(--bone)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+    <button class="back" onclick="openRoundChatOptions()" style="background:var(--bone)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
   </div>
   <div class="msgs" id="msgs"></div>
   <div id="replyBar" style="display:none;align-items:center;gap:8px;padding:8px 14px;background:var(--card);border-top:1px solid var(--line)">
@@ -1582,6 +1585,29 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div class="report-opt" onclick="doBlockUser()" style="color:#d94b3b">⛔ Block this person</div>
     <div class="report-opt" onclick="doRemoveFriend()">Remove friend</div>
     <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeFriendActions()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="roundTapSheet" onclick="if(event.target===this)closeRoundTapMenu()">
+  <div class="sheet-inner"><div class="grabber"></div><h3>Where to?</h3>
+    <div class="report-opt" onclick="roundTapOpenPage()" style="color:var(--coral);font-weight:700">📄 Round page</div>
+    <div class="report-opt" onclick="roundTapOpenChat()" style="color:var(--coral);font-weight:700">💬 Group chat</div>
+    <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeRoundTapMenu()">Cancel</div>
+  </div>
+</div>
+
+<div class="sheet" id="roundChatOptionsSheet" onclick="if(event.target===this)closeRoundChatOptions()">
+  <div class="sheet-inner" style="max-height:80%;overflow-y:auto"><div class="grabber"></div><h3 id="rcoTitle">Chat options</h3>
+    <div class="report-opt" onclick="rcoViewMembers()">👥 View members</div>
+    <div class="report-opt" onclick="rcoOpenRoundPage()">📄 View Round page</div>
+    <div class="report-opt" id="rcoMuteOpt" onclick="rcoToggleMute()">🔕 Mute notifications</div>
+    <div class="report-opt" id="rcoSaveOpt" onclick="rcoToggleSave()">📑 Save this Round</div>
+    <div class="report-opt" onclick="rcoInvite()">🔗 Invite friends to this Round</div>
+    <div class="report-opt" onclick="rcoClearChat()">🧹 Clear chat history for me</div>
+    <div class="report-opt" onclick="doReport()">🚩 Report</div>
+    <div class="report-opt" id="rcoLeaveOpt" style="color:#d94b3b;font-weight:700" onclick="leaveRoundFromChat()">🚪 Leave this Round</div>
+    <div class="report-opt" id="rcoDeleteOpt" style="color:#d94b3b;font-weight:700;display:none" onclick="rcoDeleteRound()">🗑️ Delete this Round</div>
+    <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeRoundChatOptions()">Cancel</div>
   </div>
 </div>
 
@@ -2816,6 +2842,7 @@ function openDetail(rid){
   rsvp.style.display=(activeRound.event_at&&activeRound.joined)?'block':'none';
   // host tools
   document.getElementById('detailHostTools').style.display=(activeRound.is_host)?'block':'none';
+  document.getElementById('detailLeaveWrap').style.display=(activeRound.joined&&!activeRound.is_host)?'block':'none';
   const btn=document.getElementById('joinBtn');
   if(activeRound.joined){btn.textContent=t('Open group chat');btn.onclick=()=>openThread(activeRound);}
   else{btn.textContent=t('Join this Round');btn.onclick=joinRound;}
@@ -2854,6 +2881,19 @@ function downloadIcs(){
 }
 async function joinRound(){
   try{await api('/api/rounds/'+activeRound.id+'/join','POST');toast('You joined! 🎉');activeRound.joined=1;activeRound.member_count++;openDetail(activeRound.id);}catch(e){toast(e.message);}
+}
+// Leaving from the Round page removes the person from the Round's group chat too —
+// Round membership *is* chat membership, so there's a single leave action either way.
+async function confirmLeaveRound(){
+  if(!activeRound||activeRound.is_host)return;
+  if(!confirm('Leave "'+activeRound.title+'"? You\'ll be removed from the Round and its group chat.'))return;
+  const rid=activeRound.id;
+  try{
+    await api('/api/rounds/'+rid+'/leave','POST',{});
+    toast('You left the Round');
+    forgetLeftRound(rid);
+    go('s-circles');switchCircTab('rounds');loadCircles();
+  }catch(e){toast(e.message);}
 }
 // ---- Edit round (host) ----
 let erPhoto=undefined; // undefined=unchanged, null=remove, string=new
@@ -3105,6 +3145,7 @@ function renderDiscoverMap(){
 async function loadCircles(){
   try{
     const data=await api('/api/my-rounds');
+    window._myRoundsCache=data.rounds; // used by openRoundPageById / leave flows so the Round page can be opened even if it isn't in the Discover feed
     const list=document.getElementById('circlesList');
     if(!data.rounds.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px;font-size:14px">You haven\'t joined any Rounds yet.</p>';return;}
     list.innerHTML=data.rounds.map(r=>{
@@ -3112,15 +3153,15 @@ async function loadCircles(){
       if(r.is_host){
         return '<div class="swipe-wrap" id="sw-'+r.id+'"><div class="del-bg" onclick="confirmDeleteRoundSwipe(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</div><div class="circle-card" onclick="toggleSwipe(event,\''+r.id+'\')" ontouchstart="swipeStart(event)" ontouchend="swipeEnd(event,\''+r.id+'\')">'+inner+'</div></div>';
       }
-      return '<div class="circle-card" onclick="openThreadById(\''+r.id+'\')" style="margin:0 22px 14px">'+inner+'</div>';
+      return '<div class="circle-card" onclick="openRoundTapMenu(\''+r.id+'\')" style="margin:0 22px 14px">'+inner+'</div>';
     }).join('');
   }catch(e){toast(e.message);}
 }
 // swipe handling (touch on phones, click toggles on desktop)
 let swX=0;
 function swipeStart(e){swX=e.changedTouches[0].clientX;}
-function swipeEnd(e,rid){const dx=e.changedTouches[0].clientX-swX;const w=document.getElementById('sw-'+rid);if(dx<-40)w.classList.add('swiped');else if(dx>40)w.classList.remove('swiped');else openThreadById(rid);}
-function toggleSwipe(e,rid){/* desktop: click card opens chat unless already swiped */const w=document.getElementById('sw-'+rid);if(w.classList.contains('swiped')){w.classList.remove('swiped');}else{openThreadById(rid);}}
+function swipeEnd(e,rid){const dx=e.changedTouches[0].clientX-swX;const w=document.getElementById('sw-'+rid);if(dx<-40)w.classList.add('swiped');else if(dx>40)w.classList.remove('swiped');else openRoundTapMenu(rid);}
+function toggleSwipe(e,rid){/* desktop: click card opens the tap menu unless already swiped */const w=document.getElementById('sw-'+rid);if(w.classList.contains('swiped')){w.classList.remove('swiped');}else{openRoundTapMenu(rid);}}
 function confirmDeleteRoundSwipe(rid,title){
   if(confirm('Delete "'+title+'"? This removes the Round and its chat for everyone. This cannot be undone.')){
     api('/api/rounds/'+rid+'/delete','POST',{}).then(()=>{toast('Round deleted');loadCircles();}).catch(e=>toast(e.message));
@@ -3128,7 +3169,38 @@ function confirmDeleteRoundSwipe(rid,title){
 }
 async function openThreadById(rid){
   const data=await api('/api/my-rounds');
+  window._myRoundsCache=data.rounds;
   const r=data.rounds.find(x=>x.id===rid);if(r)openThread(r);
+}
+// Tapping a Round card in Circles: let the person choose the Round's page or its group chat,
+// rather than jumping straight into the chat.
+let roundTapId=null;
+function openRoundTapMenu(rid){
+  roundTapId=rid;
+  document.getElementById('roundTapSheet').classList.add('open');
+}
+function closeRoundTapMenu(){document.getElementById('roundTapSheet').classList.remove('open');}
+async function roundTapOpenChat(){
+  const rid=roundTapId;closeRoundTapMenu();
+  if(rid)await openThreadById(rid);
+}
+async function roundTapOpenPage(){
+  const rid=roundTapId;closeRoundTapMenu();
+  if(rid)await openRoundPageById(rid);
+}
+// Opens the Round detail page for a Round the user has joined, even if it isn't cached
+// in the Discover feed (allRounds) — my-rounds is the source of truth for joined Rounds.
+async function openRoundPageById(rid){
+  try{
+    let list=window._myRoundsCache;
+    let r=list&&list.find(x=>x.id===rid);
+    if(!r){const data=await api('/api/my-rounds');window._myRoundsCache=data.rounds;r=data.rounds.find(x=>x.id===rid);}
+    if(!r){toast('That Round no longer exists.');return;}
+    r={...r,joined:1}; // every row from /api/my-rounds is, by definition, a Round the user has joined
+    const idx=allRounds.findIndex(x=>x.id===rid);
+    if(idx>=0)allRounds[idx]={...allRounds[idx],...r};else allRounds.push(r);
+    openDetail(rid);
+  }catch(e){toast(e.message);}
 }
 
 // ---- Friends ----
@@ -4534,7 +4606,9 @@ async function openThread(r){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',roundId:r.id}));
   try{
     const data=await api('/api/rounds/'+r.id+'/messages');
-    renderMsgs(data.messages);applyChatBg();
+    const clearedAt=getClearedAt(r.id);
+    const msgs=clearedAt?data.messages.filter(m=>(m.created_at||0)>clearedAt):data.messages;
+    renderMsgs(msgs);applyChatBg();
     // Mark this Round's chat as read, then refresh the badges
     api('/api/rounds/'+r.id+'/read','POST',{}).then(()=>{if(typeof updateNotifBadge==='function')updateNotifBadge();}).catch(()=>{});
   }catch(e){document.getElementById('msgs').innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">'+e.message+'</p>';}
@@ -4748,11 +4822,11 @@ function connectWS(){
   ws.onmessage=(ev)=>{
     let msg;try{msg=JSON.parse(ev.data);}catch{return;}
     if(msg.type==='ready'&&activeRound){ws.send(JSON.stringify({type:'join',roundId:activeRound.id}));}
-    if(msg.type==='message'&&activeRound&&msg.roundId===activeRound.id){appendMsg(msg.message);if(me&&msg.message&&msg.message.user_id!==me.id)playMessageSound();}
+    if(msg.type==='message'&&activeRound&&msg.roundId===activeRound.id){appendMsg(msg.message);if(me&&msg.message&&msg.message.user_id!==me.id&&!isRoundMuted(activeRound.id))playMessageSound();}
     if(msg.type==='reaction'&&activeRound&&msg.roundId===activeRound.id){updateReactions(msg.messageId,msg.reactions);}
     if(msg.type==='dm'&&activeConv&&msg.convId===activeConv){appendDm(msg.message);if(me&&msg.message&&msg.message.user_id!==me.id)playMessageSound();}
     // A message arriving for a chat you don't currently have open — still chime, and refresh badges
-    if(msg.type==='message'&&(!activeRound||msg.roundId!==activeRound.id)&&me&&msg.message&&msg.message.user_id!==me.id){playMessageSound();}
+    if(msg.type==='message'&&(!activeRound||msg.roundId!==activeRound.id)&&me&&msg.message&&msg.message.user_id!==me.id&&!isRoundMuted(msg.roundId)){playMessageSound();}
     if(msg.type==='dm'&&(!activeConv||msg.convId!==activeConv)&&me&&msg.message&&msg.message.user_id!==me.id){playMessageSound();}
     if(msg.type==='dmReaction'&&activeConv&&msg.convId===activeConv){updateDmReactions(msg.messageId,msg.reactions);}
     if(msg.type==='dmRead'&&activeConv&&msg.convId===activeConv&&me&&msg.readerId!==me.id){
@@ -5205,7 +5279,83 @@ async function sendReport(reason){
   catch(e){toast('Report received. 🛡️');}
   reportContext='';reportedUserId=null;
 }
-function doReport(){reportContext='chat';reportedUserId=null;openReport();}
+function doReport(){reportContext='chat';reportedUserId=null;closeRoundChatOptions();openReport();}
+
+// ---- Round group-chat "•••" options menu ----
+function isRoundMuted(rid){try{return (JSON.parse(localStorage.getItem('su_muted_rounds')||'[]')).includes(rid);}catch(e){return false;}}
+function setRoundMuted(rid,muted){
+  try{
+    let list=JSON.parse(localStorage.getItem('su_muted_rounds')||'[]');
+    list=list.filter(x=>x!==rid);
+    if(muted)list.push(rid);
+    localStorage.setItem('su_muted_rounds',JSON.stringify(list));
+  }catch(e){}
+}
+function getClearedAt(rid){try{return parseInt(localStorage.getItem('su_cleared_'+rid)||'0',10)||0;}catch(e){return 0;}}
+function openRoundChatOptions(){
+  if(!activeRound)return;
+  document.getElementById('rcoTitle').textContent=activeRound.title||'Chat options';
+  document.getElementById('rcoLeaveOpt').style.display=activeRound.is_host?'none':'block';
+  document.getElementById('rcoDeleteOpt').style.display=activeRound.is_host?'block':'none';
+  const muted=isRoundMuted(activeRound.id);
+  document.getElementById('rcoMuteOpt').textContent=muted?'🔔 Unmute notifications':'🔕 Mute notifications';
+  const saved=!!activeRound.i_saved;
+  document.getElementById('rcoSaveOpt').textContent=saved?'🔖 Unsave this Round':'📑 Save this Round';
+  document.getElementById('roundChatOptionsSheet').classList.add('open');
+}
+function closeRoundChatOptions(){document.getElementById('roundChatOptionsSheet').classList.remove('open');}
+function rcoViewMembers(){closeRoundChatOptions();const t=document.getElementById('attendeesTitle');if(t)t.textContent="Who's in this Round";openAttendees();}
+function rcoOpenRoundPage(){const rid=activeRound&&activeRound.id;closeRoundChatOptions();if(rid)openRoundPageById(rid);}
+function rcoToggleMute(){
+  if(!activeRound)return;
+  const nowMuted=!isRoundMuted(activeRound.id);
+  setRoundMuted(activeRound.id,nowMuted);
+  document.getElementById('rcoMuteOpt').textContent=nowMuted?'🔔 Unmute notifications':'🔕 Mute notifications';
+  toast(nowMuted?'Muted — you won\'t hear new messages from this Round 🔕':'Unmuted 🔔');
+}
+function rcoToggleSave(){
+  if(!activeRound)return;
+  toggleSaveRound(activeRound.id,null,false);
+  setTimeout(()=>{const saved=!!activeRound.i_saved;document.getElementById('rcoSaveOpt').textContent=saved?'🔖 Unsave this Round':'📑 Save this Round';},50);
+}
+function rcoInvite(){
+  if(!activeRound)return;
+  closeRoundChatOptions();
+  shareAny({title:'Join my Round on ShowUpp',text:'Join "'+activeRound.title+'" with me on ShowUpp!',url:inviteLink()});
+}
+function rcoClearChat(){
+  if(!activeRound)return;
+  if(!confirm('Clear chat history for you only? Other members will still see every message. This can\'t be undone.'))return;
+  try{localStorage.setItem('su_cleared_'+activeRound.id,String(Date.now()));}catch(e){}
+  closeRoundChatOptions();
+  document.getElementById('msgs').innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">Say hello 👋 — start the conversation.</p>';
+  toast('Chat history cleared for you');
+}
+async function rcoDeleteRound(){
+  closeRoundChatOptions();
+  await confirmDeleteRound();
+}
+// Leaving from the chat removes the person from the Round itself — Round membership
+// *is* chat membership, so this and leaving from the Round page do the exact same thing.
+async function leaveRoundFromChat(){
+  if(!activeRound||activeRound.is_host)return;
+  if(!confirm('Leave "'+activeRound.title+'"? You\'ll be removed from the Round and this group chat.'))return;
+  const rid=activeRound.id;
+  try{
+    await api('/api/rounds/'+rid+'/leave','POST',{});
+    closeRoundChatOptions();
+    toast('You left the Round');
+    forgetLeftRound(rid);
+    go('s-circles');switchCircTab('rounds');loadCircles();
+  }catch(e){toast(e.message);}
+}
+// Shared cleanup after leaving a Round, whichever screen it happened from.
+function forgetLeftRound(rid){
+  allRounds=allRounds.filter(r=>r.id!==rid);
+  if(typeof savedRoundsList!=='undefined'&&savedRoundsList)savedRoundsList=savedRoundsList.filter(r=>r.id!==rid);
+  if(window._myRoundsCache)window._myRoundsCache=window._myRoundsCache.filter(r=>r.id!==rid);
+  if(activeRound&&activeRound.id===rid)activeRound=null;
+}
 async function openBlocked(){
   document.getElementById('blockedSheet').classList.add('open');
   try{
