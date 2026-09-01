@@ -1093,6 +1093,26 @@ app.get('/api/friends/requests', requireAuth, async (req, res) => {
   res.json({ requests: rows });
 });
 
+// Outgoing friend requests (people I've asked to be friends, still awaiting a reply)
+app.get('/api/friends/sent', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
+    SELECT u.id, u.name, u.username, u.avatar, u.city
+    FROM friend_requests fr JOIN users u ON u.id = fr.to_id
+    WHERE fr.from_id = ? ORDER BY fr.created_at DESC
+  `).all(req.user.id);
+  res.json({ requests: rows });
+});
+
+// Rescind (cancel) a friend request I sent — lets someone change their mind before it's answered
+app.post('/api/friends/rescind', requireAuth, async (req, res) => {
+  const { toId } = req.body || {};
+  if (!toId) return res.status(400).json({ error: 'Invalid user.' });
+  const existing = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(req.user.id, toId);
+  if (!existing) return res.status(404).json({ error: "That request no longer exists." });
+  await db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(req.user.id, toId);
+  res.json({ ok: true });
+});
+
 // Accept a request
 app.post('/api/friends/accept', requireAuth, async (req, res) => {
   const { fromId } = req.body || {};
@@ -1562,6 +1582,50 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, async (req, res) => {
     ORDER BY r.created_at DESC LIMIT 100
   `).all();
   res.json({ reports: rows });
+});
+
+// List / search all Rounds (admin only) — for moderation, e.g. finding a Round that was reported
+app.get('/api/admin/rounds', requireAuth, requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  let rows;
+  if (q) {
+    rows = await db.prepare(`
+      SELECT r.id, r.title, r.emoji, r.created_at, host.name AS host_name, host.username AS host_username,
+        (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count
+      FROM rounds r LEFT JOIN users host ON host.id = r.host_id
+      WHERE LOWER(r.title) LIKE ? OR LOWER(host.name) LIKE ? OR LOWER(host.username) LIKE ?
+      ORDER BY r.created_at DESC LIMIT 200
+    `).all('%' + q + '%', '%' + q + '%', '%' + q + '%');
+  } else {
+    rows = await db.prepare(`
+      SELECT r.id, r.title, r.emoji, r.created_at, host.name AS host_name, host.username AS host_username,
+        (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count
+      FROM rounds r LEFT JOIN users host ON host.id = r.host_id
+      ORDER BY r.created_at DESC LIMIT 200
+    `).all();
+  }
+  res.json({ rounds: rows });
+});
+
+// Permanently delete any Round (admin only) — for rule violations, spam, etc.
+// Unlike the host's own delete, this notifies the host with an optional reason.
+app.post('/api/admin/rounds/:id/delete', requireAuth, requireAdmin, async (req, res) => {
+  const { reason } = req.body || {};
+  const round = await db.prepare('SELECT id, title, host_id FROM rounds WHERE id = ?').get(req.params.id);
+  if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  await db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
+  if (round.host_id) {
+    await pushNotif(
+      round.host_id,
+      'round_removed',
+      'A Round you hosted was removed',
+      '"' + round.title + '" was removed by our team for violating community guidelines.' + (reason ? ' Reason: ' + reason : ''),
+      null
+    );
+  }
+  res.json({ ok: true });
 });
 
 
