@@ -71,9 +71,19 @@
 .phone[data-theme="dark"] .detail-card{background:#15162A;box-shadow:0 2px 14px rgba(0,0,0,.4)}
 .phone[data-theme="dark"] .rsvp-btn{background:#15162A;color:#EDEEF7;box-shadow:0 2px 12px rgba(0,0,0,.4)}
 .phone[data-theme="dark"] .rsvp-btn.on{background:#2E2440}
+.phone[data-theme="dark"] #rsvp-going{background:#173B27;color:#6FE3A0}
+.phone[data-theme="dark"] #rsvp-going.on{background:#1E4F32;box-shadow:0 0 0 2px #6FE3A0,0 2px 12px rgba(0,0,0,.4)}
+.phone[data-theme="dark"] #rsvp-maybe{background:#3D3115;color:#F4C778}
+.phone[data-theme="dark"] #rsvp-maybe.on{background:#4E3F1B;box-shadow:0 0 0 2px #F4C778,0 2px 12px rgba(0,0,0,.4)}
+.phone[data-theme="dark"] #rsvp-no{background:#3D1E1E;color:#F29B9B}
+.phone[data-theme="dark"] #rsvp-no.on{background:#4E2626;box-shadow:0 0 0 2px #F29B9B,0 2px 12px rgba(0,0,0,.4)}
 .phone[data-theme="dark"] .pill{background:#20202e;color:#EDEAF5;box-shadow:none;border:1px solid #3a3a4e}
 .phone[data-theme="dark"] #detailEvent,.phone[data-theme="dark"] #detailLocation{background:#15162A!important;box-shadow:0 2px 12px rgba(0,0,0,.4)}
 .phone[data-theme="dark"] .detail-surface-btn{background:#15162A!important;color:#EDEEF7!important;box-shadow:0 2px 12px rgba(0,0,0,.4)}
+.phone[data-theme="dark"] .safebar{background:linear-gradient(120deg,#1B1D3D,#241B44);border-color:#33305C;color:#B9BFFF}
+.phone[data-theme="dark"] .detail-cover{background:linear-gradient(135deg,#2A2456,#1E1A3E)}
+.phone[data-theme="dark"] #vpName{color:#F5F5FF}
+.phone[data-theme="dark"] #vpMeta{color:#B7BEEA}
 .phone[data-theme="dark"] .interest-gallery{background:linear-gradient(135deg,#1B2A4A,#16233C)!important;border-color:#2C3E5C!important}
 .phone[data-theme="dark"] .interest-gallery-title{color:#EAF2FF!important}
 .phone[data-theme="dark"] .rc-joined{color:#7BE0C8}
@@ -105,10 +115,10 @@
 .phone[data-theme="sunset"] .fav{background:linear-gradient(135deg,#FB923C,#F43F5E)}
 /* Midnight — a deeper dark variant */
 .phone[data-theme="midnight"]{--bone:#0f1626;--card:#18223a;--ink:#E5EAF5;--muted:#7d8bb0;--line:#26324f;--night:#E5EAF5;--coral:#5B8DEF;--mango:#38BDF8;--turq:#22D3EE;--shadow:0 8px 30px rgba(0,0,0,.5)}
-.phone[data-theme="warm"]{--bone:#FBF6EC;--card:#FFFDF8;--ink:#4A3B28;--muted:#9A876B;--line:#EDE3D0;--night:#4A3B28;--coral:#E8934D;--mango:#D9A441;--turq:#C99A5B;--shadow:0 8px 30px rgba(120,90,40,.12)}
+.phone[data-theme="warm"]{--bone:#FBF6EC;--card:#FFFDF8;--ink:#4A3B28;--muted:#9A876B;--line:#EDE3D0;--night:#4A3B28;--coral:#6D6FE3;--mango:#9C7FEA;--turq:#6FA3D8;--shadow:0 8px 30px rgba(120,90,40,.12)}
 .phone[data-theme="warm"] .round,.phone[data-theme="warm"] .circle-card,.phone[data-theme="warm"] .friend-row,.phone[data-theme="warm"] .chip,.phone[data-theme="warm"] .srow,.phone[data-theme="warm"] .catpill{background:#FFFDF8}
 .phone[data-theme="warm"] .chip{color:#6B573B;border-color:#E6D8BF}
-.phone[data-theme="warm"] .chip.on{background:linear-gradient(135deg,#E8934D,#D9A441);color:#fff;border-color:#E8934D;font-weight:700}
+.phone[data-theme="warm"] .chip.on{background:linear-gradient(135deg,#6D6FE3,#9C7FEA);color:#fff;border-color:#6D6FE3;font-weight:700}
 .phone[data-theme="midnight"] .round,.phone[data-theme="midnight"] .circle-card,.phone[data-theme="midnight"] .friend-row,.phone[data-theme="midnight"] .chip,.phone[data-theme="midnight"] .srow,.phone[data-theme="midnight"] .catpill,.phone[data-theme="midnight"] .sheet-inner,.phone[data-theme="midnight"] .composer,.phone[data-theme="midnight"] .msg.them{background:#18223a;color:var(--ink)}
 .phone[data-theme="midnight"] .nav{background:rgba(15,22,38,.92)}
 .phone[data-theme="midnight"] .ptag,.phone[data-theme="midnight"] .react-chip{background:#26324f;color:#E5EAF5}
@@ -335,24 +345,33 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .check-row a{color:var(--mango);font-weight:600;text-decoration:none}
 .err{background:rgba(217,75,59,.13);border:1px solid rgba(217,75,59,.4);color:#c0392b;font-size:13px;padding:11px 14px;border-radius:12px;margin-top:14px;display:none}
 .err.show{display:block}
-.detail-hero{height:210px;position:relative;display:flex;align-items:flex-end;padding:22px;overflow:hidden;background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,var(--detail-bg,#EDEBF7) 100%)}
+.detail-hero{height:225px;position:relative;display:flex;align-items:flex-end;padding:22px;overflow:hidden;background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,var(--detail-bg,#EDEBF7) 100%)}
 .detail-hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:55%;background:linear-gradient(to bottom,rgba(183,214,254,0),var(--detail-bg,#EDEBF7));z-index:1;pointer-events:none}
 .back{position:absolute;top:16px;left:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;border:none;box-shadow:0 2px 10px rgba(0,0,0,.15)}
 .back svg{width:20px;height:20px;color:var(--night)}
 .detail-hero .hero-waves{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
-.detail-hero .emoji-lg{position:absolute;top:58px;right:24px;font-size:56px;filter:drop-shadow(0 2px 8px rgba(27,27,58,.18));z-index:2}
+.hero-spark{position:absolute;z-index:2;pointer-events:none;color:#fff;opacity:.85;filter:drop-shadow(0 1px 3px rgba(65,90,220,.25))}
+.hero-emoji-wrap{position:absolute;top:38px;right:22px;width:110px;height:110px;z-index:2;display:flex;align-items:center;justify-content:center}
+.hero-emoji-ring{position:absolute;inset:0;border:1.5px solid rgba(255,255,255,.55);border-radius:50%;animation:heroRingPulse 3.5s ease-in-out infinite}
+.hero-emoji-ring.r2{inset:14px;animation-delay:.4s}
+@keyframes heroRingPulse{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.08);opacity:.9}}
+.detail-hero .emoji-lg{position:relative;font-size:56px;filter:drop-shadow(0 4px 10px rgba(27,27,58,.22));z-index:2;animation:heroFloat 3.2s ease-in-out infinite}
+@keyframes heroFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 .detail-hero h1{display:flex;flex-direction:column;gap:2px;position:relative;z-index:2}
-.detail-hero .dt-lead{font-family:'Fraunces',serif;color:var(--night);font-size:26px;font-weight:600;line-height:1.15}
-.detail-hero .dt-name{font-family:'Fraunces',serif;font-size:30px;font-weight:700;line-height:1.15;background:linear-gradient(90deg,#4183FA,#BA5CD6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+.detail-hero .dt-name{font-family:'Fraunces',serif;font-size:30px;font-weight:700;line-height:1.2;background:linear-gradient(90deg,#4183FA,#BA5CD6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
 /* Softer, airier detail body on a tinted backdrop, with content in clean white cards */
 .detail-body{padding:20px 20px 8px;margin-top:-22px;background:var(--detail-bg,#EDEBF7);border-radius:26px 26px 0 0;position:relative;z-index:3}
 .detail-card{background:#fff;border-radius:18px;padding:16px 16px;margin-bottom:14px;box-shadow:0 2px 14px rgba(40,40,80,.06)}
+.detail-cover{width:100%;aspect-ratio:16/11;border-radius:20px;margin-bottom:14px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#C9C4F7 0%,#B9B0F2 100%)}
+.detail-cover img{width:100%;height:100%;object-fit:cover}
+.detail-cover .dc-emoji{font-size:74px;filter:drop-shadow(0 6px 16px rgba(60,40,120,.25))}
 .pill-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .pill{background:#fff;border:1px solid transparent;padding:8px 14px;border-radius:20px;font-size:12.5px;font-weight:700;color:var(--night);box-shadow:0 2px 10px rgba(40,40,80,.07)}
 .blurb{font-size:15px;line-height:1.65;color:var(--ink);margin:2px 0 16px}
 .attend{padding:14px 20px 22px;background:var(--detail-bg,#EDEBF7)}
-.safebar{background:#EAFBF7;border:1px solid #b8f0e6;border-radius:16px;padding:14px 16px;display:flex;gap:10px;font-size:13px;color:#0d7d6f;line-height:1.5;margin-bottom:16px;font-weight:600}
+.safebar{background:linear-gradient(120deg,#EEF0FF 0%,#F1ECFF 100%);border:1px solid #DCDCFA;border-radius:16px;padding:14px 16px;display:flex;gap:10px;font-size:13px;color:#4A4FC7;line-height:1.5;margin-bottom:14px;font-weight:600;position:relative;overflow:hidden}
 .safebar svg{flex:none;width:18px;height:18px;margin-top:1px}
+.safebar .safebar-leaf{position:absolute;right:-6px;bottom:-8px;width:52px;height:52px;opacity:.9;pointer-events:none}
 .empty-hint{text-align:center;padding:40px 30px;color:var(--muted)}
 .circle-card{background:#fff;border-radius:20px;padding:16px;box-shadow:var(--shadow);margin:0 22px 14px;display:flex;gap:14px;align-items:center;cursor:pointer}
 .circ-tab{flex:1;text-align:center;padding:10px;border-radius:14px;background:#fff;border:1.5px solid var(--line);font-size:14px;font-weight:700;color:var(--muted);cursor:pointer;transition:.2s}
@@ -492,6 +511,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .catpill{padding:10px 13px;border-radius:14px;border:1.5px solid var(--line);background:#fff;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;transition:.2s}
 .rsvp-btn{flex:1;padding:14px 8px;border-radius:16px;border:none;background:#fff;font-size:14px;font-weight:700;color:var(--night);cursor:pointer;font-family:'Instrument Sans';box-shadow:0 2px 12px rgba(40,40,80,.08);transition:.15s}
 .rsvp-btn.on{background:#EEF0FF;box-shadow:0 0 0 2px var(--coral),0 2px 12px rgba(91,95,239,.2);color:var(--night)}
+#rsvp-going{background:#E3F6EA;color:#1F8B4C}
+#rsvp-going.on{background:#CFF1DA;box-shadow:0 0 0 2px #1F8B4C,0 2px 12px rgba(31,139,76,.2)}
+#rsvp-maybe{background:#FDF1DC;color:#B9791F}
+#rsvp-maybe.on{background:#FBE7C0;box-shadow:0 0 0 2px #B9791F,0 2px 12px rgba(185,121,31,.2)}
+#rsvp-no{background:#FBE6E6;color:#C0392B}
+#rsvp-no.on{background:#F7D2D2;box-shadow:0 0 0 2px #C0392B,0 2px 12px rgba(192,57,43,.2)}
 .catpill.on{border-color:var(--coral);background:#EEF0FF}
 .privacy-banner{background:#EAFBF7;border:1px solid #b8f0e6;border-radius:14px;padding:13px 14px;display:flex;gap:10px;font-size:12.5px;color:#0d7d6f;line-height:1.5;margin:6px 0 20px;font-weight:500}
 .privacy-banner svg{flex:none;width:18px;height:18px;margin-top:1px}
@@ -724,14 +749,24 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <path filter="url(#waveBlur)" fill="rgba(255,255,255,.55)" d="M0,55 C47,58 94,90 141,108 C175,120 211,66 258,33 C281,19 328,3 400,3 L400,210 L0,210 Z"/>
         <path filter="url(#waveBlur)" fill="rgba(255,255,255,.32)" d="M258,144 C281,160 305,149 328,166 C352,160 375,177 400,166 L400,210 L258,210 Z"/>
       </svg>
+      <svg class="hero-spark" style="top:22px;left:56%;width:16px;height:16px" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z"/></svg>
+      <svg class="hero-spark" style="top:64px;left:44%;width:9px;height:9px" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z"/></svg>
+      <svg class="hero-spark" style="top:14px;left:26%;width:7px;height:7px" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z"/></svg>
       <button class="back" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
-      <div class="emoji-lg" id="detailEmoji">🍳</div><h1 id="detailTitle"><span class="dt-lead">Let's</span><span class="dt-name" id="detailTitleName">Round</span></h1>
+      <div class="hero-emoji-wrap"><div class="hero-emoji-ring"></div><div class="hero-emoji-ring r2"></div><div class="emoji-lg" id="detailEmoji">🍳</div></div>
+      <h1 id="detailTitle"><span class="dt-name" id="detailTitleName">Round</span></h1>
     </div>
     <div class="detail-body">
-      <div id="detailPhoto" style="display:none;margin-bottom:14px"><img id="detailPhotoImg" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px"></div>
+      <div class="detail-cover" id="detailCover">
+        <div id="detailPhoto" style="display:none;width:100%;height:100%"><img id="detailPhotoImg" style="width:100%;height:100%;object-fit:cover"></div>
+        <div class="dc-emoji" id="detailCoverEmoji">🍳</div>
+      </div>
       <div class="pill-row" id="detailPills"></div>
       <div id="detailEvent" style="display:none;background:#fff;border:none;border-radius:16px;padding:14px 16px;margin:10px 0;box-shadow:0 2px 12px rgba(40,40,80,.07)"></div>
       <div id="detailLocation" style="display:none;background:#fff;border:none;border-radius:16px;padding:14px 16px;margin:10px 0;box-shadow:0 2px 12px rgba(40,40,80,.07)"></div>
+      <div class="safebar" id="detailSafebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Your exact location stays private. Meet in public first.</span>
+        <svg class="safebar-leaf" viewBox="0 0 60 60" fill="none"><path d="M30 55 C30 40 20 35 12 30 C22 32 30 28 30 15" stroke="#8B5CF6" stroke-width="2.2" stroke-linecap="round" opacity=".55"/><path d="M30 55 C30 42 38 34 46 28 C38 32 30 26 30 12" stroke="#5B5FEF" stroke-width="2.2" stroke-linecap="round" opacity=".55"/></svg>
+      </div>
       <p class="blurb" id="detailBlurb"></p>
       <a id="detailLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;align-items:center;gap:8px;color:var(--coral);font-weight:700;font-size:14px;text-decoration:none;margin:6px 0 10px"></a>
       <a id="detailLinkPreview" href="#" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;margin:2px 0 12px;max-width:100%;box-sizing:border-box;overflow:hidden;border-radius:14px"></a>
@@ -750,8 +785,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       </div>
       <div id="detailHostTools" style="display:none;margin-top:6px;padding-top:16px;border-top:1px solid rgba(40,40,80,.1)">
         <div style="font-weight:700;font-size:13px;color:var(--muted);margin-bottom:10px;letter-spacing:.3px">Creator tools</div>
-        <button class="btn detail-surface-btn" style="background:#fff;color:var(--night);margin-bottom:10px;box-shadow:0 2px 12px rgba(40,40,80,.08);border:none;font-weight:700" onclick="openEditRound()">✏️ Edit this Round</button>
-        <button class="btn detail-surface-btn" style="background:#fff;color:var(--night);margin-bottom:10px;box-shadow:0 2px 12px rgba(40,40,80,.08);border:none;font-weight:700" onclick="openManageMembers()">👥 Manage members</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <button class="btn detail-surface-btn" style="background:#fff;color:var(--night);box-shadow:0 2px 12px rgba(40,40,80,.08);border:none;font-weight:700;padding:14px 8px" onclick="openEditRound()">✏️ Edit this Round</button>
+          <button class="btn detail-surface-btn" style="background:#fff;color:var(--night);box-shadow:0 2px 12px rgba(40,40,80,.08);border:none;font-weight:700;padding:14px 8px" onclick="openManageMembers()">👥 Manage members</button>
+        </div>
         <button class="btn" style="background:#FDECEC;color:#d94b3b;border:none;font-weight:700" onclick="confirmDeleteRound()">🗑️ Delete this Round</button>
       </div>
       <div id="detailLeaveWrap" style="display:none;margin-top:6px;padding-top:16px;border-top:1px solid rgba(40,40,80,.1)">
@@ -760,7 +797,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     </div>
   </div>
   <div class="attend">
-    <div class="safebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Your exact location stays private. Meet in public first.</div>
     <div style="display:flex;gap:10px">
       <button class="btn btn-mango" id="joinBtn" onclick="joinRound()" style="flex:1">Join this Round</button>
       <button class="btn" id="detailSaveBtn" onclick="toggleSaveRound(activeRound.id,null,true)" style="flex:none;width:56px;background:var(--bone);color:var(--night);border:1.5px solid var(--line);font-size:22px;padding:0">📑</button>
@@ -802,10 +838,19 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div id="fsub-updates-pane" style="display:none"><div id="updatesList" style="padding:0 22px"></div></div>
       <div id="fsub-requests-pane" style="display:none">
         <div style="padding:0 22px">
-          <h4 style="margin:2px 2px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Received</h4>
-          <div id="requestsList"></div>
-          <h4 style="margin:20px 2px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Sent by you</h4>
-          <div id="sentRequestsList"></div>
+          <div style="display:flex;gap:6px;margin-bottom:14px">
+            <div class="catpill on" id="reqFilter-all" onclick="setReqFilter('all')" style="padding:7px 14px;font-size:12.5px">All</div>
+            <div class="catpill" id="reqFilter-received" onclick="setReqFilter('received')" style="padding:7px 14px;font-size:12.5px">Received</div>
+            <div class="catpill" id="reqFilter-sent" onclick="setReqFilter('sent')" style="padding:7px 14px;font-size:12.5px">Sent</div>
+          </div>
+          <div id="reqReceivedWrap">
+            <h4 style="margin:2px 2px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Received</h4>
+            <div id="requestsList"></div>
+          </div>
+          <div id="reqSentWrap">
+            <h4 style="margin:20px 2px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Sent by you</h4>
+            <div id="sentRequestsList"></div>
+          </div>
         </div>
       </div>
       <div id="fsub-blocked-pane" style="display:none"><div id="blockedListTab" style="padding:0 22px"></div></div>
@@ -856,11 +901,15 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
   <div class="scroll" style="padding-bottom:96px">
     <div id="chat-rounds-pane">
+      <div style="padding:0 22px 10px"><input id="chatSearchRounds" placeholder="🔍 Search Round chats or messages…" oninput="onChatSearch('rounds',this.value)" style="width:100%;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px;box-sizing:border-box"></div>
       <div id="chatList"></div>
+      <div id="chatSearchMsgResults"></div>
     </div>
     <div id="chat-direct-pane" style="display:none">
       <div style="padding:0 22px 10px"><button class="btn btn-mango" style="padding:11px" onclick="openNewGroup()">+ New group chat</button></div>
+      <div style="padding:0 22px 10px"><input id="chatSearchDirect" placeholder="🔍 Search friends or messages…" oninput="onChatSearch('direct',this.value)" style="width:100%;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px;box-sizing:border-box"></div>
       <div id="dmList" style="padding:0 22px"></div>
+      <div id="dmSearchMsgResults" style="padding:0 22px"></div>
     </div>
   </div>
   <div class="nav" data-nav></div>
@@ -1073,7 +1122,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
           <div class="theme-opt on" data-theme-val="light" onclick="setThemeManual('light')"><div class="tsw" style="background:#F5F9FF;border:1px solid #E1E8F2"></div>Light</div>
           <div class="theme-opt" data-theme-val="dark" onclick="setThemeManual('dark')"><div class="tsw" style="background:#20202e"></div>Dark</div>
-          <div class="theme-opt" data-theme-val="warm" onclick="setThemeManual('warm')"><div class="tsw" style="background:linear-gradient(135deg,#F5C97B,#E8A94D)"></div>Night</div>
+          <div class="theme-opt" data-theme-val="warm" onclick="setThemeManual('warm')"><div class="tsw" style="background:linear-gradient(135deg,#FBF6EC,#9C7FEA)"></div>Night</div>
         </div>
         <div style="font-size:11.5px;color:var(--muted);margin:-4px 2px 4px;line-height:1.4">🌙 Night mode warms the colors to cut blue light in the evening.</div>
         <!-- Scheduled night mode -->
@@ -1340,32 +1389,50 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 
 <div class="sheet" id="msgMenuSheet" onclick="if(event.target===this)closeMsgMenu()">
   <div class="sheet-inner"><div class="grabber"></div>
-    <div style="display:flex;justify-content:space-around;padding:6px 0 14px">
+    <div style="display:flex;justify-content:space-around;padding:6px 0 14px;align-items:center">
       <span class="big-react" onclick="menuReact('❤️')">❤️</span>
       <span class="big-react" onclick="menuReact('😂')">😂</span>
       <span class="big-react" onclick="menuReact('👍')">👍</span>
       <span class="big-react" onclick="menuReact('🔥')">🔥</span>
       <span class="big-react" onclick="menuReact('😮')">😮</span>
       <span class="big-react" onclick="menuReact('😢')">😢</span>
+      <span class="big-react" onclick="toggleCustomReact('msg')" style="font-size:22px;color:var(--muted)" title="More emoji">➕</span>
+    </div>
+    <div id="customReactRow-msg" style="display:none;gap:8px;padding:0 2px 14px">
+      <input id="customReactInput-msg" placeholder="Open your emoji keyboard & pick any emoji" style="flex:1;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:18px;font-family:'Instrument Sans'" onkeydown="if(event.key==='Enter')submitCustomReact('msg')">
+      <button class="btn btn-mango" style="padding:0 16px;flex:none" onclick="submitCustomReact('msg')">Add</button>
     </div>
     <div class="report-opt" onclick="menuReply()">↩️ Reply</div>
     <div class="report-opt" onclick="menuForward()">➡️ Forward</div>
+    <div class="report-opt" onclick="menuCopy()">📋 Copy text</div>
+    <div class="report-opt" onclick="menuDeleteForMe()">🙈 Delete for me</div>
+    <div class="report-opt" id="menuUnsendOpt" style="display:none;color:#d94b3b;font-weight:700" onclick="menuUnsend()">🚫 Unsend (delete for everyone)</div>
+    <div class="report-opt" onclick="menuReportMsg()">🚩 Report message</div>
     <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeMsgMenu()">Cancel</div>
   </div>
 </div>
 
 <div class="sheet" id="dmMsgMenuSheet" onclick="if(event.target===this)closeDmMsgMenu()">
   <div class="sheet-inner"><div class="grabber"></div>
-    <div style="display:flex;justify-content:space-around;padding:6px 0 14px">
+    <div style="display:flex;justify-content:space-around;padding:6px 0 14px;align-items:center">
       <span class="big-react" onclick="dmMenuReact('❤️')">❤️</span>
       <span class="big-react" onclick="dmMenuReact('😂')">😂</span>
       <span class="big-react" onclick="dmMenuReact('👍')">👍</span>
       <span class="big-react" onclick="dmMenuReact('🔥')">🔥</span>
       <span class="big-react" onclick="dmMenuReact('😮')">😮</span>
       <span class="big-react" onclick="dmMenuReact('😢')">😢</span>
+      <span class="big-react" onclick="toggleCustomReact('dm')" style="font-size:22px;color:var(--muted)" title="More emoji">➕</span>
+    </div>
+    <div id="customReactRow-dm" style="display:none;gap:8px;padding:0 2px 14px">
+      <input id="customReactInput-dm" placeholder="Open your emoji keyboard & pick any emoji" style="flex:1;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:18px;font-family:'Instrument Sans'" onkeydown="if(event.key==='Enter')submitCustomReact('dm')">
+      <button class="btn btn-mango" style="padding:0 16px;flex:none" onclick="submitCustomReact('dm')">Add</button>
     </div>
     <div class="report-opt" onclick="dmMenuReply()">↩️ Reply</div>
     <div class="report-opt" onclick="dmMenuForward()">➡️ Forward</div>
+    <div class="report-opt" onclick="dmMenuCopy()">📋 Copy text</div>
+    <div class="report-opt" onclick="dmMenuDeleteForMe()">🙈 Delete for me</div>
+    <div class="report-opt" id="dmMenuUnsendOpt" style="display:none;color:#d94b3b;font-weight:700" onclick="dmMenuUnsend()">🚫 Unsend (delete for everyone)</div>
+    <div class="report-opt" onclick="dmMenuReportMsg()">🚩 Report message</div>
     <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeDmMsgMenu()">Cancel</div>
   </div>
 </div>
@@ -2872,9 +2939,12 @@ function openDetail(rid){
   document.getElementById('detailHero').style.background=gradFor(activeRound.id);
   document.getElementById('detailBlurb').textContent=t(activeRound.blurb||'A small group that meets a few times.');
   document.getElementById('detailPills').innerHTML='<div class="pill">'+t(activeRound.category||'Round')+'</div><div class="pill" style="cursor:pointer" onclick="openAttendees()">👥 '+activeRound.member_count+' '+t('members')+' ›</div>';
-  // photo
+  // cover image — shows the Round's photo if it has one, otherwise a big themed
+  // gradient card with the Round's own emoji stands in as the "hero illustration"
   const ph=document.getElementById('detailPhoto');
-  if(activeRound.photo){document.getElementById('detailPhotoImg').src=activeRound.photo;ph.style.display='block';}else{ph.style.display='none';}
+  const dcEmoji=document.getElementById('detailCoverEmoji');
+  if(activeRound.photo){document.getElementById('detailPhotoImg').src=activeRound.photo;ph.style.display='block';dcEmoji.style.display='none';}
+  else{ph.style.display='none';dcEmoji.style.display='block';dcEmoji.textContent=activeRound.emoji||'✨';}
   // event date
   const ev=document.getElementById('detailEvent');
   if(activeRound.event_at){
@@ -2894,6 +2964,8 @@ function openDetail(rid){
       loc.style.display='block';
     }else loc.style.display='none';
   }
+  const safebar=document.getElementById('detailSafebar');
+  if(safebar)safebar.style.display=activeRound.place?'flex':'none';
   // link
   const lk=document.getElementById('detailLink');
   const lkPrev=document.getElementById('detailLinkPreview');
@@ -3315,6 +3387,12 @@ function switchFriendSub(which){
   if(which==='updates')loadFriendsUpdates();
   if(which==='requests')loadSentRequests();
 }
+// Filters the Requests tab to show Received only, Sent only, or both
+function setReqFilter(which){
+  ['all','received','sent'].forEach(f=>document.getElementById('reqFilter-'+f).classList.toggle('on',f===which));
+  document.getElementById('reqReceivedWrap').style.display=(which==='all'||which==='received')?'block':'none';
+  document.getElementById('reqSentWrap').style.display=(which==='all'||which==='sent')?'block':'none';
+}
 // Daily Updates tab — shows friends who currently have active updates
 async function loadFriendsUpdates(){
   const box=document.getElementById('updatesList');
@@ -3429,41 +3507,84 @@ function switchChatTab(which){
 async function loadChats(){
   try{
     const data=await api('/api/my-rounds');
-    const list=document.getElementById('chatList');
-    if(!data.rounds.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px;font-size:14px">Join a Round to start chatting.</p>';return;}
-    list.innerHTML=data.rounds.map(r=>{
-      const badge=r.unread>0?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px;margin-left:6px">'+(r.unread>99?'99+':r.unread)+'</span>':'';
-      return '<div class="chat-item" onclick="openThreadById(\''+r.id+'\')"><div class="cav">'+(r.emoji||'✨')+'</div><div class="ct"><div class="cn"><b>'+esc(r.title)+'</b>'+badge+'</div><div class="prev">'+r.member_count+' members · tap to open</div></div></div>';
-    }).join('');
+    window._chatRoundsCache=data.rounds;
+    renderChatRoundsList(data.rounds);
   }catch(e){toast(e.message);}
+}
+function renderChatRoundsList(rounds){
+  const list=document.getElementById('chatList');
+  if(!rounds.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px;font-size:14px">Join a Round to start chatting.</p>';return;}
+  list.innerHTML=rounds.map(r=>{
+    const badge=r.unread>0?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px;margin-left:6px">'+(r.unread>99?'99+':r.unread)+'</span>':'';
+    return '<div class="chat-item" onclick="openThreadById(\''+r.id+'\')"><div class="cav">'+(r.emoji||'✨')+'</div><div class="ct"><div class="cn"><b>'+esc(r.title)+'</b>'+badge+'</div><div class="prev">'+r.member_count+' members · tap to open</div></div></div>';
+  }).join('');
 }
 // ---- Direct messages ----
 async function loadDMs(){
   try{
     const data=await api('/api/conversations');
-    const list=document.getElementById('dmList');
-    if(!data.conversations.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px;font-size:14px">No direct chats yet.<br>Message a friend from the Circles → Friends tab, or start a group above.</p>';return;}
-    list.innerHTML=data.conversations.map(c=>{
-      let av;
-      if(c.is_group&&c.avatar){
-        av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\'👥\'"></div>';
-      }
-      else if(c.is_group){av='<div class="cav">👥</div>';}
-      else if(c.avatar){
-        const ini=(c.title||'?')[0].toUpperCase();
-        // Real <img> with a letter fallback if it fails to load — most robust across data URLs
-        av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\''+ini+'\'"></div>';
-      }
-      else{av='<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>';}
-      const prev=c.last?((c.last.mine?'You: ':'')+esc(c.last.body||'')):'Tap to start chatting';
-      const unread=c.unread?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px">'+c.unread+'</span>':'';
-      return '<div class="conv-swipe" data-id="'+c.id+'" style="position:relative;overflow:hidden">'
-        +'<div style="position:absolute;inset:0;background:#e5484d;display:flex;align-items:center;justify-content:flex-end;padding-right:20px;color:#fff;font-weight:700;font-size:14px">Delete</div>'
-        +'<div class="conv-row-inner chat-item" style="position:relative;transition:transform .18s ease;touch-action:pan-y;background:var(--card)" onclick="openDm(\''+c.id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(c.title)+'</b>'+unread+'</div><div class="prev">'+prev+'</div></div></div>'
-        +'</div>';
-    }).join('');
-    setupConvSwipe();
+    window._dmListCache=data.conversations;
+    renderDmListUI(data.conversations);
   }catch(e){toast(e.message);}
+}
+function renderDmListUI(conversations){
+  const list=document.getElementById('dmList');
+  if(!conversations.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px;font-size:14px">No direct chats yet.<br>Message a friend from the Circles → Friends tab, or start a group above.</p>';return;}
+  list.innerHTML=conversations.map(c=>{
+    let av;
+    if(c.is_group&&c.avatar){
+      av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\'👥\'"></div>';
+    }
+    else if(c.is_group){av='<div class="cav">👥</div>';}
+    else if(c.avatar){
+      const ini=(c.title||'?')[0].toUpperCase();
+      // Real <img> with a letter fallback if it fails to load — most robust across data URLs
+      av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\''+ini+'\'"></div>';
+    }
+    else{av='<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>';}
+    const prev=c.last?((c.last.mine?'You: ':'')+esc(c.last.body||'')):'Tap to start chatting';
+    const unread=c.unread?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px">'+c.unread+'</span>':'';
+    return '<div class="conv-swipe" data-id="'+c.id+'" style="position:relative;overflow:hidden">'
+      +'<div style="position:absolute;inset:0;background:#e5484d;display:flex;align-items:center;justify-content:flex-end;padding-right:20px;color:#fff;font-weight:700;font-size:14px">Delete</div>'
+      +'<div class="conv-row-inner chat-item" style="position:relative;transition:transform .18s ease;touch-action:pan-y;background:var(--card)" onclick="openDm(\''+c.id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(c.title)+'</b>'+unread+'</div><div class="prev">'+prev+'</div></div></div>'
+      +'</div>';
+  }).join('');
+  setupConvSwipe();
+}
+let chatSearchTimer=null;
+// Filters the visible list by title instantly, and — after a short pause — also
+// searches actual message text on the server, showing hits in a "Messages" section.
+function onChatSearch(which,q){
+  q=(q||'').trim();
+  if(which==='rounds'){
+    const src=window._chatRoundsCache||[];
+    renderChatRoundsList(q?src.filter(r=>(r.title||'').toLowerCase().includes(q.toLowerCase())):src);
+  }else{
+    const src=window._dmListCache||[];
+    renderDmListUI(q?src.filter(c=>(c.title||'').toLowerCase().includes(q.toLowerCase())):src);
+  }
+  clearTimeout(chatSearchTimer);
+  const resultsId=which==='rounds'?'chatSearchMsgResults':'dmSearchMsgResults';
+  if(q.length<2){document.getElementById(resultsId).innerHTML='';return;}
+  chatSearchTimer=setTimeout(()=>runChatMessageSearch(which,q),300);
+}
+async function runChatMessageSearch(which,q){
+  const resultsId=which==='rounds'?'chatSearchMsgResults':'dmSearchMsgResults';
+  const box=document.getElementById(resultsId);
+  box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:12.5px;padding:8px 22px">'+t('Searching messages…')+'</p>';
+  try{
+    const data=await api('/api/search/messages?q='+encodeURIComponent(q));
+    const hits=which==='rounds'?data.rounds:data.conversations;
+    if(!hits.length){box.innerHTML='';return;}
+    const header='<h4 style="margin:14px 22px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">'+t('Messages')+'</h4>';
+    const rows=hits.map(h=>{
+      if(which==='rounds'){
+        return '<div class="chat-item" style="padding:0 22px" onclick="openThreadById(\''+h.round_id+'\')"><div class="cav">'+(h.round_emoji||'✨')+'</div><div class="ct"><div class="cn"><b>'+esc(h.round_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
+      }
+      return '<div class="chat-item" style="padding:0" onclick="openDm(\''+h.conv_id+'\')"><div class="cav">💬</div><div class="ct"><div class="cn"><b>'+esc(h.conv_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
+    }).join('');
+    box.innerHTML=header+rows;
+  }catch(e){box.innerHTML='';}
 }
 let activeConv=null;
 function setupConvSwipe(){
@@ -3663,6 +3784,10 @@ function dmMsgHTML(m){
   dmMsgCache[m.id]=m;
   const mine=me&&m.user_id===me.id;
   const sender=(!mine&&m.sender)?'<div class="sender">'+esc(m.sender)+'</div>':'';
+  if(m.deleted){
+    return '<div class="msg-wrap '+(mine?'me':'them')+'" id="dmw-'+m.id+'">'
+      +'<div class="msg '+(mine?'me':'them')+'" style="opacity:.6;font-style:italic">'+sender+'<span class="msg-body">🚫 '+t('This message was unsent')+'</span></div></div>';
+  }
   let inner='';
   if(m.reply_preview)inner+='<div class="reply-quote">'+esc(m.reply_preview)+'</div>';
   if(m.kind==='gif'&&m.media_url)inner+='<img class="gif-msg" src="'+esc(m.media_url)+'">';
@@ -3684,9 +3809,11 @@ function dmMsgHTML(m){
 let dmOtherLastRead=0,dmReceiptsOn=false;
 function renderDmMsgs(msgs){
   const box=document.getElementById('dmMsgs');dmMsgCache={};
-  if(!msgs.length){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">'+t('Say hello 👋')+'</p>';return;}
-  box.innerHTML=msgs.map(dmMsgHTML).join('');
-  window._dmMsgs=msgs;
+  const hidden=activeConv?getDmHiddenForMe(activeConv):[];
+  const visible=hidden.length?msgs.filter(m=>!hidden.includes(m.id)):msgs;
+  if(!visible.length){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">'+t('Say hello 👋')+'</p>';return;}
+  box.innerHTML=visible.map(dmMsgHTML).join('');
+  window._dmMsgs=visible;
   updateReceiptLine();
   box.scrollTop=box.scrollHeight;
 }
@@ -3706,6 +3833,7 @@ function updateReceiptLine(){
 // keep the old name working in case it's referenced
 function applySeenIndicator(){updateReceiptLine();}
 function appendDm(m){
+  if(activeConv&&getDmHiddenForMe(activeConv).includes(m.id))return;
   const box=document.getElementById('dmMsgs');
   if(box.querySelector('p:only-child'))box.innerHTML='';
   box.insertAdjacentHTML('beforeend',dmMsgHTML(m));
@@ -3728,9 +3856,54 @@ let dmPressTimer=null;
 function dmTouchStart(e,id){dmPressTimer=setTimeout(()=>openDmMsgMenu(e,id),450);}
 function dmTouchEnd(e){if(dmPressTimer)clearTimeout(dmPressTimer);}
 let dmMenuTargetId=null;
-function openDmMsgMenu(e,id){if(e&&e.preventDefault)e.preventDefault();dmMenuTargetId=id;document.getElementById('dmMsgMenuSheet').classList.add('open');return false;}
+function openDmMsgMenu(e,id){
+  if(e&&e.preventDefault)e.preventDefault();
+  dmMenuTargetId=id;
+  const m=dmMsgCache[id];
+  const canUnsend=!!(m&&me&&!m.deleted&&m.user_id===me.id);
+  const unsendOpt=document.getElementById('dmMenuUnsendOpt');
+  if(unsendOpt)unsendOpt.style.display=canUnsend?'block':'none';
+  const row=document.getElementById('customReactRow-dm');if(row)row.style.display='none';
+  document.getElementById('dmMsgMenuSheet').classList.add('open');
+  return false;
+}
 function closeDmMsgMenu(){document.getElementById('dmMsgMenuSheet').classList.remove('open');}
 function dmMenuReact(emoji){toggleDmReaction(dmMenuTargetId,emoji);closeDmMsgMenu();}
+function dmMenuCopy(){
+  const m=dmMsgCache[dmMenuTargetId];if(!m)return;
+  const text=m.kind==='gif'?'':(m.body||'');
+  if(!text){toast("There's no text to copy on this message");closeDmMsgMenu();return;}
+  navigator.clipboard.writeText(text).then(()=>toast('Copied 📋')).catch(()=>toast('Could not copy'));
+  closeDmMsgMenu();
+}
+function getDmHiddenForMe(convId){try{return JSON.parse(localStorage.getItem('su_hidden_dm_'+convId)||'[]');}catch(e){return [];}}
+function hideDmMessageForMe(convId,mid){
+  try{
+    const list=getDmHiddenForMe(convId);
+    if(!list.includes(mid)){list.push(mid);localStorage.setItem('su_hidden_dm_'+convId,JSON.stringify(list));}
+  }catch(e){}
+}
+function dmMenuDeleteForMe(){
+  if(!dmMenuTargetId||!activeConv)return;
+  hideDmMessageForMe(activeConv,dmMenuTargetId);
+  const el=document.getElementById('dmw-'+dmMenuTargetId);
+  if(el)el.remove();
+  closeDmMsgMenu();
+  toast('Deleted for you');
+}
+async function dmMenuUnsend(){
+  if(!dmMenuTargetId)return;
+  if(!confirm('Unsend this message? It will be removed for everyone in the conversation.'))return;
+  try{
+    await api('/api/dm/'+dmMenuTargetId+'/delete','POST',{});
+    closeDmMsgMenu();
+  }catch(e){toast(e.message);}
+}
+function dmMenuReportMsg(){
+  const m=dmMsgCache[dmMenuTargetId];if(!m)return;
+  reportContext='message:'+dmMenuTargetId;reportedUserId=m.user_id;
+  closeDmMsgMenu();openReport();
+}
 let dmReplyingTo=null;
 function dmMenuReply(){
   const m=dmMsgCache[dmMenuTargetId];if(!m)return;
@@ -4708,6 +4881,10 @@ function messageHTML(m){
   msgCache[m.id]=m;
   const mine=me&&m.user_id===me.id;
   const sender=(!mine&&m.sender)?'<div class="sender">'+esc(m.sender)+'</div>':'';
+  if(m.deleted){
+    return '<div class="msg-wrap '+(mine?'me':'them')+'" id="mw-'+m.id+'">'
+      +'<div class="msg '+(mine?'me':'them')+'" style="opacity:.6;font-style:italic">'+sender+'<span class="msg-body">🚫 '+t('This message was unsent')+'</span></div></div>';
+  }
   let inner='';
   // reply preview
   if(m.reply_preview){
@@ -4744,11 +4921,14 @@ function messageHTML(m){
 function renderMsgs(msgs){
   const box=document.getElementById('msgs');
   msgCache={};
-  if(!msgs.length){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">Say hello 👋 — start the conversation.</p>';return;}
-  box.innerHTML=msgs.map(m=>messageHTML(m)).join('');
+  const hidden=activeRound?getHiddenForMe(activeRound.id):[];
+  const visible=hidden.length?msgs.filter(m=>!hidden.includes(m.id)):msgs;
+  if(!visible.length){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">Say hello 👋 — start the conversation.</p>';return;}
+  box.innerHTML=visible.map(m=>messageHTML(m)).join('');
   box.scrollTop=box.scrollHeight;
 }
 function appendMsg(m){
+  if(activeRound&&getHiddenForMe(activeRound.id).includes(m.id))return;
   const box=document.getElementById('msgs');
   if(box.querySelector('p:only-child'))box.innerHTML='';
   box.insertAdjacentHTML('beforeend',messageHTML(m));
@@ -4769,6 +4949,24 @@ function updateReactions(messageId,reactions){
   if(row)row.innerHTML=html;
   else wrap.insertAdjacentHTML('beforeend','<div class="reactions">'+html+'</div>');
 }
+// A message was unsent (by the sender or the Round host) — swap its bubble for a
+// muted placeholder in place, the same way WhatsApp/iMessage leave a trace behind.
+function markMessageUnsent(messageId){
+  if(msgCache[messageId])msgCache[messageId].deleted=true;
+  const wrap=document.getElementById('mw-'+messageId);if(!wrap)return;
+  const mine=wrap.classList.contains('me');
+  const senderEl=wrap.querySelector('.sender');
+  const senderHTML=senderEl?senderEl.outerHTML:'';
+  wrap.innerHTML='<div class="msg '+(mine?'me':'them')+'" style="opacity:.6;font-style:italic">'+senderHTML+'<span class="msg-body">🚫 '+t('This message was unsent')+'</span></div>';
+}
+function markDmMessageUnsent(messageId){
+  if(dmMsgCache[messageId])dmMsgCache[messageId].deleted=true;
+  const wrap=document.getElementById('dmw-'+messageId);if(!wrap)return;
+  const mine=wrap.classList.contains('me');
+  const senderEl=wrap.querySelector('.sender');
+  const senderHTML=senderEl?senderEl.outerHTML:'';
+  wrap.innerHTML='<div class="msg '+(mine?'me':'them')+'" style="opacity:.6;font-style:italic">'+senderHTML+'<span class="msg-body">🚫 '+t('This message was unsent')+'</span></div>';
+}
 async function toggleReaction(messageId,emoji){
   try{await api('/api/messages/'+messageId+'/react','POST',{emoji});}
   catch(e){toast(e.message);}
@@ -4784,11 +4982,67 @@ let menuTargetId=null;
 function openMsgMenu(e,id){
   if(e&&e.preventDefault)e.preventDefault();
   menuTargetId=id;
+  const m=msgCache[id];
+  const canUnsend=!!(m&&me&&!m.deleted&&(m.user_id===me.id||(activeRound&&activeRound.is_host)));
+  const unsendOpt=document.getElementById('menuUnsendOpt');
+  if(unsendOpt)unsendOpt.style.display=canUnsend?'block':'none';
+  const row=document.getElementById('customReactRow-msg');if(row)row.style.display='none';
   document.getElementById('msgMenuSheet').classList.add('open');
   return false;
 }
 function closeMsgMenu(){document.getElementById('msgMenuSheet').classList.remove('open');}
 function menuReact(emoji){toggleReaction(menuTargetId,emoji);closeMsgMenu();}
+// "+" in the reaction row — lets the person react with literally any emoji their own
+// keyboard offers, instead of only the 6 quick picks.
+function toggleCustomReact(kind){
+  const row=document.getElementById('customReactRow-'+kind);
+  const show=row.style.display==='none'||!row.style.display;
+  row.style.display=show?'flex':'none';
+  if(show){const inp=document.getElementById('customReactInput-'+kind);inp.value='';setTimeout(()=>inp.focus(),50);}
+}
+function submitCustomReact(kind){
+  const inp=document.getElementById('customReactInput-'+kind);
+  const val=inp.value.trim();
+  if(!val)return;
+  if(kind==='msg')menuReact(val);else dmMenuReact(val);
+}
+function menuCopy(){
+  const m=msgCache[menuTargetId];if(!m)return;
+  const text=m.kind==='gif'?'':(m.body||'');
+  if(!text){toast("There's no text to copy on this message");closeMsgMenu();return;}
+  navigator.clipboard.writeText(text).then(()=>toast('Copied 📋')).catch(()=>toast('Could not copy'));
+  closeMsgMenu();
+}
+// "Delete for me" is local-only — it hides the message on this device without touching
+// anyone else's copy, the same idea as the "clear chat history for me" option.
+function menuDeleteForMe(){
+  if(!menuTargetId||!activeRound)return;
+  hideMessageForMe(activeRound.id,menuTargetId);
+  const el=document.getElementById('mw-'+menuTargetId);
+  if(el)el.remove();
+  closeMsgMenu();
+  toast('Deleted for you');
+}
+function getHiddenForMe(roundId){try{return JSON.parse(localStorage.getItem('su_hidden_msgs_'+roundId)||'[]');}catch(e){return [];}}
+function hideMessageForMe(roundId,mid){
+  try{
+    const list=getHiddenForMe(roundId);
+    if(!list.includes(mid)){list.push(mid);localStorage.setItem('su_hidden_msgs_'+roundId,JSON.stringify(list));}
+  }catch(e){}
+}
+async function menuUnsend(){
+  if(!menuTargetId)return;
+  if(!confirm('Unsend this message? It will be removed for everyone in the chat.'))return;
+  try{
+    await api('/api/messages/'+menuTargetId+'/delete','POST',{});
+    closeMsgMenu();
+  }catch(e){toast(e.message);}
+}
+function menuReportMsg(){
+  const m=msgCache[menuTargetId];if(!m)return;
+  reportContext='message:'+menuTargetId;reportedUserId=m.user_id;
+  closeMsgMenu();openReport();
+}
 let replyingTo=null;
 function menuReply(){
   const m=msgCache[menuTargetId];if(!m)return;
@@ -4914,11 +5168,13 @@ function connectWS(){
     if(msg.type==='ready'&&activeRound){ws.send(JSON.stringify({type:'join',roundId:activeRound.id}));}
     if(msg.type==='message'&&activeRound&&msg.roundId===activeRound.id){appendMsg(msg.message);if(me&&msg.message&&msg.message.user_id!==me.id&&!isRoundMuted(activeRound.id))playMessageSound();}
     if(msg.type==='reaction'&&activeRound&&msg.roundId===activeRound.id){updateReactions(msg.messageId,msg.reactions);}
+    if(msg.type==='messageDeleted'&&activeRound&&msg.roundId===activeRound.id){markMessageUnsent(msg.messageId);}
     if(msg.type==='dm'&&activeConv&&msg.convId===activeConv){appendDm(msg.message);if(me&&msg.message&&msg.message.user_id!==me.id)playMessageSound();}
     // A message arriving for a chat you don't currently have open — still chime, and refresh badges
     if(msg.type==='message'&&(!activeRound||msg.roundId!==activeRound.id)&&me&&msg.message&&msg.message.user_id!==me.id&&!isRoundMuted(msg.roundId)){playMessageSound();}
     if(msg.type==='dm'&&(!activeConv||msg.convId!==activeConv)&&me&&msg.message&&msg.message.user_id!==me.id){playMessageSound();}
     if(msg.type==='dmReaction'&&activeConv&&msg.convId===activeConv){updateDmReactions(msg.messageId,msg.reactions);}
+    if(msg.type==='dmMessageDeleted'&&activeConv&&msg.convId===activeConv){markDmMessageUnsent(msg.messageId);}
     if(msg.type==='dmRead'&&activeConv&&msg.convId===activeConv&&me&&msg.readerId!==me.id){
       dmOtherLastRead=msg.readAt||Date.now();
       if(typeof msg.receiptsOn!=='undefined')dmReceiptsOn=dmReceiptsOn&&msg.receiptsOn?true:(dmReceiptsOn||msg.receiptsOn);
