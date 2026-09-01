@@ -201,10 +201,12 @@ await db.exec(`
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS ephemeral INTEGER DEFAULT 0;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_by TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted INTEGER DEFAULT 0;
 
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
+  ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS deleted INTEGER DEFAULT 0;
 
   ALTER TABLE memberships ADD COLUMN IF NOT EXISTS last_read BIGINT DEFAULT 0;
 
@@ -1291,6 +1293,47 @@ app.post('/api/notifications/:id/delete', requireAuth, async (req, res) => {
 
 // ---- Direct messages / friend group chats ----
 // List my conversations with last message + unread flag
+// Searches message text across every Round chat and DM/group conversation the person
+// belongs to. Used by the search boxes on the Chats page ("look for a conversation,
+// a text, anything").
+app.get('/api/search/messages', requireAuth, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q || q.length < 2) return res.json({ rounds: [], conversations: [] });
+  const like = '%' + q.toLowerCase() + '%';
+
+  const roundHits = await db.prepare(`
+    SELECT m.id AS message_id, m.round_id, m.body, m.created_at, u.name AS sender, r.title AS round_title, r.emoji AS round_emoji
+    FROM messages m
+    JOIN memberships mm ON mm.round_id = m.round_id AND mm.user_id = ?
+    JOIN rounds r ON r.id = m.round_id
+    JOIN users u ON u.id = m.user_id
+    WHERE m.deleted = 0 AND LOWER(m.body) LIKE ?
+    ORDER BY m.created_at DESC LIMIT 30
+  `).all(req.user.id, like);
+
+  const dmHits = await db.prepare(`
+    SELECT m.id AS message_id, m.conv_id, m.body, m.created_at, u.name AS sender, c.title AS conv_title, c.is_group
+    FROM dm_messages m
+    JOIN conversation_members cm ON cm.conv_id = m.conv_id AND cm.user_id = ?
+    JOIN conversations c ON c.id = m.conv_id
+    JOIN users u ON u.id = m.user_id
+    WHERE m.deleted = 0 AND LOWER(m.body) LIKE ?
+    ORDER BY m.created_at DESC LIMIT 30
+  `).all(req.user.id, like);
+  // 1:1 conversations don't store a title — fill in the other person's name
+  for (const hit of dmHits) {
+    if (!hit.is_group && !hit.conv_title) {
+      const other = await db.prepare(`
+        SELECT u.name FROM conversation_members cm JOIN users u ON u.id = cm.user_id
+        WHERE cm.conv_id = ? AND cm.user_id != ? LIMIT 1
+      `).get(hit.conv_id, req.user.id);
+      hit.conv_title = other ? other.name : 'Conversation';
+    }
+  }
+
+  res.json({ rounds: roundHits, conversations: dmHits });
+});
+
 app.get('/api/conversations', requireAuth, async (req, res) => {
   const convs = await db.prepare(`
     SELECT c.*, cm.last_read FROM conversations c
@@ -1368,7 +1411,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
   const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
   const rows = await db.prepare(`
-    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview
+    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview,m.deleted
     FROM dm_messages m JOIN users u ON u.id=m.user_id
     WHERE m.conv_id=? ORDER BY m.created_at ASC LIMIT 300
   `).all(req.params.id);
@@ -1376,7 +1419,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     id: m.id, body: m.body, kind: m.kind || 'text', media_url: m.media_url || null,
     created_at: m.created_at, user_id: m.user_id, sender: m.sender, avatar: m.avatar,
     reactions: m.reactions ? JSON.parse(m.reactions) : {},
-    reply_to: m.reply_to || null, reply_preview: m.reply_preview || null
+    reply_to: m.reply_to || null, reply_preview: m.reply_preview || null, deleted: !!m.deleted
   }));
   await db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
   const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
@@ -1521,6 +1564,17 @@ app.post('/api/dm/:id/react', requireAuth, async (req, res) => {
   const payload = JSON.stringify({ type: 'dmReaction', convId: m.conv_id, messageId: req.params.id, reactions });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
   res.json({ ok: true, reactions });
+});
+
+// Unsend a DM / group-chat message for everyone — sender only.
+app.post('/api/dm/:id/delete', requireAuth, async (req, res) => {
+  const m = await db.prepare('SELECT id, conv_id, user_id FROM dm_messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message already gone.' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'You can only unsend your own messages.' });
+  await db.prepare("UPDATE dm_messages SET deleted = 1, body = '', media_url = NULL, reactions = NULL WHERE id = ?").run(req.params.id);
+  const payload = JSON.stringify({ type: 'dmMessageDeleted', convId: m.conv_id, messageId: req.params.id });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
+  res.json({ ok: true });
 });
 
 // ---- Admin (owner-only) ----
@@ -2098,7 +2152,7 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
   if (!member) return res.status(403).json({ error: 'Join this Round to see its chat.' });
   const rows = await db.prepare(`
     SELECT m.id, m.body, m.created_at, m.user_id, u.name AS sender,
-           m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by
+           m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by, m.deleted
     FROM messages m JOIN users u ON u.id = m.user_id
     WHERE m.round_id = ? ORDER BY m.created_at ASC LIMIT 200
   `).all(req.params.id);
@@ -2119,7 +2173,7 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
       id: m.id, body: m.body, created_at: m.created_at, user_id: m.user_id, sender: m.sender,
       reactions: m.reactions ? JSON.parse(m.reactions) : {},
       reply_to: m.reply_to || null, reply_preview: m.reply_preview || null,
-      kind: m.kind || 'text', media_url: m.media_url || null, ephemeral: !!m.ephemeral
+      kind: m.kind || 'text', media_url: m.media_url || null, ephemeral: !!m.ephemeral, deleted: !!m.deleted
     });
   }
   res.json({ messages: out });
@@ -2143,6 +2197,20 @@ app.post('/api/messages/:id/react', requireAuth, async (req, res) => {
   const payload = JSON.stringify({ type: 'reaction', roundId: m.round_id, messageId: req.params.id, reactions });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
   res.json({ ok: true, reactions });
+});
+
+// Unsend a Round chat message — sender or the Round's host can remove it for everyone.
+// We soft-delete (keep the row, blank the body) so reply-previews pointing at it don't break.
+app.post('/api/messages/:id/delete', requireAuth, async (req, res) => {
+  const m = await db.prepare('SELECT id, round_id, user_id FROM messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message already gone.' });
+  const round = await db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(m.round_id);
+  const isHost = round && round.host_id === req.user.id;
+  if (m.user_id !== req.user.id && !isHost) return res.status(403).json({ error: 'You can only unsend your own messages.' });
+  await db.prepare("UPDATE messages SET deleted = 1, body = '', media_url = NULL, reactions = NULL WHERE id = ?").run(req.params.id);
+  const payload = JSON.stringify({ type: 'messageDeleted', roundId: m.round_id, messageId: req.params.id });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
+  res.json({ ok: true });
 });
 
 // --- HTTP + WebSocket server share one port ---
