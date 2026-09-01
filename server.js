@@ -257,6 +257,18 @@ await db.exec(`
     approved    INTEGER DEFAULT 1,
     created_at  BIGINT NOT NULL
   );
+  -- Manager-configured accounts for paid/partner event providers (e.g. Ticketmaster).
+  -- Credentials are entered in the Manager panel instead of env vars, so an owner can
+  -- add/remove providers without a server redeploy.
+  CREATE TABLE IF NOT EXISTS event_sources (
+    id          TEXT PRIMARY KEY,
+    provider    TEXT NOT NULL,
+    label       TEXT,
+    api_key     TEXT,
+    enabled     INTEGER DEFAULT 1,
+    created_by  TEXT,
+    created_at  BIGINT NOT NULL
+  );
 `);
 
   // Seed the admin/owner account
@@ -1850,42 +1862,57 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// PROVIDER REGISTRY — add paid sources here later. Each returns an array of normalized events.
-// Example future shape:
-//   async function fetchTicketmaster(lat,lng,radiusMi){ ... map their API to our event shape ... }
-// Then push its results into `external` below. Requires TICKETMASTER_API_KEY env var.
+// PROVIDER REGISTRY — one entry per event-account type the Manager panel can offer.
+// Each function takes (apiKey, lat, lng, radiusMi, label) and returns normalized events.
+// To support a new paid source later (Eventbrite, SeatGeek, etc.), add a key here and
+// list it in the Manager panel's provider dropdown — nothing else needs to change.
+const EVENT_PROVIDERS = {
+  ticketmaster: async (apiKey, lat, lng, radiusMi, label) => {
+    if (!apiKey || typeof lat !== 'number' || typeof lng !== 'number') return [];
+    const km = Math.round(radiusMi * 1.60934);
+    const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&latlong=${lat},${lng}&radius=${km}&unit=km&size=50&sort=date,asc`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data = await r.json();
+    const evs = (data._embedded && data._embedded.events) || [];
+    return evs.map(e => {
+      const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
+      const loc = v.location || {};
+      return {
+        id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
+        title: e.name, description: (e.info || e.pleaseNote || ''),
+        category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
+        emoji: '🎟️',
+        photo: (e.images && e.images[0] && e.images[0].url) || null,
+        link: e.url || null,
+        place: v.name || (v.city && v.city.name) || '',
+        lat: loc.latitude ? parseFloat(loc.latitude) : null,
+        lng: loc.longitude ? parseFloat(loc.longitude) : null,
+        starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
+        ends_at: null, source_label: label || 'Ticketmaster'
+      };
+    });
+  }
+  // Add more providers here later the same way, e.g.:
+  //   eventbrite: async (apiKey, lat, lng, radiusMi, label) => { ...map their API... }
+};
+
+// Pulls events from every enabled account the Manager panel has configured, plus a
+// Ticketmaster key set via env var as a fallback for people who deploy that way instead.
 async function fetchExternalEvents(lat, lng, radiusMi) {
   const external = [];
-  // --- Ticketmaster (scaffold; activates when TICKETMASTER_API_KEY is set) ---
-  if (process.env.TICKETMASTER_API_KEY && typeof lat === 'number' && typeof lng === 'number') {
-    try {
-      const km = Math.round(radiusMi * 1.60934);
-      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${process.env.TICKETMASTER_API_KEY}&latlong=${lat},${lng}&radius=${km}&unit=km&size=50&sort=date,asc`;
-      const r = await fetch(url);
-      if (r.ok) {
-        const data = await r.json();
-        const evs = (data._embedded && data._embedded.events) || [];
-        for (const e of evs) {
-          const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
-          const loc = v.location || {};
-          external.push({
-            id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
-            title: e.name, description: (e.info || e.pleaseNote || ''),
-            category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
-            emoji: '🎟️',
-            photo: (e.images && e.images[0] && e.images[0].url) || null,
-            link: e.url || null,
-            place: v.name || (v.city && v.city.name) || '',
-            lat: loc.latitude ? parseFloat(loc.latitude) : null,
-            lng: loc.longitude ? parseFloat(loc.longitude) : null,
-            starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
-            ends_at: null, source_label: 'Ticketmaster'
-          });
-        }
-      }
-    } catch (err) { console.log('[events] ticketmaster error', err.message); }
+  if (typeof lat !== 'number' || typeof lng !== 'number') return external;
+  const sources = await db.prepare('SELECT * FROM event_sources WHERE enabled = 1').all();
+  for (const s of sources) {
+    const fn = EVENT_PROVIDERS[s.provider];
+    if (!fn) continue;
+    try { external.push(...(await fn(s.api_key, lat, lng, radiusMi, s.label))); }
+    catch (err) { console.log('[events]', s.provider, 'error', err.message); }
   }
-  // --- Add more providers here (Eventbrite, SeatGeek, city open-data) the same way ---
+  if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
+    try { external.push(...(await EVENT_PROVIDERS.ticketmaster(process.env.TICKETMASTER_API_KEY, lat, lng, radiusMi, 'Ticketmaster'))); }
+    catch (err) {}
+  }
   return external;
 }
 
@@ -1950,6 +1977,49 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
   if (!ev) return res.status(404).json({ error: 'Event not found.' });
   if (ev.posted_by !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'Not allowed.' });
   await db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Manager panel: event-account sources (admin only) ----
+// Lists configured accounts. API keys are masked (only the last 4 chars shown) so the
+// key isn't echoed back in full once it's saved.
+app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
+  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at FROM event_sources ORDER BY created_at DESC').all();
+  const masked = rows.map(r => ({
+    ...r,
+    api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : ''
+  }));
+  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS) });
+});
+
+// Add a new event-account (e.g. a Ticketmaster API key) — the events filter will start
+// pulling from it automatically the next time someone searches Nearby.
+app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
+  const { provider, label, apiKey } = req.body || {};
+  if (!provider || !EVENT_PROVIDERS[provider]) return res.status(400).json({ error: 'Unknown provider.' });
+  if (!apiKey || !String(apiKey).trim()) return res.status(400).json({ error: 'An API key is required.' });
+  const row = {
+    id: id(), provider: String(provider), label: String(label || '').slice(0, 80) || provider,
+    api_key: String(apiKey).trim(), enabled: 1, created_by: req.user.id, created_at: now()
+  };
+  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,enabled,created_by,created_at)
+    VALUES (@id,@provider,@label,@api_key,@enabled,@created_by,@created_at)`).run(row);
+  res.json({ ok: true, id: row.id });
+});
+
+// Toggle an account on/off without deleting its saved key
+app.post('/api/admin/event-sources/:id/toggle', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT id, enabled FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Not found.' });
+  await db.prepare('UPDATE event_sources SET enabled = ? WHERE id = ?').run(src.enabled ? 0 : 1, req.params.id);
+  res.json({ ok: true, enabled: !src.enabled });
+});
+
+// Remove an account entirely
+app.post('/api/admin/event-sources/:id/delete', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT id FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Not found.' });
+  await db.prepare('DELETE FROM event_sources WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
