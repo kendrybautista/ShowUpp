@@ -140,6 +140,9 @@
 .phone[data-theme="mint"] .navbtn.fab .fabc,.phone[data-theme="mint"] .avatar,.phone[data-theme="mint"] .prof-head .pa,.phone[data-theme="mint"] .send-btn,.phone[data-theme="mint"] .btn-mango{background:linear-gradient(135deg,#0D9488,#2DD4BF)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{background:#e9e4da;font-family:'Instrument Sans',system-ui,sans-serif;color:var(--ink)}
+/* Smoother, more refined icon rendering app-wide: rounded caps/joins instead of sharp
+   mitered corners read as more premium and less "cartoonish" on every line icon at once. */
+svg :is(path,line,polyline,rect,circle){stroke-linecap:round;stroke-linejoin:round}
 body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .phone{width:390px;max-width:100vw;height:844px;max-height:calc(100vh - 24px);background:var(--bone);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(27,27,58,.28),0 0 0 12px #0f0f1e,0 0 0 13px #2a2a3c}
 .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:30px;background:#0f0f1e;border-radius:0 0 20px 20px;z-index:60}
@@ -225,13 +228,16 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .photo-cover{position:relative;width:100%;height:300px}
 .photo-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .photo-tag{position:absolute;top:14px;left:14px;background:rgba(255,255,255,.95);color:var(--night);font-size:13px;font-weight:700;padding:6px 14px;border-radius:14px;z-index:2}
-.card-bookmark{position:absolute;top:12px;right:12px;z-index:3;width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.95);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#6C5CE7;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.card-bookmark{position:absolute;top:12px;right:12px;z-index:3;width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.55);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#6C5CE7;box-shadow:0 4px 14px rgba(40,40,90,.14)}
 .card-bookmark.on{color:#6C5CE7}
-.qa-card{background:var(--bone);border:1px solid var(--line);border-radius:14px;padding:12px 6px;text-align:center;cursor:pointer;transition:.15s}
+.qa-card{background:rgba(255,255,255,.5);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1px solid rgba(255,255,255,.55);border-radius:14px;padding:12px 6px;text-align:center;cursor:pointer;transition:.15s;box-shadow:0 3px 12px rgba(40,40,90,.08)}
 .qa-card:active{transform:scale(.95)}
-.qa-card.qa-active{border-color:var(--coral);background:var(--card);box-shadow:0 0 0 2px var(--coral) inset}
+.qa-card.qa-active{border-color:var(--coral);background:rgba(255,255,255,.75);box-shadow:0 0 0 2px var(--coral) inset}
 .qa-card.qa-active .qa-title{color:var(--coral)}
-.phone[data-theme="dark"] .qa-card.qa-active{background:#1B1C33}
+.phone[data-theme="dark"] .qa-card{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.1);box-shadow:0 3px 12px rgba(0,0,0,.3)}
+.phone[data-theme="dark"] .qa-card.qa-active{background:rgba(255,255,255,.1)}
+.phone[data-theme="dark"] .card-bookmark{background:rgba(20,20,36,.55);border-color:rgba(255,255,255,.12);color:#B7A9FF}
+.phone[data-theme="dark"] .circle-card .cc,.phone[data-theme="dark"] .chat-item .cav{background:linear-gradient(160deg,#23233F,#1A1A30);border-color:rgba(255,255,255,.08);box-shadow:0 3px 12px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.05)}
 .gal-cell{transition:transform .15s ease,opacity .15s ease}
 .gal-cell.gal-dragging{opacity:.35;transform:scale(.94);z-index:5}
 .gal-handle{position:absolute;top:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;border-radius:8px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:grab;touch-action:none;user-select:none;z-index:2}
@@ -347,12 +353,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .err.show{display:block}
 .detail-hero{height:132px;position:relative;display:flex;align-items:flex-end;padding:16px 20px;overflow:hidden;background:linear-gradient(180deg,#B7D6FE 0%,#CBCBF6 55%,var(--detail-bg,#EDEBF7) 100%)}
 .detail-hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:48%;background:linear-gradient(to bottom,rgba(183,214,254,0),var(--detail-bg,#EDEBF7));z-index:1;pointer-events:none}
-.back{position:absolute;top:16px;left:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;border:none;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.back{position:absolute;top:16px;left:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.55);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;border:1px solid rgba(255,255,255,.5);box-shadow:0 4px 14px rgba(40,40,90,.14)}
+.phone[data-theme="dark"] .back{background:rgba(20,20,36,.55);border-color:rgba(255,255,255,.12)}
 .back svg{width:20px;height:20px;color:var(--night)}
 .detail-hero .hero-waves{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
 .hero-spark{position:absolute;z-index:2;pointer-events:none;color:#fff;opacity:.85;filter:drop-shadow(0 1px 3px rgba(65,90,220,.25))}
 .hero-top-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;position:relative;z-index:2}
-.hero-emoji-wrap{position:relative;flex:none;width:64px;height:64px;display:flex;align-items:center;justify-content:center}
+.hero-emoji-wrap{position:relative;flex:none;width:64px;height:64px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.28);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border-radius:50%;border:1px solid rgba(255,255,255,.4);box-shadow:0 6px 18px rgba(40,40,90,.12)}
 .hero-emoji-ring{position:absolute;inset:0;border:1.5px solid rgba(255,255,255,.55);border-radius:50%;animation:heroRingPulse 3.5s ease-in-out infinite}
 .hero-emoji-ring.r2{inset:8px;animation-delay:.4s}
 @keyframes heroRingPulse{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.08);opacity:.9}}
@@ -418,13 +425,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .swipe-wrap .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px}
 .swipe-wrap .circle-card{margin:0;transition:transform .2s;position:relative;z-index:2}
 .swipe-wrap.swiped .circle-card{transform:translateX(-96px)}
-.circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:#EEF0FF}
+.circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
 .circle-card .ci{flex:1}
 .circle-card .ci b{font-family:'Fraunces',serif;font-size:16px;color:var(--night);display:block}
 .circle-card .ci span{font-size:12.5px;color:var(--muted)}
 .chat-item{display:flex;gap:13px;align-items:center;padding:14px 22px;cursor:pointer;border-bottom:1px solid var(--line)}
 .chat-item:active{background:#fff}
-.chat-item .cav{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;flex:none;background:#EEF0FF}
+.chat-item .cav{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
 .chat-item .ct{flex:1;min-width:0}
 .chat-item .ct .cn{display:flex;justify-content:space-between;align-items:baseline}
 .chat-item .ct b{font-family:'Fraunces',serif;font-size:15.5px;color:var(--night)}
@@ -703,6 +710,16 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
       </div>
       <input type="range" id="distSlider" min="1" max="100" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
+    </div>
+    <div style="display:flex;gap:6px;padding:8px 22px 4px;flex-wrap:wrap">
+      <div class="catpill" id="hf-both" onclick="switchHomeSection('both')">Both</div>
+      <div class="catpill on" id="hf-rounds" onclick="switchHomeSection('rounds')">Rounds</div>
+      <div class="catpill" id="hf-events" onclick="switchHomeSection('events')">Events</div>
+      <div class="catpill" id="hf-clear" onclick="switchHomeSection('clear')">Clear</div>
+    </div>
+    <div id="onlyPartnerWrap" style="display:none;align-items:center;justify-content:space-between;padding:2px 22px 12px">
+      <span style="font-size:12.5px;font-weight:600;color:var(--night)">🎟️ Only partner events (Ticketmaster, etc.)</span>
+      <label class="switch"><input type="checkbox" id="onlyPartnerToggle" onchange="toggleOnlyPartnerEvents(this.checked)"><span class="slider"></span></label>
     </div>
     <div class="sec"><h2 id="homeSecTitle">Rounds near you</h2>
       <div style="display:flex;gap:6px;align-items:center">
@@ -2507,7 +2524,7 @@ function updateDistLabel(){
   const el=document.getElementById('distVal');if(el)el.textContent=val;
   const unitEl=document.getElementById('distUnitLabel');if(unitEl)unitEl.textContent=distUnit;
 }
-function onDistChange(v){maxDistKm=+v;updateDistLabel();renderRoundsList();}
+function onDistChange(v){maxDistKm=(distUnit==='mi')?(+v*1.60934):+v;updateDistLabel();renderRoundsList();}
 async function toggleRoundReact(rid,type,btn){
   try{
     const r=await api('/api/rounds/'+rid+'/react','POST',{type});
@@ -2661,21 +2678,31 @@ function qaToggle(id,on){
 }
 function switchHomeSection(which){
   homeSection=which;
-  const secR=document.getElementById('sec-rounds');if(secR)secR.classList.toggle('on',which==='rounds');
-  const secE=document.getElementById('sec-events');if(secE)secE.classList.toggle('on',which==='events');
-  const savedTab=document.getElementById('sec-saved');if(savedTab)savedTab.classList.toggle('on',which==='saved');
-  const showRounds=(which==='rounds'||which==='saved'); // both use the rounds list UI
-  const showEvents=(which==='events');
+  const clear=(which==='clear');
+  const showRounds=(which==='rounds'||which==='saved'||which==='both');
+  const showEvents=(which==='events'||which==='both');
+  ['both','rounds','events','clear'].forEach(f=>{const el=document.getElementById('hf-'+f);if(el)el.classList.toggle('on',f===which);});
   // section title + intro
-  document.getElementById('homeSecTitle').parentElement.style.display=showRounds?'flex':'none';
+  document.getElementById('homeSecTitle').parentElement.style.display=(showRounds&&!clear)?'flex':'none';
   document.getElementById('homeSecTitle').textContent=which==='saved'?'Saved Rounds':'Rounds near you';
   document.getElementById('roundDef').style.display=(which==='rounds')?'block':'none';
-  document.getElementById('roundsList').style.display=showRounds&&currentView==='list'?'flex':'none';
-  document.getElementById('mapView').style.display=showRounds&&currentView==='map'?'block':'none';
-  document.getElementById('eventsPane').style.display=showEvents?'block':'none';
-  if(which==='events')loadEvents();
-  else if(which==='saved')loadSavedRounds();
-  else{allRoundsMode();}
+  document.getElementById('roundsList').style.display=(showRounds&&!clear)&&currentView==='list'?'flex':'none';
+  document.getElementById('mapView').style.display=(showRounds&&!clear)&&currentView==='map'?'block':'none';
+  document.getElementById('eventsPane').style.display=(showEvents&&!clear)?'block':'none';
+  document.getElementById('onlyPartnerWrap').style.display=(showEvents&&!clear)?'flex':'none';
+  const opToggle=document.getElementById('onlyPartnerToggle');if(opToggle)opToggle.checked=onlyPartnerEvents;
+  if(clear)return; // "Clear" just hides everything — no fetches, a quick reset
+  if(showEvents)loadEvents();
+  if(which==='saved')loadSavedRounds();
+  else if(showRounds)allRoundsMode();
+}
+// Restricts the Events list to entries sourced from a Manager-configured event
+// account (Ticketmaster, etc.) rather than Rounds members' own community posts.
+let onlyPartnerEvents=false;
+function toggleOnlyPartnerEvents(checked){
+  onlyPartnerEvents=checked;
+  try{localStorage.setItem('su_only_partner_events',checked?'1':'0');}catch(e){}
+  renderEvents();
 }
 // restore the full rounds list (used when returning to Rounds tab)
 function allRoundsMode(){
@@ -2734,9 +2761,10 @@ function setEventsView(v){
 function renderEvents(){
   let list=allEvents.slice();
   if(eventCat!=='all')list=list.filter(e=>(e.category||'').toLowerCase()===eventCat.toLowerCase());
+  if(onlyPartnerEvents)list=list.filter(e=>e.source!=='community');
   if(eventsView==='map'){renderEventsMap(list);return;}
   const box=document.getElementById('eventsList');
-  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px 10px;font-size:14px">'+t('No public events nearby yet.')+'<br><span style="font-size:12.5px">'+t('Be the first — tap + Post to add one!')+'</span></p>';return;}
+  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px 10px;font-size:14px">'+(onlyPartnerEvents?t('No partner events nearby right now.'):t('No public events nearby yet.'))+'<br><span style="font-size:12.5px">'+(onlyPartnerEvents?t('Try turning off the partner-only filter.'):t('Be the first — tap + Post to add one!'))+'</span></p>';return;}
   box.innerHTML=list.map(e=>{
     const when=e.starts_at?new Date(e.starts_at).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
     const dist=(typeof e.distance==='number')?(' · '+e.distance.toFixed(1)+' mi'):'';
@@ -2851,7 +2879,7 @@ function renderRoundsList(customList){
   // show distance slider whenever Near me is active (not for saved/custom lists)
   document.getElementById('distanceBar').style.display=(!customList&&currentFilter==='📍 Near me')?'block':'none';
   if(currentView==='map'){renderMap(list);return;}
-  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds within '+maxDistKm+' km.<br>Try widening the range, or host one!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
+  if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds within '+(distUnit==='mi'?Math.round(maxDistKm*0.621371)+' mi':maxDistKm+' km')+'.<br>Try widening the range, or host one!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
   box.innerHTML=list.map(r=>{
     const emoji=r.emoji||'✨';
     const d=distLabel(r);
@@ -2993,7 +3021,7 @@ function openDetail(rid){
   if(loc){
     if(activeRound.place){
       if(activeRound.joined||activeRound.is_host){
-        loc.innerHTML='<div style="font-weight:700;color:var(--night)">📍 '+t('Meeting location')+'</div><div style="color:var(--muted);font-size:13.5px;margin-top:2px">'+esc(activeRound.place)+'</div>';
+        loc.innerHTML='<div style="font-weight:700;color:var(--night)">📍 '+t('Meeting location')+'</div><div class="loc-link" onclick="openInMaps(activeRound.place)" style="color:var(--coral);font-size:13.5px;margin-top:2px;font-weight:600;text-decoration:underline;text-underline-offset:2px;cursor:pointer">'+esc(activeRound.place)+' ↗</div>';
       }else{
         loc.innerHTML='<div style="font-weight:700;color:var(--night)">📍 '+t('Meeting location')+'</div><div style="color:var(--muted);font-size:13px;margin-top:2px">🔒 '+t('Join to see the exact meeting spot.')+'</div>';
       }
@@ -3036,6 +3064,17 @@ function updateGoingCount(counts){
   el.textContent=going>0?('· '+going+' '+t('going')):'';
 }
 // Build an .ics calendar file the user can open in any calendar app
+// Opens an address in the person's own maps app — Apple Maps on iOS (the platform
+// default there), Google Maps everywhere else (which Android's chooser will happily
+// hand off to Waze or another installed maps app if the person prefers one).
+function openInMaps(address){
+  if(!address)return;
+  const q=encodeURIComponent(address);
+  const ua=navigator.userAgent||'';
+  const isIOS=/iPad|iPhone|iPod/.test(ua)&&!window.MSStream;
+  const url=isIOS?('https://maps.apple.com/?q='+q):('https://www.google.com/maps/search/?api=1&query='+q);
+  window.open(url,'_blank','noopener');
+}
 function downloadIcs(){
   if(!activeRound||!activeRound.event_at)return;
   const start=new Date(activeRound.event_at);
@@ -3207,7 +3246,7 @@ function switchCircTab(which){
   fp.style.display=which==='friends'?'block':'none';
   dp.style.display=which==='discover'?'block':'none';
   if(which==='friends'){switchFriendSub('friends');loadFriends();}
-  if(which==='discover')loadDiscoverPeople();
+  if(which==='discover'){updateDistSliderMax();loadDiscoverPeople();}
 }
 // ---- Find people with similar interests ----
 let discoverView='list',dpRadiusKm=40,discoverPeople=[],dpMap=null,dpMarkers=[],discoverMode='distance';
@@ -5598,6 +5637,12 @@ async function loadAdminEventSources(){
       const providerName=EVENT_PROVIDER_LABELS[s.provider]||s.provider;
       const statusColor=s.enabled?'#2E9E5B':'var(--muted)';
       const statusText=s.enabled?'Active — pulling events':'Paused';
+      let cacheLine='No cached results yet';
+      if(s.cached_areas>0){
+        const mins=Math.max(0,Math.round((Date.now()-s.cache_updated_at)/60000));
+        const when=mins<1?'just now':mins<60?mins+'m ago':Math.round(mins/60)+'h ago';
+        cacheLine='💾 Cached for '+s.cached_areas+' area'+(s.cached_areas===1?'':'s')+' · last fetched '+when;
+      }
       return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
         +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+providerName+' · '+esc(s.api_key)+'</div></div>'
@@ -5606,7 +5651,9 @@ async function loadAdminEventSources(){
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">'
         +'<span style="font-size:11.5px;font-weight:700;color:'+statusColor+'">● '+statusText+'</span>'
         +'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span>'
-        +'</div></div>';
+        +'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+cacheLine+' · results refresh every '+(data.cacheTtlMinutes||60)+' min</div>'
+        +'</div>';
     }).join('');
   }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+e.message+'</p>';}
 }
@@ -6230,13 +6277,32 @@ function loadTheme(){
   if(typeof initAutoDark==='function')initAutoDark();
   if(typeof soundsEnabledInit==='function')soundsEnabledInit();
 }
+// Both distance sliders cap the true, real-world reach at 100 miles (≈160 km),
+// however that's currently displayed — so switching units doesn't secretly shrink
+// or grow how far the search actually looks.
+const MAX_DIST_MI=100, MAX_DIST_KM=161; // 161 km ≈ 100.04 mi, rounds cleanly to "100"
+function updateDistSliderMax(){
+  const mi=distUnit==='mi';
+  const homeSlider=document.getElementById('distSlider');
+  if(homeSlider){
+    homeSlider.max=mi?MAX_DIST_MI:MAX_DIST_KM;
+    const curMi=maxDistKm*0.621371;
+    homeSlider.value=mi?Math.round(curMi):maxDistKm;
+  }
+  const dpSlider=document.getElementById('dpDist');
+  if(dpSlider){
+    dpSlider.max=mi?MAX_DIST_MI:MAX_DIST_KM;
+    const curMi=dpRadiusKm*0.621371;
+    dpSlider.value=mi?Math.round(curMi):Math.round(dpRadiusKm);
+  }
+}
 function setUnit(u){
   distUnit=(u==='mi')?'mi':'km';
   try{localStorage.setItem('su_unit',distUnit);}catch(e){}
   const km=document.getElementById('unit-km'),mi=document.getElementById('unit-mi');
   if(km)km.classList.toggle('on',distUnit==='km');
   if(mi)mi.classList.toggle('on',distUnit==='mi');
-  updateDistLabel();renderRoundsList();
+  updateDistSliderMax();updateDistLabel();renderRoundsList();
 }
 function loadUnit(){
   let u='km';try{u=localStorage.getItem('su_unit')||'km';}catch(e){}
@@ -6251,6 +6317,8 @@ async function boot(){
   renderCats('');
   loadTheme();
   loadUnit();
+  updateDistSliderMax();
+  try{onlyPartnerEvents=localStorage.getItem('su_only_partner_events')==='1';}catch(e){}
   loadLang();
   applyDirection();
   renderLangPickers();
