@@ -711,7 +711,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <button class="btn btn-mango" onclick="closeQaEditor()" style="margin-top:14px">Done</button>
       </div>
     </div>
-    <div id="distanceBar" style="display:none;padding:6px 22px 4px">
+    <div id="distanceBar" style="display:block;padding:6px 22px 4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
         <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
         <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
@@ -2468,6 +2468,17 @@ function haversine(a,b){ // km between two {lat,lng}
 let distUnit='km'; // 'km' or 'mi'
 function kmToUnit(km){return distUnit==='mi'?km*0.621371:km;}
 function unitLabel(){return distUnit;}
+// Server-computed distances (events, discover-people) always come back in miles —
+// this converts to whichever unit the user has picked and formats a short label,
+// so it stays in sync with the unit set in the profile panel instead of hardcoding "mi".
+function milesLabel(mi){
+  if(typeof mi!=='number')return '';
+  if(distUnit==='mi'){
+    return mi<0.19?Math.round(mi*5280)+' ft':mi.toFixed(mi<10?1:0)+' mi';
+  }
+  const km=mi*1.60934;
+  return km<1?Math.round(km*1000)+' m':km.toFixed(km<10?1:0)+' km';
+}
 function distLabel(r){
   if(!userLoc||r.lat==null||r.lng==null)return '';
   const km=haversine(userLoc,{lat:r.lat,lng:r.lng});
@@ -2819,7 +2830,7 @@ function renderEvents(){
   if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px 10px;font-size:14px">'+(onlyPartnerEvents?t('No partner events nearby right now.'):t('No public events nearby yet.'))+'<br><span style="font-size:12.5px">'+(onlyPartnerEvents?t('Try turning off the partner-only filter.'):t('Be the first — tap + Post to add one!'))+'</span></p>';return;}
   box.innerHTML=list.map(e=>{
     const when=e.starts_at?new Date(e.starts_at).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-    const dist=(typeof e.distance==='number')?(' · '+e.distance.toFixed(1)+' mi'):'';
+    const dist=(typeof e.distance==='number')?(' · '+milesLabel(e.distance)):'';
     const srcBadge=e.source!=='community'?'<span style="background:#EEF;color:#5B5BEF;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px">'+esc(e.source_label||e.source)+'</span>':'';
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
     return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px">'+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
@@ -2933,8 +2944,9 @@ async function submitEvent(){
 function renderRoundsList(customList){
   const list=customList||filteredRounds();
   const box=document.getElementById('roundsList');
-  // show distance slider whenever Near me is active (not for saved/custom lists)
-  document.getElementById('distanceBar').style.display=(!customList&&currentFilter==='📍 Near me')?'block':'none';
+  // Distance slider is always visible now (it used to hide itself outside the
+  // "Near me" filter), so people can adjust the search radius from any filter/tab.
+  document.getElementById('distanceBar').style.display='block';
   if(currentView==='map'){renderMap(list);return;}
   if(!list.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px 20px;font-size:14px">'+(currentFilter==='📍 Near me'?'No Rounds within '+(distUnit==='mi'?Math.round(maxDistKm*0.621371)+' mi':maxDistKm+' km')+'.<br>Try widening the range, or host one!':'No Rounds in this category yet.<br>Be the first — tap ➕ to host one!')+'</p>';return;}
   box.innerHTML=list.map(r=>{
@@ -3391,7 +3403,7 @@ function renderDiscoverPeople(){
   }
   const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
   box.innerHTML=discoverPeople.map(p=>{
-    const dist=(typeof p.distance==='number')?(p.distance.toFixed(1)+' mi away'):'';
+    const dist=(typeof p.distance==='number')?(milesLabel(p.distance)+' away'):'';
     const chips=(p.sharedInterests||[]).slice(0,4).map(i=>'<span style="background:var(--bone);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px 3px 0 0;display:inline-block">'+(emap[i]||'•')+' '+t(i)+'</span>').join('');
     const av=friendAvatar(p);
     return '<div class="friend-row" style="align-items:flex-start" onclick="viewProfile(\''+p.id+'\')">'+av
@@ -6495,6 +6507,10 @@ function setUnit(u){
   if(km)km.classList.toggle('on',distUnit==='km');
   if(mi)mi.classList.toggle('on',distUnit==='mi');
   updateDistSliderMax();updateDistLabel();renderRoundsList();
+  // Also refresh any already-loaded event/people lists so their distance labels
+  // switch units immediately instead of waiting for the next fetch.
+  if(typeof allEvents!=='undefined'&&allEvents.length)renderEvents();
+  if(typeof discoverPeople!=='undefined'&&discoverPeople.length)renderDiscoverPeople();
 }
 function loadUnit(){
   let u='km';try{u=localStorage.getItem('su_unit')||'km';}catch(e){}
