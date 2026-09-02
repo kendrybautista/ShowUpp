@@ -440,7 +440,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .phone[data-theme="dark"] .thread-head .tname,.phone[data-theme="dark"] .thread-head .tt b,.phone[data-theme="midnight"] .thread-head .tname,.phone[data-theme="midnight"] .thread-head .tt b{color:#EDEAF5}
 .msgs{flex:1;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:10px;background:var(--bone)}
 .msgs::-webkit-scrollbar{display:none}
-.msg{max-width:75%;padding:11px 14px;border-radius:18px;font-size:14.5px;line-height:1.4}
+.msg{max-width:75%;padding:11px 14px;border-radius:18px;font-size:14.5px;line-height:1.4;-webkit-user-select:none;-webkit-touch-callout:none;user-select:none}
 .msg.them{background:#fff;border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:5px}
 .msg.me{background:var(--night);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
 .msg .sender{font-size:11px;font-weight:700;color:var(--coral);margin-bottom:3px}
@@ -457,7 +457,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .reactions{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
 .react-chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:600}
 .react-chip.on{background:#EEF0FF;border-color:var(--coral)}
-.big-react{font-size:30px;cursor:pointer;transition:transform .1s}
+.big-react{font-size:30px;cursor:pointer;transition:transform .1s;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .big-react:active{transform:scale(1.3)}
 .composer{display:flex;gap:8px;padding:12px 14px;background:#fff;border-top:1px solid var(--line);flex:none;align-items:center}
 .composer input{flex:1;padding:12px 16px;border-radius:22px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14.5px}
@@ -525,7 +525,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .sheet{position:absolute;inset:0;background:rgba(15,15,30,.5);z-index:80;display:none;align-items:flex-end}
 .sheet.open{display:flex;animation:fade .2s}
-.sheet-inner{background:var(--bone);width:100%;border-radius:24px 24px 0 0;padding:8px 22px 30px;animation:slideup .3s}
+.sheet-inner{background:var(--bone);width:100%;border-radius:24px 24px 0 0;padding:8px 22px 30px;animation:slideup .3s;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 @keyframes slideup{from{transform:translateY(100%)}to{transform:none}}
 .grabber{width:40px;height:4px;background:#d8d3c8;border-radius:2px;margin:8px auto 16px}
 .sheet-inner h3{font-family:'Fraunces',serif;font-size:19px;color:var(--night);margin-bottom:6px}
@@ -1443,13 +1443,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="sheet-inner" style="max-height:80%;display:flex;flex-direction:column">
     <div class="grabber"></div>
     <h3 style="margin-bottom:2px">React with any emoji</h3>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Browse Unicode's emoji categories, or type any emoji from your own keyboard below.</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Browse Unicode's emoji categories below.</div>
     <div id="emojiCatTabs" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;flex:none"></div>
     <div id="emojiGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;overflow-y:auto;flex:1;padding-bottom:10px;min-height:180px"></div>
-    <div style="display:flex;gap:8px;padding-top:10px;border-top:1px solid var(--line);flex:none">
-      <input id="emojiPickerCustomInput" placeholder="Or type/paste any emoji…" style="flex:1;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:18px;font-family:'Instrument Sans'" onkeydown="if(event.key==='Enter')submitEmojiPickerCustom()">
-      <button class="btn btn-mango" style="padding:0 16px;flex:none" onclick="submitEmojiPickerCustom()">Add</button>
-    </div>
   </div>
 </div>
 
@@ -5072,37 +5068,45 @@ function openMsgMenu(e,id){
 }
 function closeMsgMenu(){document.getElementById('msgMenuSheet').classList.remove('open');}
 function menuReact(emoji){toggleReaction(menuTargetId,emoji);closeMsgMenu();}
-// ---- Full emoji picker (Unicode groups + a keyboard-entry fallback) ----
+// ---- Full emoji picker (Unicode groups) ----
 let emojiPickerKind='msg',emojiPickerCat=Object.keys(EMOJI_CATEGORIES)[0];
 function openEmojiPicker(kind){
   emojiPickerKind=kind;
   closeMsgMenu();closeDmMsgMenu();
   renderEmojiCatTabs();renderEmojiGrid();
-  const inp=document.getElementById('emojiPickerCustomInput');if(inp)inp.value='';
   document.getElementById('emojiPickerSheet').classList.add('open');
 }
 function closeEmojiPicker(){document.getElementById('emojiPickerSheet').classList.remove('open');}
 function renderEmojiCatTabs(){
   const tabs=document.getElementById('emojiCatTabs');
-  tabs.innerHTML=Object.keys(EMOJI_CATEGORIES).map(cat=>{
+  const cats=Object.keys(EMOJI_CATEGORIES);
+  tabs.innerHTML=cats.map((cat,i)=>{
     const sample=EMOJI_CATEGORIES[cat][0];
-    return '<div class="catpill'+(cat===emojiPickerCat?' on':'')+'" style="white-space:nowrap;flex:none;padding:8px 12px;font-size:12px;cursor:pointer" onclick="selectEmojiCat(this,'+JSON.stringify(cat)+')">'+sample+' '+cat+'</div>';
+    return '<div class="catpill'+(cat===emojiPickerCat?' on':'')+'" data-cat-index="'+i+'" style="white-space:nowrap;flex:none;padding:8px 12px;font-size:12px;cursor:pointer">'+sample+' '+esc(cat)+'</div>';
   }).join('');
 }
-function selectEmojiCat(el,cat){emojiPickerCat=cat;renderEmojiCatTabs();renderEmojiGrid();}
 function renderEmojiGrid(){
   const grid=document.getElementById('emojiGrid');
-  grid.innerHTML=(EMOJI_CATEGORIES[emojiPickerCat]||[]).map(e=>'<div onclick="pickEmojiReact(\''+e+'\')" style="font-size:25px;text-align:center;padding:7px 0;cursor:pointer;border-radius:8px">'+e+'</div>').join('');
+  grid.innerHTML=(EMOJI_CATEGORIES[emojiPickerCat]||[]).map(e=>'<div class="emoji-tile" data-emoji="'+esc(e)+'" style="font-size:25px;text-align:center;padding:7px 0;cursor:pointer;border-radius:8px">'+e+'</div>').join('');
 }
 function pickEmojiReact(emoji){
   if(emojiPickerKind==='msg')menuReact(emoji);else dmMenuReact(emoji);
   closeEmojiPicker();
 }
-function submitEmojiPickerCustom(){
-  const inp=document.getElementById('emojiPickerCustomInput');
-  const val=inp.value.trim();if(!val)return;
-  pickEmojiReact(val);
-}
+// Category tabs and emoji tiles use delegated clicks with data-attributes rather than
+// inline onclick strings — category names or emoji sequences can include characters
+// (quotes, ampersands) that break a hand-built onclick="..." attribute.
+document.addEventListener('click',function(e){
+  const catTab=e.target.closest('#emojiCatTabs [data-cat-index]');
+  if(catTab){
+    const cats=Object.keys(EMOJI_CATEGORIES);
+    const idx=parseInt(catTab.getAttribute('data-cat-index'),10);
+    if(!isNaN(idx)&&cats[idx]){emojiPickerCat=cats[idx];renderEmojiCatTabs();renderEmojiGrid();}
+    return;
+  }
+  const tile=e.target.closest('#emojiGrid [data-emoji]');
+  if(tile){pickEmojiReact(tile.getAttribute('data-emoji'));}
+});
 function menuCopy(){
   const m=msgCache[menuTargetId];if(!m)return;
   const text=m.kind==='gif'?'':(m.body||'');
