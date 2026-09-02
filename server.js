@@ -950,7 +950,7 @@ app.post('/api/me/location', requireAuth, async (req, res) => {
 app.get('/api/discover-people', requireAuth, async (req, res) => {
   const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const myInterests = me.interests ? JSON.parse(me.interests) : [];
-  const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 100); // true max is 100 mi (~160 km), matching the client-side slider
+  const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 500); // true max is 500 mi (~805 km), matching the client-side slider
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const hasLoc = !isNaN(lat) && !isNaN(lng);
   const mode = req.query.mode || 'distance'; // 'distance' | 'country'
@@ -2101,68 +2101,49 @@ async function ingestExternalEvents() {
   } finally { eventIngestRunning = false; }
 }
 
-// List events, within radius (default 25 miles) if a location is given, optional
-// category filter, paginated. Reads only from our own DB — see ingest job above.
+// List events nationwide (no distance limit), optional category filter, paginated.
+// Reads only from our own DB — see ingest job above. If a location is given, distance
+// is still computed per-event so it can be shown in the UI, but it no longer filters
+// or caps what's returned.
 app.get('/api/events', requireAuth, async (req, res) => {
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
-  const radius = Math.min(parseFloat(req.query.radius) || 25, 100);
   const category = req.query.category || null;
   const hasLoc = !isNaN(lat) && !isNaN(lng);
   const page = Math.max(0, parseInt(req.query.page) || 0);
   const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize) || 25));
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
 
-  // Bounding-box pre-filter in SQL — cheap and index-friendly — before the precise
-  // haversine distance check in JS. ~69 miles per degree of latitude.
-  let boxClause = '', boxParams = [];
-  if (hasLoc) {
-    const latDelta = radius / 69;
-    const lngDelta = radius / (69 * Math.cos(lat * Math.PI / 180) || 1);
-    boxClause = ' AND (lat IS NULL OR (lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?))';
-    boxParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta];
-  }
   const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
   const catParams = (category && category !== 'all') ? [category] : [];
 
   const rows = await db.prepare(`
     SELECT * FROM events
     WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
-    ${boxClause}${catClause}
+    ${catClause}
     ORDER BY (starts_at IS NULL), starts_at ASC
     LIMIT ? OFFSET ?
-  `).all(now() - 6 * 3600 * 1000, cutoff, ...boxParams, ...catParams, pageSize, page * pageSize);
+  `).all(now() - 6 * 3600 * 1000, cutoff, ...catParams, pageSize, page * pageSize);
 
   let all = rows.map(e => {
     let dist = null;
     if (hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
     return { ...e, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
   });
-  if (hasLoc) all = all.filter(e => e.distance == null || e.distance <= radius);
   all.sort((a, b) => (a.starts_at || Infinity) - (b.starts_at || Infinity) || (a.distance || 0) - (b.distance || 0));
 
   res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
 });
 
-// Distinct categories currently available in range/date-window — used to populate the
-// category filter chips. Kept separate from the (paginated) main list so the chips
-// reflect everything in range, not just whatever page happens to be loaded.
+// Distinct categories currently available (nationwide, no distance limit) — used to
+// populate the category filter chips. Kept separate from the (paginated) main list so
+// the chips reflect everything available, not just whatever page happens to be loaded.
 app.get('/api/events/categories', requireAuth, async (req, res) => {
-  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
-  const radius = Math.min(parseFloat(req.query.radius) || 25, 100);
-  const hasLoc = !isNaN(lat) && !isNaN(lng);
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
-  let boxClause = '', boxParams = [];
-  if (hasLoc) {
-    const latDelta = radius / 69;
-    const lngDelta = radius / (69 * Math.cos(lat * Math.PI / 180) || 1);
-    boxClause = ' AND (lat IS NULL OR (lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?))';
-    boxParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta];
-  }
   const rows = await db.prepare(`
     SELECT DISTINCT category FROM events
     WHERE approved = 1 AND category IS NOT NULL AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
-    ${boxClause} LIMIT 100
-  `).all(now() - 6 * 3600 * 1000, cutoff, ...boxParams);
+    LIMIT 100
+  `).all(now() - 6 * 3600 * 1000, cutoff);
   res.json({ categories: rows.map(r => r.category).filter(Boolean) });
 });
 
