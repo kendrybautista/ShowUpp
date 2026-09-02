@@ -202,11 +202,13 @@ await db.exec(`
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS ephemeral INTEGER DEFAULT 0;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_by TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted INTEGER DEFAULT 0;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited INTEGER DEFAULT 0;
 
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS reply_preview TEXT;
   ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS deleted INTEGER DEFAULT 0;
+  ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS edited INTEGER DEFAULT 0;
 
   ALTER TABLE memberships ADD COLUMN IF NOT EXISTS last_read BIGINT DEFAULT 0;
 
@@ -1411,7 +1413,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
   const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
   const rows = await db.prepare(`
-    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview,m.deleted
+    SELECT m.id,m.body,m.kind,m.media_url,m.created_at,m.user_id,u.name AS sender,u.avatar,m.reactions,m.reply_to,m.reply_preview,m.deleted,m.edited
     FROM dm_messages m JOIN users u ON u.id=m.user_id
     WHERE m.conv_id=? ORDER BY m.created_at ASC LIMIT 300
   `).all(req.params.id);
@@ -1419,7 +1421,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     id: m.id, body: m.body, kind: m.kind || 'text', media_url: m.media_url || null,
     created_at: m.created_at, user_id: m.user_id, sender: m.sender, avatar: m.avatar,
     reactions: m.reactions ? JSON.parse(m.reactions) : {},
-    reply_to: m.reply_to || null, reply_preview: m.reply_preview || null, deleted: !!m.deleted
+    reply_to: m.reply_to || null, reply_preview: m.reply_preview || null, deleted: !!m.deleted, edited: !!m.edited
   }));
   await db.prepare('UPDATE conversation_members SET last_read=? WHERE conv_id=? AND user_id=?').run(now(), req.params.id, req.user.id);
   const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
@@ -1573,6 +1575,22 @@ app.post('/api/dm/:id/delete', requireAuth, async (req, res) => {
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'You can only unsend your own messages.' });
   await db.prepare("UPDATE dm_messages SET deleted = 1, body = '', media_url = NULL, reactions = NULL WHERE id = ?").run(req.params.id);
   const payload = JSON.stringify({ type: 'dmMessageDeleted', convId: m.conv_id, messageId: req.params.id });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
+  res.json({ ok: true });
+});
+
+// Edit a DM / group-chat message — sender only, text messages only.
+app.post('/api/dm/:id/edit', requireAuth, async (req, res) => {
+  const { body } = req.body || {};
+  const text = String(body || '').trim();
+  if (!text) return res.status(400).json({ error: 'Message cannot be empty.' });
+  const m = await db.prepare('SELECT id, conv_id, user_id, deleted, kind FROM dm_messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (m.deleted) return res.status(400).json({ error: "Can't edit an unsent message." });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'You can only edit your own messages.' });
+  if (m.kind && m.kind !== 'text') return res.status(400).json({ error: 'Only text messages can be edited.' });
+  await db.prepare('UPDATE dm_messages SET body = ?, edited = 1 WHERE id = ?').run(text, req.params.id);
+  const payload = JSON.stringify({ type: 'dmMessageEdited', convId: m.conv_id, messageId: req.params.id, body: text });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.dmRooms && c.dmRooms.has(m.conv_id)) c.send(payload); });
   res.json({ ok: true });
 });
@@ -2152,7 +2170,7 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
   if (!member) return res.status(403).json({ error: 'Join this Round to see its chat.' });
   const rows = await db.prepare(`
     SELECT m.id, m.body, m.created_at, m.user_id, u.name AS sender,
-           m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by, m.deleted
+           m.reactions, m.reply_to, m.reply_preview, m.kind, m.media_url, m.ephemeral, m.seen_by, m.deleted, m.edited
     FROM messages m JOIN users u ON u.id = m.user_id
     WHERE m.round_id = ? ORDER BY m.created_at ASC LIMIT 200
   `).all(req.params.id);
@@ -2173,7 +2191,7 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
       id: m.id, body: m.body, created_at: m.created_at, user_id: m.user_id, sender: m.sender,
       reactions: m.reactions ? JSON.parse(m.reactions) : {},
       reply_to: m.reply_to || null, reply_preview: m.reply_preview || null,
-      kind: m.kind || 'text', media_url: m.media_url || null, ephemeral: !!m.ephemeral, deleted: !!m.deleted
+      kind: m.kind || 'text', media_url: m.media_url || null, ephemeral: !!m.ephemeral, deleted: !!m.deleted, edited: !!m.edited
     });
   }
   res.json({ messages: out });
@@ -2209,6 +2227,22 @@ app.post('/api/messages/:id/delete', requireAuth, async (req, res) => {
   if (m.user_id !== req.user.id && !isHost) return res.status(403).json({ error: 'You can only unsend your own messages.' });
   await db.prepare("UPDATE messages SET deleted = 1, body = '', media_url = NULL, reactions = NULL WHERE id = ?").run(req.params.id);
   const payload = JSON.stringify({ type: 'messageDeleted', roundId: m.round_id, messageId: req.params.id });
+  wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
+  res.json({ ok: true });
+});
+
+// Edit a Round chat message — sender only, and only plain text messages (not GIFs/media).
+app.post('/api/messages/:id/edit', requireAuth, async (req, res) => {
+  const { body } = req.body || {};
+  const text = String(body || '').trim();
+  if (!text) return res.status(400).json({ error: 'Message cannot be empty.' });
+  const m = await db.prepare('SELECT id, round_id, user_id, deleted, kind FROM messages WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (m.deleted) return res.status(400).json({ error: "Can't edit an unsent message." });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'You can only edit your own messages.' });
+  if (m.kind && m.kind !== 'text') return res.status(400).json({ error: 'Only text messages can be edited.' });
+  await db.prepare('UPDATE messages SET body = ?, edited = 1 WHERE id = ?').run(text, req.params.id);
+  const payload = JSON.stringify({ type: 'messageEdited', roundId: m.round_id, messageId: req.params.id, body: text });
   wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(m.round_id)) c.send(payload); });
   res.json({ ok: true });
 });
