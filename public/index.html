@@ -716,7 +716,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
         <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
       </div>
-      <input type="range" id="distSlider" min="1" max="500" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
+      <input type="range" id="distSlider" min="1" max="200" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
     </div>
     <div style="display:flex;gap:6px;padding:8px 22px 4px;flex-wrap:wrap">
       <div class="catpill" id="hf-both" onclick="switchHomeSection('both')">Both</div>
@@ -742,8 +742,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 
     <!-- Happening Nearby (public events) -->
     <div id="eventsPane" style="display:none">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 22px 4px">
-        <span style="font-size:12px;color:var(--muted)" id="eventsSubtitle">Public events near you — open to all, within 25 miles.</span>
+      <div style="display:flex;justify-content:flex-end;align-items:center;padding:8px 22px 4px">
         <div style="display:flex;gap:6px;align-items:center">
           <div style="display:flex;background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden">
             <div id="evt-list" class="vt on" onclick="setEventsView('list')">List</div>
@@ -895,7 +894,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
             <div class="vt" id="dp-map" onclick="setDiscoverView('map')">Map</div>
           </div>
         </div>
-        <div style="padding:0 22px 12px"><input type="range" id="dpDist" min="1" max="500" value="25" oninput="onDpDist(this.value)" style="width:100%"></div>
+        <div style="padding:0 22px 12px"><input type="range" id="dpDist" min="1" max="200" value="25" oninput="onDpDist(this.value)" style="width:100%"></div>
       </div>
       <div id="dpCountryControls" style="display:none;padding:0 22px 12px">
         <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Show people from a specific country — great for language learning.</div>
@@ -6492,10 +6491,10 @@ function loadTheme(){
   if(typeof initAutoDark==='function')initAutoDark();
   if(typeof soundsEnabledInit==='function')soundsEnabledInit();
 }
-// Both distance sliders cap the true, real-world reach at 500 miles (≈805 km),
+// Both distance sliders cap the true, real-world reach at 200 miles (≈322 km),
 // however that's currently displayed — so switching units doesn't secretly shrink
 // or grow how far the search actually looks.
-const MAX_DIST_MI=500, MAX_DIST_KM=805; // 805 km ≈ 500.2 mi, rounds cleanly to "500"
+const MAX_DIST_MI=200, MAX_DIST_KM=322; // 322 km ≈ 200.1 mi, rounds cleanly to "200"
 function updateDistSliderMax(){
   const mi=distUnit==='mi';
   const homeSlider=document.getElementById('distSlider');
