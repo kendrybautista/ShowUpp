@@ -281,6 +281,17 @@ await db.exec(`
     payload     TEXT NOT NULL,
     fetched_at  BIGINT NOT NULL
   );
+  -- Display label for an event's source, set at ingest/creation time so /api/events
+  -- never has to join back to event_sources (whose label can change independently).
+  ALTER TABLE events ADD COLUMN IF NOT EXISTS source_label TEXT;
+  -- event_sources.api_key is optional now: a manually-labeled source (see the
+  -- Manager panel's "Other / manual" provider option) has nothing to authenticate
+  -- with — its events are added by hand, not fetched.
+  ALTER TABLE event_sources ALTER COLUMN api_key DROP NOT NULL;
+  -- Indexes for the daily-ingested nationwide event feed: requests filter by date
+  -- range and a lat/lng bounding box, so both need to be fast on a large table.
+  CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
+  CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(lat, lng);
 `);
 
   // Seed the admin/owner account
@@ -1942,123 +1953,189 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// PROVIDER REGISTRY — one entry per event-account type the Manager panel can offer.
-// Each function takes (apiKey, lat, lng, radiusMi, label) and returns normalized events.
+// PROVIDER REGISTRY — one entry per event-account type the Manager panel offers with
+// automatic fetching. Each function takes (apiKey, label) and returns normalized US-wide
+// events for the next EVENT_INGEST_WINDOW_DAYS days. A source whose provider ISN'T listed
+// here (e.g. a manually-labeled account — see "Other / manual" in the Manager panel) is
+// simply never auto-fetched; its events are added by hand via the admin panel instead.
 // To support a new paid source later (Eventbrite, SeatGeek, etc.), add a key here and
 // list it in the Manager panel's provider dropdown — nothing else needs to change.
-const EVENT_PROVIDERS = {
-  ticketmaster: async (apiKey, lat, lng, radiusMi, label) => {
-    if (!apiKey || typeof lat !== 'number' || typeof lng !== 'number') return [];
-    const km = Math.round(radiusMi * 1.60934);
-    const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&latlong=${lat},${lng}&radius=${km}&unit=km&size=50&sort=date,asc`;
-    const r = await fetch(url);
-    if (!r.ok) return [];
-    const data = await r.json();
-    const evs = (data._embedded && data._embedded.events) || [];
-    return evs.map(e => {
-      const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
-      const loc = v.location || {};
-      return {
-        id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
-        title: e.name, description: (e.info || e.pleaseNote || ''),
-        category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
-        emoji: '🎟️',
-        photo: (e.images && e.images[0] && e.images[0].url) || null,
-        link: e.url || null,
-        place: v.name || (v.city && v.city.name) || '',
-        lat: loc.latitude ? parseFloat(loc.latitude) : null,
-        lng: loc.longitude ? parseFloat(loc.longitude) : null,
-        starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
-        ends_at: null, source_label: label || 'Ticketmaster'
-      };
-    });
+const EVENT_INGEST_WINDOW_DAYS = 30;
+function normalizeTicketmasterEvent(e, label) {
+  const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
+  const loc = v.location || {};
+  return {
+    id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
+    title: e.name, description: (e.info || e.pleaseNote || ''),
+    category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
+    emoji: '🎟️',
+    photo: (e.images && e.images[0] && e.images[0].url) || null,
+    link: e.url || null,
+    place: v.name || (v.city && v.city.name) || '',
+    lat: loc.latitude ? parseFloat(loc.latitude) : null,
+    lng: loc.longitude ? parseFloat(loc.longitude) : null,
+    starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
+    ends_at: null, source_label: label || 'Ticketmaster'
+  };
+}
+// Pages through Ticketmaster's US catalog in weekly slices (rather than one huge date
+// range) so a single slow/failed page never loses the whole window, and caps pages per
+// slice so one ingest run can't run away against the API's rate limit.
+async function fetchTicketmasterUS(apiKey, label) {
+  if (!apiKey) return [];
+  const events = [];
+  const sliceDays = 7, maxPagesPerSlice = 5, pageSize = 200; // 5*200 = 1000 events/slice ceiling
+  for (let offset = 0; offset < EVENT_INGEST_WINDOW_DAYS; offset += sliceDays) {
+    const sliceStart = new Date(Date.now() + offset * 86400000);
+    const sliceEnd = new Date(Date.now() + Math.min(offset + sliceDays, EVENT_INGEST_WINDOW_DAYS) * 86400000);
+    const startDateTime = sliceStart.toISOString().split('.')[0] + 'Z';
+    const endDateTime = sliceEnd.toISOString().split('.')[0] + 'Z';
+    for (let page = 0; page < maxPagesPerSlice; page++) {
+      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=US&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
+      let r;
+      try { r = await fetch(url); } catch (err) { break; } // network hiccup — stop this slice, keep what we have
+      if (!r.ok) break; // rate-limited or bad request — stop this slice rather than throwing the whole ingest away
+      const data = await r.json();
+      const evs = (data._embedded && data._embedded.events) || [];
+      for (const e of evs) events.push(normalizeTicketmasterEvent(e, label));
+      const totalPages = (data.page && data.page.totalPages) || 1;
+      if (page + 1 >= totalPages || evs.length === 0) break;
+      await new Promise(res => setTimeout(res, 250)); // be gentle on Ticketmaster's rate limit
+    }
   }
+  return events;
+}
+const EVENT_PROVIDERS = {
+  ticketmaster: async (apiKey, label) => fetchTicketmasterUS(apiKey, label)
   // Add more providers here later the same way, e.g.:
-  //   eventbrite: async (apiKey, lat, lng, radiusMi, label) => { ...map their API... }
+  //   eventbrite: async (apiKey, label) => { ...page through their API, return normalized events... }
 };
 
-// Pulls events from every enabled account the Manager panel has configured, plus a
-// Ticketmaster key set via env var as a fallback for people who deploy that way instead.
-// Each provider's results are cached (see below) so a busy day of Nearby searches
-// doesn't chew through that provider's daily API allowance.
-const EVENT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour — event listings don't change minute to minute
-// Buckets lat/lng to a ~5.5km grid and the radius to 10-mile steps, so nearby searches
-// within the same city/radius share one cached fetch instead of each getting their own.
-function eventCacheKey(sourceKey, lat, lng, radiusMi) {
-  const rlat = Math.round(lat * 20) / 20;
-  const rlng = Math.round(lng * 20) / 20;
-  const rradius = Math.ceil(radiusMi / 10) * 10;
-  return sourceKey + ':' + rlat + ':' + rlng + ':' + rradius;
+// ---- Daily ingest job ----
+// Runs once at boot and then every 24h (see bottom of file). Pulls each enabled
+// provider account's events straight into the `events` table (upserted by id, so
+// re-running just refreshes rows instead of duplicating them), then trims anything
+// that's now outside the 30-day display window. Request time (`/api/events` below)
+// never talks to a provider — it only ever reads from our own indexed table, so a
+// slow or rate-limited provider can't slow down anyone's app.
+async function upsertExternalEvent(e) {
+  const row = {
+    id: e.id, source: e.source, source_id: e.source_id || null,
+    title: String(e.title || '').slice(0, 200), description: String(e.description || '').slice(0, 1000),
+    category: e.category || 'Event', emoji: e.emoji || '🎟️',
+    photo: e.photo || null, link: e.link || null, place: String(e.place || '').slice(0, 200),
+    lat: (typeof e.lat === 'number') ? e.lat : null, lng: (typeof e.lng === 'number') ? e.lng : null,
+    starts_at: e.starts_at || null, ends_at: e.ends_at || null,
+    posted_by: null, approved: 1, created_at: now(), source_label: e.source_label || e.source
+  };
+  await db.prepare(`
+    INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at,source_label)
+    VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at,@source_label)
+    ON CONFLICT (id) DO UPDATE SET
+      title=excluded.title, description=excluded.description, category=excluded.category, emoji=excluded.emoji,
+      photo=excluded.photo, link=excluded.link, place=excluded.place, lat=excluded.lat, lng=excluded.lng,
+      starts_at=excluded.starts_at, ends_at=excluded.ends_at, source_label=excluded.source_label
+  `).run(row);
 }
-async function getProviderEventsCached(cacheKey, fetchFn) {
-  const row = await db.prepare('SELECT payload, fetched_at FROM event_cache WHERE cache_key = ?').get(cacheKey);
-  if (row && (Date.now() - Number(row.fetched_at)) < EVENT_CACHE_TTL_MS) {
-    return JSON.parse(row.payload); // fresh — skip the network call entirely
-  }
+let eventIngestRunning = false;
+async function ingestExternalEvents() {
+  if (eventIngestRunning) return; // don't overlap a manual "refresh now" with the scheduled run
+  eventIngestRunning = true;
+  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   try {
-    const events = await fetchFn();
-    await db.prepare(`
-      INSERT INTO event_cache (cache_key, payload, fetched_at) VALUES (?, ?, ?)
-      ON CONFLICT (cache_key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at
-    `).run(cacheKey, JSON.stringify(events), Date.now());
-    return events;
-  } catch (err) {
-    // Provider request failed (rate limit, outage, etc.) — serve stale cache rather
-    // than an empty list, if we have anything at all to fall back on.
-    if (row) { console.log('[events] provider fetch failed, serving stale cache:', err.message); return JSON.parse(row.payload); }
-    throw err;
-  }
-}
-async function fetchExternalEvents(lat, lng, radiusMi) {
-  const external = [];
-  if (typeof lat !== 'number' || typeof lng !== 'number') return external;
-  const sources = await db.prepare('SELECT * FROM event_sources WHERE enabled = 1').all();
-  for (const s of sources) {
-    const fn = EVENT_PROVIDERS[s.provider];
-    if (!fn) continue;
-    const cacheKey = eventCacheKey('src:' + s.id, lat, lng, radiusMi);
-    try { external.push(...(await getProviderEventsCached(cacheKey, () => fn(s.api_key, lat, lng, radiusMi, s.label)))); }
-    catch (err) { console.log('[events]', s.provider, 'error', err.message); }
-  }
-  if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
-    const cacheKey = eventCacheKey('env:ticketmaster', lat, lng, radiusMi);
-    try { external.push(...(await getProviderEventsCached(cacheKey, () => EVENT_PROVIDERS.ticketmaster(process.env.TICKETMASTER_API_KEY, lat, lng, radiusMi, 'Ticketmaster')))); }
-    catch (err) {}
-  }
-  return external;
+    const sources = await db.prepare('SELECT * FROM event_sources WHERE enabled = 1').all();
+    for (const s of sources) {
+      const fn = EVENT_PROVIDERS[s.provider];
+      if (!fn) continue; // manual/unregistered provider — nothing to auto-fetch
+      try {
+        const evs = await fn(s.api_key, s.label);
+        let kept = 0;
+        for (const e of evs) {
+          if (e.starts_at && e.starts_at > cutoff) continue; // outside the 30-day window — skip storing it
+          await upsertExternalEvent(e);
+          kept++;
+        }
+        console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})`);
+      } catch (err) { console.log('[events] ingest failed for', s.provider, err.message); }
+    }
+    // env-var fallback key, for deployments that set it instead of using the Manager panel
+    if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
+      try {
+        const evs = await fetchTicketmasterUS(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
+        for (const e of evs) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
+      } catch (err) {}
+    }
+    // Trim: drop non-community events that are now in the past or have fallen outside
+    // the display window (e.g. a provider stopped returning them). Community posts are
+    // left for their poster/admin to manage via the existing delete endpoint.
+    await db.prepare(`DELETE FROM events WHERE source != 'community' AND (starts_at IS NULL OR starts_at < ? OR starts_at > ?)`)
+      .run(now() - 6 * 3600 * 1000, cutoff);
+  } finally { eventIngestRunning = false; }
 }
 
-// List events near a location, within radius (default 25 miles), optional category filter.
+// List events, within radius (default 25 miles) if a location is given, optional
+// category filter, paginated. Reads only from our own DB — see ingest job above.
 app.get('/api/events', requireAuth, async (req, res) => {
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const radius = Math.min(parseFloat(req.query.radius) || 25, 100);
   const category = req.query.category || null;
   const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const page = Math.max(0, parseInt(req.query.page) || 0);
+  const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize) || 25));
+  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
 
-  // 1) community events from our DB (only upcoming, approved)
-  let community = await db.prepare(`SELECT * FROM events WHERE approved = 1 AND source = 'community'
-    AND (starts_at IS NULL OR starts_at > ?) ORDER BY starts_at ASC LIMIT 200`).all(now() - 6 * 3600 * 1000);
-  community = community.map(e => ({ ...e, source_label: 'Community' }));
-
-  // 2) external providers (Ticketmaster etc.) — only if configured & we have a location
-  let external = [];
+  // Bounding-box pre-filter in SQL — cheap and index-friendly — before the precise
+  // haversine distance check in JS. ~69 miles per degree of latitude.
+  let boxClause = '', boxParams = [];
   if (hasLoc) {
-    try { external = await fetchExternalEvents(lat, lng, radius); } catch (e) {}
+    const latDelta = radius / 69;
+    const lngDelta = radius / (69 * Math.cos(lat * Math.PI / 180) || 1);
+    boxClause = ' AND (lat IS NULL OR (lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?))';
+    boxParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta];
   }
+  const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
+  const catParams = (category && category !== 'all') ? [category] : [];
 
-  // merge, attach distance, filter by radius + category
-  let all = community.concat(external);
-  all = all.map(e => {
+  const rows = await db.prepare(`
+    SELECT * FROM events
+    WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
+    ${boxClause}${catClause}
+    ORDER BY (starts_at IS NULL), starts_at ASC
+    LIMIT ? OFFSET ?
+  `).all(now() - 6 * 3600 * 1000, cutoff, ...boxParams, ...catParams, pageSize, page * pageSize);
+
+  let all = rows.map(e => {
     let dist = null;
     if (hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
-    return { ...e, distance: dist };
+    return { ...e, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
   });
   if (hasLoc) all = all.filter(e => e.distance == null || e.distance <= radius);
-  if (category && category !== 'all') all = all.filter(e => (e.category || '').toLowerCase() === category.toLowerCase());
-  // sort: soonest first, then nearest
   all.sort((a, b) => (a.starts_at || Infinity) - (b.starts_at || Infinity) || (a.distance || 0) - (b.distance || 0));
 
-  res.json({ events: all, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
+  res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
+});
+
+// Distinct categories currently available in range/date-window — used to populate the
+// category filter chips. Kept separate from the (paginated) main list so the chips
+// reflect everything in range, not just whatever page happens to be loaded.
+app.get('/api/events/categories', requireAuth, async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const radius = Math.min(parseFloat(req.query.radius) || 25, 100);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
+  let boxClause = '', boxParams = [];
+  if (hasLoc) {
+    const latDelta = radius / 69;
+    const lngDelta = radius / (69 * Math.cos(lat * Math.PI / 180) || 1);
+    boxClause = ' AND (lat IS NULL OR (lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?))';
+    boxParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta];
+  }
+  const rows = await db.prepare(`
+    SELECT DISTINCT category FROM events
+    WHERE approved = 1 AND category IS NOT NULL AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
+    ${boxClause} LIMIT 100
+  `).all(now() - 6 * 3600 * 1000, cutoff, ...boxParams);
+  res.json({ categories: rows.map(r => r.category).filter(Boolean) });
 });
 
 // Post a community event
@@ -2094,39 +2171,51 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 
 // ---- Manager panel: event-account sources (admin only) ----
 // Lists configured accounts. API keys are masked (only the last 4 chars shown) so the
-// key isn't echoed back in full once it's saved.
+// key isn't echoed back in full once it's saved. A source whose provider isn't in
+// EVENT_PROVIDERS (see "Other / manual" in the form) is flagged isManual: true — it's
+// never auto-fetched, and the panel offers an "add event" form for it instead.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
   const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at FROM event_sources ORDER BY created_at DESC').all();
   const masked = [];
   for (const r of rows) {
-    // Surface cache freshness so the owner can see caching is actually saving requests,
-    // rather than wondering why the count doesn't match every single page load.
-    const cacheRow = await db.prepare(
-      "SELECT COUNT(*) AS n, MAX(fetched_at) AS latest FROM event_cache WHERE cache_key LIKE ?"
-    ).get('src:' + r.id + ':%');
+    const isManual = !EVENT_PROVIDERS[r.provider];
+    // For an automatic provider, count how many of its events are currently live in
+    // the table (the daily ingest job populates these) so the owner can see it's working.
+    // For a manual source, count how many events an admin has added by hand.
+    const evRow = await db.prepare('SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events WHERE source = ?').get(r.provider);
     masked.push({
       ...r,
       api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
-      cached_areas: cacheRow ? Number(cacheRow.n) || 0 : 0,
-      cache_updated_at: cacheRow && cacheRow.latest ? Number(cacheRow.latest) : null
+      isManual,
+      live_events: evRow ? Number(evRow.n) || 0 : 0,
+      last_event_added: evRow && evRow.latest ? Number(evRow.latest) : null
     });
   }
-  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), cacheTtlMinutes: EVENT_CACHE_TTL_MS / 60000 });
+  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), ingestWindowDays: EVENT_INGEST_WINDOW_DAYS });
 });
 
-// Add a new event-account (e.g. a Ticketmaster API key) — the events filter will start
-// pulling from it automatically the next time someone searches Nearby.
+// Add a new event-account. `provider` can be a registered auto-fetch provider (e.g.
+// "ticketmaster", needs an API key) OR any free-typed label for a manual source —
+// one whose events the admin will add by hand from the panel instead of an API pull.
 app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
   const { provider, label, apiKey } = req.body || {};
-  if (!provider || !EVENT_PROVIDERS[provider]) return res.status(400).json({ error: 'Unknown provider.' });
-  if (!apiKey || !String(apiKey).trim()) return res.status(400).json({ error: 'An API key is required.' });
+  if (!provider || !String(provider).trim()) return res.status(400).json({ error: 'Give the source a provider name.' });
+  const providerKey = String(provider).trim().slice(0, 60);
+  const isRegistered = !!EVENT_PROVIDERS[providerKey];
+  if (isRegistered && (!apiKey || !String(apiKey).trim())) {
+    return res.status(400).json({ error: 'An API key is required for this provider.' });
+  }
   const row = {
-    id: id(), provider: String(provider), label: String(label || '').slice(0, 80) || provider,
-    api_key: String(apiKey).trim(), enabled: 1, created_by: req.user.id, created_at: now()
+    id: id(), provider: providerKey, label: String(label || '').slice(0, 80) || providerKey,
+    api_key: (apiKey && String(apiKey).trim()) ? String(apiKey).trim() : null,
+    enabled: 1, created_by: req.user.id, created_at: now()
   };
   await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,enabled,created_by,created_at)
     VALUES (@id,@provider,@label,@api_key,@enabled,@created_by,@created_at)`).run(row);
-  res.json({ ok: true, id: row.id });
+  // Kick off an immediate ingest for a freshly-added auto provider so the owner
+  // doesn't have to wait up to 24h to see it start working.
+  if (isRegistered) ingestExternalEvents().catch(() => {});
+  res.json({ ok: true, id: row.id, isManual: !isRegistered });
 });
 
 // Toggle an account on/off without deleting its saved key
@@ -2137,12 +2226,51 @@ app.post('/api/admin/event-sources/:id/toggle', requireAuth, requireAdmin, async
   res.json({ ok: true, enabled: !src.enabled });
 });
 
-// Remove an account entirely
+// Remove an account entirely. Any events it already contributed just age out on their
+// own via the daily trim (or the admin can remove them directly) rather than being
+// deleted here, since a manual source's hand-entered events shouldn't vanish by accident.
 app.post('/api/admin/event-sources/:id/delete', requireAuth, requireAdmin, async (req, res) => {
   const src = await db.prepare('SELECT id FROM event_sources WHERE id = ?').get(req.params.id);
   if (!src) return res.status(404).json({ error: 'Not found.' });
   await db.prepare('DELETE FROM event_sources WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// Trigger the daily ingest job immediately (e.g. right after adding/editing an account).
+app.post('/api/admin/event-sources/refresh', requireAuth, requireAdmin, async (req, res) => {
+  ingestExternalEvents().catch(err => console.log('[events] manual refresh failed', err.message));
+  res.json({ ok: true, started: true });
+});
+
+// Add a manually-entered event under a source (registered or manual). Lets an owner
+// hand-add listings for a site that has no API — these flow into /api/events exactly
+// like any other event, so they show up in the Discover tab's list and map too.
+app.post('/api/admin/event-sources/:id/events', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT id, provider, label FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Source not found.' });
+  const { title, category, emoji, place, link, lat, lng, startsAt } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'Give the event a name.' });
+  const ev = {
+    id: id(), source: src.provider, source_id: null,
+    title: String(title).trim().slice(0, 200), description: '',
+    category: category ? String(category).slice(0, 40) : 'Event', emoji: emoji || '📣',
+    photo: null, link: safeUrl(link), place: place ? String(place).slice(0, 200) : '',
+    lat: (typeof lat === 'number') ? lat : null, lng: (typeof lng === 'number') ? lng : null,
+    starts_at: (typeof startsAt === 'number' && startsAt > 0) ? startsAt : null, ends_at: null,
+    posted_by: req.user.id, approved: 1, created_at: now(), source_label: src.label
+  };
+  await db.prepare(`INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at,source_label)
+    VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at,@source_label)`).run(ev);
+  res.json({ ok: true, event: ev });
+});
+
+// List the events currently attributed to a source (for the Manager panel to show/manage
+// what's been manually added, or what an auto provider currently has live).
+app.get('/api/admin/event-sources/:id/events', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT id, provider FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Source not found.' });
+  const rows = await db.prepare('SELECT * FROM events WHERE source = ? ORDER BY starts_at ASC NULLS LAST LIMIT 100').all(src.provider);
+  res.json({ events: rows });
 });
 
 
@@ -2562,10 +2690,17 @@ initDb()
     setTimeout(() => { checkBirthdays(); }, 15000);
     setInterval(() => { checkBirthdays(); }, 24 * 60 * 60 * 1000);
     // Housekeeping: clear out event-provider cache rows once they're well past their TTL,
-    // so the table doesn't grow forever as people search from new locations.
+    // so the table doesn't grow forever as people search from new locations. (The live
+    // event feed itself no longer uses this cache — see the daily ingest job below —
+    // but old rows may still be lying around from before that change.)
     setInterval(() => {
       db.prepare('DELETE FROM event_cache WHERE fetched_at < ?').run(Date.now() - 7 * 24 * 60 * 60 * 1000).catch(() => {});
     }, 6 * 60 * 60 * 1000);
+    // Event feed: one ingest pass per provider per day, pulling US-wide events up to
+    // 30 days out straight into the `events` table. Delay the first run slightly so it
+    // doesn't compete with other boot-time work; after that, once every 24h.
+    setTimeout(() => { ingestExternalEvents().catch(err => console.log('[events] initial ingest failed:', err.message)); }, 20000);
+    setInterval(() => { ingestExternalEvents().catch(err => console.log('[events] scheduled ingest failed:', err.message)); }, 24 * 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to initialize the database. Is DATABASE_URL correct?');
