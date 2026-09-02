@@ -5776,14 +5776,23 @@ async function loadAdminEventSources(){
     }
     box.innerHTML=data.sources.map(s=>{
       const providerName=EVENT_PROVIDER_LABELS[s.provider]||s.provider;
-      const statusColor=s.enabled?'#2E9E5B':'var(--muted)';
-      const statusText=s.isManual?(s.enabled?'Manual source':'Manual source (paused)'):(s.enabled?'Active — pulling events daily':'Paused');
+      // Status now reflects the *last actual fetch* — not just whether the toggle is
+      // on — so a bad API key or failed request shows up as an error, not "Active".
+      const hasError=!s.isManual&&s.enabled&&!!s.last_error;
+      const statusColor=hasError?'#d94b3b':(s.enabled?'#2E9E5B':'var(--muted)');
+      let statusText;
+      if(s.isManual){statusText=s.enabled?'Manual source':'Manual source (paused)';}
+      else if(!s.enabled){statusText='Paused';}
+      else if(hasError){statusText='⚠ Last fetch failed';}
+      else if(!s.last_ingest_at){statusText='Active — waiting for first sync';}
+      else{statusText='Active — pulling events daily';}
       let liveLine=s.isManual?'No events added yet':'No events fetched yet';
       if(s.live_events>0){
         const mins=Math.max(0,Math.round((Date.now()-s.last_event_added)/60000));
         const when=mins<1?'just now':mins<60?mins+'m ago':Math.round(mins/60)+'h ago';
         liveLine=s.live_events+' event'+(s.live_events===1?'':'s')+' live · last added '+when;
       }
+      const errorLine=hasError?'<div style="font-size:11.5px;color:#d94b3b;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+esc(s.last_error)+'</div>':'';
       const addBtn=s.isManual?'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admOpenAddEvent(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">+ Add event</span>':'';
       return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
@@ -5795,6 +5804,7 @@ async function loadAdminEventSources(){
         +'<div style="display:flex;gap:12px;align-items:center">'+addBtn+'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span></div>'
         +'</div>'
         +'<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+liveLine+(s.isManual?'':' · refreshed once daily, up to '+(data.ingestWindowDays||30)+' days out')+'</div>'
+        +errorLine
         +'<div id="admSrcEvents-'+s.id+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"></div>'
         +'</div>';
     }).join('');
