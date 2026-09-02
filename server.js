@@ -288,6 +288,12 @@ await db.exec(`
   -- Manager panel's "Other / manual" provider option) has nothing to authenticate
   -- with — its events are added by hand, not fetched.
   ALTER TABLE event_sources ALTER COLUMN api_key DROP NOT NULL;
+  -- Track real ingest health per source (last attempt time, last error if the fetch
+  -- failed, and how many events it returned) so the Manager panel can show whether a
+  -- source is actually working instead of just whether its toggle is switched on.
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_ingest_at BIGINT;
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
   -- Indexes for the daily-ingested nationwide event feed: requests filter by date
   -- range and a lat/lng bounding box, so both need to be fast on a large table.
   CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
@@ -1981,9 +1987,12 @@ function normalizeTicketmasterEvent(e, label) {
 // Pages through Ticketmaster's US catalog in weekly slices (rather than one huge date
 // range) so a single slow/failed page never loses the whole window, and caps pages per
 // slice so one ingest run can't run away against the API's rate limit.
+// Returns { events, error } — error is set (and events may be empty) when every request
+// failed, so the ingest job can surface *why* instead of just "0 events fetched".
 async function fetchTicketmasterUS(apiKey, label) {
-  if (!apiKey) return [];
+  if (!apiKey) return { events: [], error: 'No API key configured for this source.' };
   const events = [];
+  let lastError = null;
   const sliceDays = 7, maxPagesPerSlice = 5, pageSize = 200; // 5*200 = 1000 events/slice ceiling
   for (let offset = 0; offset < EVENT_INGEST_WINDOW_DAYS; offset += sliceDays) {
     const sliceStart = new Date(Date.now() + offset * 86400000);
@@ -1993,8 +2002,16 @@ async function fetchTicketmasterUS(apiKey, label) {
     for (let page = 0; page < maxPagesPerSlice; page++) {
       const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=US&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
       let r;
-      try { r = await fetch(url); } catch (err) { break; } // network hiccup — stop this slice, keep what we have
-      if (!r.ok) break; // rate-limited or bad request — stop this slice rather than throwing the whole ingest away
+      try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; break; } // network hiccup — stop this slice, keep what we have
+      if (!r.ok) {
+        // Surface *why* — an invalid/expired key (401/403), a malformed request (400),
+        // or rate-limiting (429) all look identical if we just silently break, which is
+        // exactly what made this failure mode invisible before.
+        let detail = r.statusText;
+        try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
+        lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''}`;
+        break; // rate-limited or bad request — stop this slice rather than throwing the whole ingest away
+      }
       const data = await r.json();
       const evs = (data._embedded && data._embedded.events) || [];
       for (const e of evs) events.push(normalizeTicketmasterEvent(e, label));
@@ -2003,7 +2020,9 @@ async function fetchTicketmasterUS(apiKey, label) {
       await new Promise(res => setTimeout(res, 250)); // be gentle on Ticketmaster's rate limit
     }
   }
-  return events;
+  // Only report the error if it actually cost us events — a slice legitimately having
+  // zero events near the end of the window isn't a failure.
+  return { events, error: events.length === 0 ? lastError : null };
 }
 const EVENT_PROVIDERS = {
   ticketmaster: async (apiKey, label) => fetchTicketmasterUS(apiKey, label)
@@ -2048,21 +2067,30 @@ async function ingestExternalEvents() {
       const fn = EVENT_PROVIDERS[s.provider];
       if (!fn) continue; // manual/unregistered provider — nothing to auto-fetch
       try {
-        const evs = await fn(s.api_key, s.label);
+        const result = await fn(s.api_key, s.label);
+        const evs = result.events || [];
         let kept = 0;
         for (const e of evs) {
           if (e.starts_at && e.starts_at > cutoff) continue; // outside the 30-day window — skip storing it
           await upsertExternalEvent(e);
           kept++;
         }
-        console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})`);
-      } catch (err) { console.log('[events] ingest failed for', s.provider, err.message); }
+        console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})${result.error ? ' — error: ' + result.error : ''}`);
+        // Record real ingest health on the source row so the Manager panel can show
+        // it accurately instead of just "Active" because the toggle is on.
+        await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
+          .run(now(), result.error || null, kept, s.id);
+      } catch (err) {
+        console.log('[events] ingest failed for', s.provider, err.message);
+        await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
+          .run(now(), err.message, 0, s.id).catch(() => {});
+      }
     }
     // env-var fallback key, for deployments that set it instead of using the Manager panel
     if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
       try {
-        const evs = await fetchTicketmasterUS(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
-        for (const e of evs) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
+        const result = await fetchTicketmasterUS(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
+        for (const e of (result.events || [])) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
       } catch (err) {}
     }
     // Trim: drop non-community events that are now in the past or have fallen outside
@@ -2175,7 +2203,7 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 // EVENT_PROVIDERS (see "Other / manual" in the form) is flagged isManual: true — it's
 // never auto-fetched, and the panel offers an "add event" form for it instead.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at FROM event_sources ORDER BY created_at DESC').all();
+  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
   const masked = [];
   for (const r of rows) {
     const isManual = !EVENT_PROVIDERS[r.provider];
