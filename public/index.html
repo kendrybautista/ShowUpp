@@ -1075,13 +1075,18 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           <div style="font-weight:700;font-size:14.5px;color:var(--night);margin-bottom:2px">Add an event account</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Events from any enabled account below are pulled in automatically when someone applies the Nearby filter.</div>
           <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Provider</label>
-          <select id="esProvider" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px">
+          <select id="esProvider" onchange="esProviderChanged()" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px">
             <option value="ticketmaster">Ticketmaster</option>
+            <option value="__manual__">Other / manual (type a name)…</option>
           </select>
+          <input id="esProviderCustom" placeholder="Provider name, e.g. Downtown Events Calendar" style="display:none;width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
           <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Account label</label>
           <input id="esLabel" placeholder="e.g. Ticketmaster — main account" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
-          <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">API key</label>
-          <input id="esApiKey" type="password" placeholder="Paste the API key" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:14px;box-sizing:border-box">
+          <div id="esApiKeyWrap">
+            <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">API key</label>
+            <input id="esApiKey" type="password" placeholder="Paste the API key" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:14px;box-sizing:border-box">
+          </div>
+          <div id="esManualNote" style="display:none;font-size:12px;color:var(--muted);margin-bottom:14px">No API key needed — you'll add this source's events by hand from the list below once it's created.</div>
           <button class="btn btn-mango" style="width:100%" onclick="admAddEventSource()">➕ Add account</button>
         </div>
       </div>
@@ -2588,7 +2593,11 @@ function updateDetailSaveBtn(){
 }
 
 // ---- Happening Nearby (public events) ----
+// The feed is now backed by a daily-ingested, US-wide, 30-day table server-side (see
+// server.js), so a single request only returns one page — the list below has a
+// "Load more" button rather than trying to pull everything down at once.
 let allEvents=[], eventCat='all', eventsView='list', eventsMap=null, eventsMapMarkers=[];
+let eventsPage=0, eventsHasMore=false, eventsLoadingMore=false, allEventCategories=[];
 let homeSection='rounds';
 function qaNearMe(){
   switchHomeSection('rounds');
@@ -2742,35 +2751,63 @@ function renderSavedRounds(){
 async function loadEvents(){
   const box=document.getElementById('eventsList');
   box.innerHTML='<p style="text-align:center;color:var(--muted);padding:20px;font-size:13px">'+t('Loading…')+'</p>';
-  let q='/api/events?radius=25';
-  if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
-  else{
+  eventsPage=0;eventsHasMore=false;
+  if(!userLoc){
     // ask for location so the 25-mile filter works
     const loc=await requestLocation();
-    if(loc){userLoc=loc;q+='&lat='+loc.lat+'&lng='+loc.lng;}
+    if(loc)userLoc=loc;
   }
-  if(eventCat!=='all')q+='&category='+encodeURIComponent(eventCat);
   try{
-    const r=await api(q);
+    const [r,catData]=await Promise.all([fetchEventsPage(0),fetchEventCategories()]);
     allEvents=r.events||[];
+    eventsHasMore=!!r.hasMore;
+    allEventCategories=(catData&&catData.categories)||[];
     renderEventCatChips();
     renderEvents();
   }catch(e){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:20px;font-size:13px">'+e.message+'</p>';}
 }
+function fetchEventCategories(){
+  let q='/api/events/categories?radius=25';
+  if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
+  return api(q).catch(()=>({categories:[]}));
+}
+function fetchEventsPage(page){
+  let q='/api/events?radius=25&page='+page+'&pageSize=25';
+  if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
+  if(eventCat!=='all')q+='&category='+encodeURIComponent(eventCat);
+  return api(q);
+}
+async function loadMoreEvents(){
+  if(eventsLoadingMore||!eventsHasMore)return;
+  eventsLoadingMore=true;
+  try{
+    eventsPage++;
+    const r=await fetchEventsPage(eventsPage);
+    allEvents=allEvents.concat(r.events||[]);
+    eventsHasMore=!!r.hasMore;
+    renderEvents();
+  }catch(e){toast(e.message);}
+  finally{eventsLoadingMore=false;}
+}
 function renderEventCatChips(){
-  const cats=['all'].concat([...new Set(allEvents.map(e=>e.category).filter(Boolean))]);
+  const cats=['all'].concat([...new Set(allEventCategories)]);
   document.getElementById('eventCatChips').innerHTML=cats.map(c=>{
     const label=c==='all'?t('All'):t(c);
     return '<div class="chip '+(c===eventCat?'on':'')+'" onclick="pickEventCat(\''+esc(c).replace(/'/g,"")+'\')">'+label+'</div>';
   }).join('');
 }
-function pickEventCat(c){eventCat=c;renderEventCatChips();renderEvents();}
-function setEventsView(v){
+function pickEventCat(c){eventCat=c;renderEventCatChips();loadEvents();}
+async function setEventsView(v){
   eventsView=v;
   document.getElementById('evt-list').classList.toggle('on',v==='list');
   document.getElementById('evt-map').classList.toggle('on',v==='map');
   document.getElementById('eventsList').style.display=v==='list'?'block':'none';
   document.getElementById('eventsMapView').style.display=v==='map'?'block':'none';
+  // A single page (25 events) makes for a sparse map, so pull a few more pages first —
+  // still bounded, so switching to Map never triggers loading the entire 30-day feed.
+  if(v==='map'){
+    while(eventsHasMore&&allEvents.length<100){await loadMoreEvents();}
+  }
   renderEvents();
 }
 function renderEvents(){
@@ -2787,6 +2824,11 @@ function renderEvents(){
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
     return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px">'+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
   }).join('');
+  // The feed can span up to 30 days of nationwide events, so it's paginated server-side —
+  // fetch more only when asked, rather than loading everything into the page at once.
+  if(eventsHasMore&&!onlyPartnerEvents){
+    box.innerHTML+='<button class="btn" id="eventsLoadMoreBtn" onclick="loadMoreEvents()" style="width:100%;background:var(--bone);color:var(--night);border:1.5px solid var(--line);font-weight:700;margin-top:4px">'+(eventsLoadingMore?t('Loading…'):'Load more events')+'</button>';
+  }
 }
 function renderEventsMap(list){
   const el=document.getElementById('eventsMapView');
@@ -5695,56 +5737,71 @@ async function admDeleteRound(rid,title){
     loadAdminRounds(document.getElementById('adminRoundSearch').value);
   }catch(e){toast(e.message);}
 }
-// ---- Manager panel: event-account sources (e.g. Ticketmaster) ----
+// ---- Manager panel: event-account sources (e.g. Ticketmaster, or a manual source) ----
 const EVENT_PROVIDER_LABELS={ticketmaster:'Ticketmaster'};
+function esProviderChanged(){
+  const isManual=document.getElementById('esProvider').value==='__manual__';
+  document.getElementById('esProviderCustom').style.display=isManual?'block':'none';
+  document.getElementById('esApiKeyWrap').style.display=isManual?'none':'block';
+  document.getElementById('esManualNote').style.display=isManual?'block':'none';
+}
 async function loadAdminEventSources(){
   const box=document.getElementById('adminSourcesList');
   box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+t('Loading…')+'</p>';
   try{
     const data=await api('/api/admin/event-sources');
-    // keep the provider dropdown in sync with what the server actually supports
+    // keep the provider dropdown in sync with what the server can auto-fetch, and
+    // always keep the manual option available at the end of the list.
     const sel=document.getElementById('esProvider');
     if(data.availableProviders&&data.availableProviders.length){
-      sel.innerHTML=data.availableProviders.map(p=>'<option value="'+p+'">'+(EVENT_PROVIDER_LABELS[p]||p)+'</option>').join('');
+      sel.innerHTML=data.availableProviders.map(p=>'<option value="'+p+'">'+(EVENT_PROVIDER_LABELS[p]||p)+'</option>').join('')
+        +'<option value="__manual__">Other / manual (type a name)…</option>';
     }
+    esProviderChanged();
     if(!data.sources.length){
-      box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No event accounts added yet. Add one above to start pulling events into the Nearby filter.</p>';
+      box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No event accounts added yet. Add one above to start pulling events into the Nearby filter — or add a manual source to enter events by hand.</p>';
       return;
     }
     box.innerHTML=data.sources.map(s=>{
       const providerName=EVENT_PROVIDER_LABELS[s.provider]||s.provider;
       const statusColor=s.enabled?'#2E9E5B':'var(--muted)';
-      const statusText=s.enabled?'Active — pulling events':'Paused';
-      let cacheLine='No cached results yet';
-      if(s.cached_areas>0){
-        const mins=Math.max(0,Math.round((Date.now()-s.cache_updated_at)/60000));
+      const statusText=s.isManual?(s.enabled?'Manual source':'Manual source (paused)'):(s.enabled?'Active — pulling events daily':'Paused');
+      let liveLine=s.isManual?'No events added yet':'No events fetched yet';
+      if(s.live_events>0){
+        const mins=Math.max(0,Math.round((Date.now()-s.last_event_added)/60000));
         const when=mins<1?'just now':mins<60?mins+'m ago':Math.round(mins/60)+'h ago';
-        cacheLine='💾 Cached for '+s.cached_areas+' area'+(s.cached_areas===1?'':'s')+' · last fetched '+when;
+        liveLine=s.live_events+' event'+(s.live_events===1?'':'s')+' live · last added '+when;
       }
+      const addBtn=s.isManual?'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admOpenAddEvent(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">+ Add event</span>':'';
       return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
-        +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+providerName+' · '+esc(s.api_key)+'</div></div>'
+        +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+providerName+(s.api_key?' · '+esc(s.api_key):'')+'</div></div>'
         +'<label class="switch"><input type="checkbox" '+(s.enabled?'checked':'')+' onchange="admToggleEventSource(\''+s.id+'\')"><span class="slider"></span></label>'
         +'</div>'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">'
         +'<span style="font-size:11.5px;font-weight:700;color:'+statusColor+'">● '+statusText+'</span>'
-        +'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span>'
+        +'<div style="display:flex;gap:12px;align-items:center">'+addBtn+'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span></div>'
         +'</div>'
-        +'<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+cacheLine+' · results refresh every '+(data.cacheTtlMinutes||60)+' min</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+liveLine+(s.isManual?'':' · refreshed once daily, up to '+(data.ingestWindowDays||30)+' days out')+'</div>'
+        +'<div id="admSrcEvents-'+s.id+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"></div>'
         +'</div>';
     }).join('');
   }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+e.message+'</p>';}
 }
 async function admAddEventSource(){
-  const provider=document.getElementById('esProvider').value;
+  const rawProvider=document.getElementById('esProvider').value;
+  const isManual=rawProvider==='__manual__';
+  const provider=isManual?document.getElementById('esProviderCustom').value.trim():rawProvider;
   const label=document.getElementById('esLabel').value.trim();
   const apiKey=document.getElementById('esApiKey').value.trim();
-  if(!apiKey){toast('Enter an API key');return;}
+  if(isManual&&!provider){toast('Type a name for this source');return;}
+  if(!isManual&&!apiKey){toast('Enter an API key');return;}
   try{
-    await api('/api/admin/event-sources','POST',{provider,label,apiKey});
-    toast('Account added — events will start flowing in 🎟️');
+    await api('/api/admin/event-sources','POST',{provider,label,apiKey:isManual?undefined:apiKey});
+    toast(isManual?'Manual source added — add its first event below 📝':'Account added — events will start flowing in 🎟️');
     document.getElementById('esLabel').value='';
     document.getElementById('esApiKey').value='';
+    document.getElementById('esProviderCustom').value='';
     loadAdminEventSources();
   }catch(e){toast(e.message);}
 }
@@ -5753,8 +5810,65 @@ async function admToggleEventSource(sid){
   catch(e){toast(e.message);loadAdminEventSources();}
 }
 async function admDeleteEventSource(sid,label){
-  if(!confirm('Remove "'+label+'"? Its events will stop appearing in the Nearby filter.'))return;
+  if(!confirm('Remove "'+label+'"? It will stop being auto-refreshed (or stop accepting new manual events). Events already live keep showing until they age out.'))return;
   try{await api('/api/admin/event-sources/'+sid+'/delete','POST',{});toast('Account removed');loadAdminEventSources();}
+  catch(e){toast(e.message);}
+}
+// Manual sources: a lightweight inline form to add one event at a time, right under
+// that source's card, and a way to see/remove what's already been added.
+function admOpenAddEvent(sid,label){
+  const box=document.getElementById('admSrcEvents-'+sid);
+  if(!box)return;
+  const open=box.style.display==='block';
+  box.style.display=open?'none':'block';
+  if(open)return;
+  box.innerHTML='<div style="font-weight:700;font-size:13px;color:var(--night);margin-bottom:8px">Add an event to "'+esc(label)+'"</div>'
+    +'<input id="admEvTitle-'+sid+'" placeholder="Event name" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    +'<input id="admEvCategory-'+sid+'" placeholder="Category (optional)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    +'<input id="admEvPlace-'+sid+'" placeholder="Place / venue (optional)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    +'<input id="admEvWhen-'+sid+'" type="datetime-local" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    +'<div style="display:flex;gap:8px;margin-bottom:8px"><input id="admEvLat-'+sid+'" type="number" step="any" placeholder="Lat (optional — needed to show on map)" style="flex:1;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;box-sizing:border-box"><input id="admEvLng-'+sid+'" type="number" step="any" placeholder="Lng (optional)" style="flex:1;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;box-sizing:border-box"></div>'
+    +'<input id="admEvLink-'+sid+'" placeholder="Link (optional)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:10px;box-sizing:border-box">'
+    +'<button class="btn btn-mango" style="width:100%;padding:10px" onclick="admAddManualEvent(\''+sid+'\')">➕ Add event</button>'
+    +'<div id="admSrcEventsList-'+sid+'" style="margin-top:12px"></div>';
+  admLoadSourceEvents(sid);
+}
+async function admAddManualEvent(sid){
+  const title=document.getElementById('admEvTitle-'+sid).value.trim();
+  if(!title){toast('Give the event a name');return;}
+  const category=document.getElementById('admEvCategory-'+sid).value.trim();
+  const place=document.getElementById('admEvPlace-'+sid).value.trim();
+  const whenVal=document.getElementById('admEvWhen-'+sid).value;
+  const lat=parseFloat(document.getElementById('admEvLat-'+sid).value);
+  const lng=parseFloat(document.getElementById('admEvLng-'+sid).value);
+  const link=document.getElementById('admEvLink-'+sid).value.trim();
+  const body={title,category:category||undefined,place:place||undefined,link:link||undefined};
+  if(whenVal)body.startsAt=new Date(whenVal).getTime();
+  if(!isNaN(lat))body.lat=lat;
+  if(!isNaN(lng))body.lng=lng;
+  try{
+    await api('/api/admin/event-sources/'+sid+'/events','POST',body);
+    toast('Event added — it will show in Discover 🎉');
+    ['Title','Category','Place','When','Lat','Lng','Link'].forEach(f=>{const el=document.getElementById('admEv'+f+'-'+sid);if(el)el.value='';});
+    admLoadSourceEvents(sid);
+    loadAdminEventSources();
+  }catch(e){toast(e.message);}
+}
+async function admLoadSourceEvents(sid){
+  const box=document.getElementById('admSrcEventsList-'+sid);
+  if(!box)return;
+  box.innerHTML='<p style="color:var(--muted);font-size:12.5px">'+t('Loading…')+'</p>';
+  try{
+    const data=await api('/api/admin/event-sources/'+sid+'/events');
+    if(!data.events.length){box.innerHTML='<p style="color:var(--muted);font-size:12.5px">No events added yet.</p>';return;}
+    box.innerHTML=data.events.map(e=>{
+      const when=e.starts_at?new Date(e.starts_at).toLocaleDateString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'No date set';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)"><div style="font-size:12.5px;color:var(--night)"><b>'+esc(e.title)+'</b><div style="color:var(--muted)">'+when+(e.place?' · '+esc(e.place):'')+'</div></div><span style="font-size:12px;font-weight:700;color:#d94b3b;cursor:pointer;flex-shrink:0" onclick="admDeleteSourceEvent(\''+e.id+'\',\''+sid+'\')">Remove</span></div>';
+    }).join('');
+  }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:12.5px">'+e.message+'</p>';}
+}
+async function admDeleteSourceEvent(eid,sid){
+  try{await api('/api/events/'+eid+'/delete','POST',{});toast('Event removed');admLoadSourceEvents(sid);loadAdminEventSources();}
   catch(e){toast(e.message);}
 }
 async function loadAdminReports(){
