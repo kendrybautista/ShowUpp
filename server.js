@@ -273,6 +273,14 @@ await db.exec(`
     created_by  TEXT,
     created_at  BIGINT NOT NULL
   );
+  -- Caches each event-account's results per (source, rough location, radius bucket) so
+  -- repeated searches from the same area don't re-hit Ticketmaster's (etc.) API and burn
+  -- through its daily request allowance. See EVENT_CACHE_TTL_MS below.
+  CREATE TABLE IF NOT EXISTS event_cache (
+    cache_key   TEXT PRIMARY KEY,
+    payload     TEXT NOT NULL,
+    fetched_at  BIGINT NOT NULL
+  );
 `);
 
   // Seed the admin/owner account
@@ -925,7 +933,7 @@ app.post('/api/me/location', requireAuth, async (req, res) => {
 app.get('/api/discover-people', requireAuth, async (req, res) => {
   const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const myInterests = me.interests ? JSON.parse(me.interests) : [];
-  const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 500);
+  const radiusMi = Math.min(parseFloat(req.query.radius) || 25, 100); // true max is 100 mi (~160 km), matching the client-side slider
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const hasLoc = !isNaN(lat) && !isNaN(lng);
   const mode = req.query.mode || 'distance'; // 'distance' | 'country'
@@ -1971,6 +1979,36 @@ const EVENT_PROVIDERS = {
 
 // Pulls events from every enabled account the Manager panel has configured, plus a
 // Ticketmaster key set via env var as a fallback for people who deploy that way instead.
+// Each provider's results are cached (see below) so a busy day of Nearby searches
+// doesn't chew through that provider's daily API allowance.
+const EVENT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour — event listings don't change minute to minute
+// Buckets lat/lng to a ~5.5km grid and the radius to 10-mile steps, so nearby searches
+// within the same city/radius share one cached fetch instead of each getting their own.
+function eventCacheKey(sourceKey, lat, lng, radiusMi) {
+  const rlat = Math.round(lat * 20) / 20;
+  const rlng = Math.round(lng * 20) / 20;
+  const rradius = Math.ceil(radiusMi / 10) * 10;
+  return sourceKey + ':' + rlat + ':' + rlng + ':' + rradius;
+}
+async function getProviderEventsCached(cacheKey, fetchFn) {
+  const row = await db.prepare('SELECT payload, fetched_at FROM event_cache WHERE cache_key = ?').get(cacheKey);
+  if (row && (Date.now() - Number(row.fetched_at)) < EVENT_CACHE_TTL_MS) {
+    return JSON.parse(row.payload); // fresh — skip the network call entirely
+  }
+  try {
+    const events = await fetchFn();
+    await db.prepare(`
+      INSERT INTO event_cache (cache_key, payload, fetched_at) VALUES (?, ?, ?)
+      ON CONFLICT (cache_key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at
+    `).run(cacheKey, JSON.stringify(events), Date.now());
+    return events;
+  } catch (err) {
+    // Provider request failed (rate limit, outage, etc.) — serve stale cache rather
+    // than an empty list, if we have anything at all to fall back on.
+    if (row) { console.log('[events] provider fetch failed, serving stale cache:', err.message); return JSON.parse(row.payload); }
+    throw err;
+  }
+}
 async function fetchExternalEvents(lat, lng, radiusMi) {
   const external = [];
   if (typeof lat !== 'number' || typeof lng !== 'number') return external;
@@ -1978,11 +2016,13 @@ async function fetchExternalEvents(lat, lng, radiusMi) {
   for (const s of sources) {
     const fn = EVENT_PROVIDERS[s.provider];
     if (!fn) continue;
-    try { external.push(...(await fn(s.api_key, lat, lng, radiusMi, s.label))); }
+    const cacheKey = eventCacheKey('src:' + s.id, lat, lng, radiusMi);
+    try { external.push(...(await getProviderEventsCached(cacheKey, () => fn(s.api_key, lat, lng, radiusMi, s.label)))); }
     catch (err) { console.log('[events]', s.provider, 'error', err.message); }
   }
   if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
-    try { external.push(...(await EVENT_PROVIDERS.ticketmaster(process.env.TICKETMASTER_API_KEY, lat, lng, radiusMi, 'Ticketmaster'))); }
+    const cacheKey = eventCacheKey('env:ticketmaster', lat, lng, radiusMi);
+    try { external.push(...(await getProviderEventsCached(cacheKey, () => EVENT_PROVIDERS.ticketmaster(process.env.TICKETMASTER_API_KEY, lat, lng, radiusMi, 'Ticketmaster')))); }
     catch (err) {}
   }
   return external;
@@ -2057,11 +2097,21 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 // key isn't echoed back in full once it's saved.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
   const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at FROM event_sources ORDER BY created_at DESC').all();
-  const masked = rows.map(r => ({
-    ...r,
-    api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : ''
-  }));
-  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS) });
+  const masked = [];
+  for (const r of rows) {
+    // Surface cache freshness so the owner can see caching is actually saving requests,
+    // rather than wondering why the count doesn't match every single page load.
+    const cacheRow = await db.prepare(
+      "SELECT COUNT(*) AS n, MAX(fetched_at) AS latest FROM event_cache WHERE cache_key LIKE ?"
+    ).get('src:' + r.id + ':%');
+    masked.push({
+      ...r,
+      api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
+      cached_areas: cacheRow ? Number(cacheRow.n) || 0 : 0,
+      cache_updated_at: cacheRow && cacheRow.latest ? Number(cacheRow.latest) : null
+    });
+  }
+  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), cacheTtlMinutes: EVENT_CACHE_TTL_MS / 60000 });
 });
 
 // Add a new event-account (e.g. a Ticketmaster API key) — the events filter will start
@@ -2511,6 +2561,11 @@ initDb()
     // Birthday notifications: check shortly after boot, then once every 24 hours.
     setTimeout(() => { checkBirthdays(); }, 15000);
     setInterval(() => { checkBirthdays(); }, 24 * 60 * 60 * 1000);
+    // Housekeeping: clear out event-provider cache rows once they're well past their TTL,
+    // so the table doesn't grow forever as people search from new locations.
+    setInterval(() => {
+      db.prepare('DELETE FROM event_cache WHERE fetched_at < ?').run(Date.now() - 7 * 24 * 60 * 60 * 1000).catch(() => {});
+    }, 6 * 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to initialize the database. Is DATABASE_URL correct?');
