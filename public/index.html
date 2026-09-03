@@ -321,14 +321,47 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 /* Keep Leaflet maps contained so their internal panes/controls can't cover the nav bar or sheets.
    We isolate the container's stacking context (so nothing escapes above the nav/sheets) but must
    NOT override Leaflet's own pane z-indexes — it relies on them to layer tiles/markers/popups. */
-#mapView,#eventsMapView{position:relative;z-index:0;isolation:isolate}
-.leaflet-container{z-index:1}
+#mapView,#eventsMapView{position:relative;z-index:0;isolation:isolate;transition:all .28s cubic-bezier(.4,0,.2,1)}
+.leaflet-container{z-index:1;background:#e8eef3}
 .map-popup-title{font-size:14px;font-weight:700;color:var(--night)}
 .map-popup-meta{font-size:12.5px;color:var(--muted);margin-top:2px}
 .map-popup-open{margin-top:8px;width:100%;border:none;border-radius:10px;padding:7px 10px;font-size:12.5px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--coral),var(--mango));cursor:pointer}
 .phone[data-theme="dark"] .map-popup-title{color:#EDEEF7}
 .leaflet-popup-content{margin:10px 12px}
-.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card)}
+.leaflet-popup-content-wrapper{background:var(--card);border-radius:14px;box-shadow:0 8px 30px rgba(30,30,70,.22)}
+.leaflet-popup-tip{background:var(--card)}
+
+/* ---- Map controls (items 3 & 4) ----
+   Floating stack of round buttons, bottom-right of each map: recenter and expand. */
+.map-fab-stack{position:absolute;right:12px;bottom:14px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+.map-fab{width:42px;height:42px;border-radius:50%;background:var(--card);border:1.5px solid var(--line);box-shadow:0 4px 16px rgba(30,30,70,.22);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--night);font-size:18px;line-height:1;transition:transform .12s,background .12s;-webkit-tap-highlight-color:transparent}
+.map-fab:active{transform:scale(.9)}
+.map-fab.locating{animation:mapfabspin 1s linear infinite}
+@keyframes mapfabspin{to{transform:rotate(360deg)}}
+/* Count pill, top-left (item 5) */
+.map-count-pill{position:absolute;left:12px;top:12px;z-index:1000;background:var(--card);border:1.5px solid var(--line);box-shadow:0 3px 12px rgba(30,30,70,.16);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;color:var(--night);display:flex;align-items:center;gap:6px;pointer-events:none}
+.map-count-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 3px rgba(255,111,97,.25)}
+
+/* ---- Expanded / fullscreen map (item 4) ----
+   Fills the phone frame. position:absolute pins to the .screen (which is the app's
+   full viewport), above content but below the top status bar and bottom nav. */
+#mapView.map-expanded,#eventsMapView.map-expanded{
+  position:fixed;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
+  margin:0;border-radius:0;border:none;z-index:1200
+}
+/* When any map is expanded, hide the bottom nav so the map truly covers the screen. */
+.phone.map-is-expanded .nav{display:none}
+
+/* ---- Modern marker + cluster styling (item 5) ---- */
+.round-pin{position:relative;width:36px;height:36px}
+.round-pin .round-pin-dot{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 3px 10px rgba(40,40,90,.35);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+.round-pin .round-pin-pulse{position:absolute;left:50%;top:50%;width:36px;height:36px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(255,111,97,.28);animation:pinpulse 2s ease-out infinite}
+@keyframes pinpulse{0%{transform:translate(-50%,-50%) scale(.5);opacity:.8}100%{transform:translate(-50%,-50%) scale(1.6);opacity:0}}
+.su-cluster{background:transparent}
+.su-cluster div{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;font-family:'Instrument Sans';background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 4px 14px rgba(40,40,90,.35)}
+.su-cluster.su-cluster-lg div{width:48px;height:48px;font-size:15px}
+/* "You are here" marker gets a soft accuracy halo */
+.user-halo{border-radius:50%;background:rgba(45,212,191,.18);border:2px solid rgba(45,212,191,.5)}
 .navbtn{background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;color:var(--muted);font-size:10.5px;font-weight:600;flex:1;position:relative}
 .navbtn svg{width:24px;height:24px}
 .navbtn.on{color:var(--coral)}
@@ -838,6 +871,18 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="catpill" id="tf-today" onclick="pickTimeFilter('today')">Today</div>
         <div class="catpill" id="tf-week" onclick="pickTimeFilter('week')">This week</div>
         <div class="catpill" id="tf-month" onclick="pickTimeFilter('month')">This month</div>
+        <div class="catpill" id="tf-date" onclick="openDateFilter()">📅 Pick a date</div>
+      </div>
+      <!-- Specific-date entry (item 2): choose one exact day, or a start–end range.
+           Hidden until "Pick a date" is tapped; feeds the same filtering pipeline. -->
+      <div id="dateFilterRow" style="display:none;gap:8px;padding:2px 0 6px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px">From
+          <input type="date" id="tfDateFrom" onchange="onDateFilterChange()" style="padding:8px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:13px">
+        </label>
+        <label style="font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px">To <span style="opacity:.6">(optional)</span>
+          <input type="date" id="tfDateTo" onchange="onDateFilterChange()" style="padding:8px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:13px">
+        </label>
+        <button type="button" onclick="clearDateFilter()" style="align-self:flex-end;background:var(--bone);border:1.5px solid var(--line);color:var(--night);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer">Clear</button>
       </div>
       <div class="filter-sec-label">Show</div>
       <div style="display:flex;gap:6px;padding:0 0 4px;flex-wrap:wrap">
@@ -1128,11 +1173,15 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <input type="url" id="newLink" placeholder="https://…">
       </div>
       <div class="field"><label>Where does it meet? <span style="color:var(--muted);font-weight:400">(optional)</span></label>
-        <input type="text" id="newPlace" placeholder="e.g. Riverside Park, or a neighborhood">
+        <input type="text" id="newPlace" placeholder="e.g. Av. Winston Churchill 1099, Santo Domingo" oninput="onPlaceInput()" onblur="validatePlaceField()">
+        <!-- Live, country-aware address feedback (item 1): warns on pasted map links and
+             confirms when an address resolves so the Round actually shows a distance. -->
+        <div id="addrFeedback" style="font-size:12.5px;margin-top:6px;display:none;align-items:flex-start;gap:6px;line-height:1.35"></div>
         <div id="locStatus" style="font-size:12.5px;color:var(--muted);margin-top:8px;display:flex;align-items:center;gap:8px">
           <button type="button" onclick="attachRoundLocation()" style="background:#EAFBF7;color:#0d9488;border:none;padding:8px 12px;border-radius:10px;font-weight:700;font-size:12.5px;cursor:pointer">📍 Use my current location</button>
           <span id="locStatusText"></span>
         </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Tip: type the street and city — not a Google Maps link.</div>
       </div>
       <div class="privacy-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Adding a location lets nearby people find your Round on the map. Only the area shows — never your exact address.</span></div>
       <button class="btn btn-mango" onclick="createRound()">Create Round</button>
@@ -2729,14 +2778,51 @@ let maxDistKm=25;
 // falls within the chosen window. Rounds with no date set are excluded once a specific
 // window (other than "Any time") is picked, since we can't know when they meet.
 let currentTimeFilter='any';
+// Specific-date range (item 2). When currentTimeFilter==='date' these bound the results;
+// dateTo is optional (a single day filters to just dateFrom). Stored as YYYY-MM-DD strings.
+let dateFilterFrom='', dateFilterTo='';
 function pickTimeFilter(v){
   currentTimeFilter=v;
-  ['any','today','week','month'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f===v);});
+  ['any','today','week','month','date'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f===v);});
+  if(v!=='date'){document.getElementById('dateFilterRow').style.display='none';}
   updateFilterActiveDot();
   renderRoundsList();
-  // Events are filtered server-side (item 1), so a When change must re-fetch them
-  // whenever the Events section is on screen.
+  // Events are filtered server-side, so a When change must re-fetch them whenever the
+  // Events section is on screen.
   if(homeSection==='events'||homeSection==='both')loadEvents();
+}
+// "Pick a date" chip — reveal the date inputs and switch into date mode.
+function openDateFilter(){
+  currentTimeFilter='date';
+  ['any','today','week','month','date'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f==='date');});
+  const row=document.getElementById('dateFilterRow');row.style.display='flex';
+  // Default the From date to today the first time, so the picker isn't empty.
+  const fromEl=document.getElementById('tfDateFrom');
+  if(!fromEl.value){const d=new Date();fromEl.value=d.toISOString().slice(0,10);}
+  onDateFilterChange();
+}
+function onDateFilterChange(){
+  dateFilterFrom=document.getElementById('tfDateFrom').value||'';
+  dateFilterTo=document.getElementById('tfDateTo').value||'';
+  // Guard against an inverted range: if To is before From, snap To up to From.
+  if(dateFilterFrom&&dateFilterTo&&dateFilterTo<dateFilterFrom){dateFilterTo=dateFilterFrom;document.getElementById('tfDateTo').value=dateFilterTo;}
+  currentTimeFilter='date';
+  updateFilterActiveDot();
+  renderRoundsList();
+  if(homeSection==='events'||homeSection==='both')loadEvents();
+}
+function clearDateFilter(){
+  document.getElementById('tfDateFrom').value='';document.getElementById('tfDateTo').value='';
+  dateFilterFrom='';dateFilterTo='';
+  pickTimeFilter('any');
+}
+// Inclusive day bounds (local time) for the active date filter, as ms timestamps.
+function dateFilterBounds(){
+  if(!dateFilterFrom)return null;
+  const start=new Date(dateFilterFrom+'T00:00:00');
+  const endSrc=dateFilterTo||dateFilterFrom;
+  const end=new Date(endSrc+'T23:59:59.999');
+  return {start:start.getTime(),end:end.getTime()};
 }
 function matchesTimeFilter(r){
   if(currentTimeFilter==='any')return true;
@@ -2746,6 +2832,10 @@ function matchesTimeFilter(r){
   if(currentTimeFilter==='today')return d.toDateString()===t.toDateString();
   if(currentTimeFilter==='week'){const days=(d-t)/86400000;return days>=-0.001&&days<=7;}
   if(currentTimeFilter==='month'){const days=(d-t)/86400000;return days>=-0.001&&days<=31;}
+  if(currentTimeFilter==='date'){
+    const b=dateFilterBounds();if(!b)return true;
+    return evTime>=b.start&&evTime<=b.end;
+  }
   return true;
 }
 function filteredRounds(){
@@ -2783,7 +2873,9 @@ function resetFilters(){
   currentFilter='✨ For you';
   document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.toggle('on',c.getAttribute('data-filter')==='✨ For you'));
   currentTimeFilter='any';
-  ['any','today','week','month'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f==='any');});
+  ['any','today','week','month','date'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f==='any');});
+  dateFilterFrom='';dateFilterTo='';
+  {const df=document.getElementById('tfDateFrom');if(df)df.value='';const dt=document.getElementById('tfDateTo');if(dt)dt.value='';const dr=document.getElementById('dateFilterRow');if(dr)dr.style.display='none';}
   maxDistKm=25;
   const slider=document.getElementById('distSlider');if(slider)slider.value=distUnit==='mi'?Math.round(25*0.621371):25;
   updateDistLabel();
@@ -3049,7 +3141,13 @@ function fetchEventsPage(page){
   // events respond to them exactly like Rounds do (item 1). "When" maps straight to the
   // server's date-range param; distance is sent in MILES (server expects miles), and only
   // when the user has narrowed it below the full range so an untouched slider stays "all".
-  if(currentTimeFilter&&currentTimeFilter!=='any')q+='&when='+encodeURIComponent(currentTimeFilter);
+  if(currentTimeFilter&&currentTimeFilter!=='any'&&currentTimeFilter!=='date')q+='&when='+encodeURIComponent(currentTimeFilter);
+  // Specific-date filter (item 2): send explicit from/to dates; the server bounds
+  // starts_at to that range. "date" is not sent as a "when" preset.
+  if(currentTimeFilter==='date'&&dateFilterFrom){
+    q+='&dateFrom='+encodeURIComponent(dateFilterFrom);
+    q+='&dateTo='+encodeURIComponent(dateFilterTo||dateFilterFrom);
+  }
   if(userLoc&&typeof maxDistKm==='number'&&maxDistKm<MAX_DIST_KM){
     const miles=maxDistKm*0.621371;
     q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
@@ -3180,32 +3278,31 @@ function renderEventsMap(list){
   if(typeof L==='undefined'){el.innerHTML='<p style="padding:20px;text-align:center;color:var(--muted)">Map couldn\'t load.</p>';return;}
   const center=userLoc||{lat:18.4861,lng:-69.9312};
   if(!eventsMap){
-    eventsMap=L.map(el,{zoomControl:true,preferCanvas:true}).setView([center.lat,center.lng],11);
+    eventsMap=L.map(el,{zoomControl:true,preferCanvas:true,zoomAnimation:true}).setView([center.lat,center.lng],11);
     mapTiles(mapType).addTo(eventsMap);
     eventsMapCentered=true;
+    ensureMapControls('eventsMapView',{onRecenter:(b)=>recenterMap(()=>eventsMap,b),getMap:()=>eventsMap});
   }else if(!eventsMapCentered){
     // Only recenter the very first time we get a location — never on later background
-    // page loads, which would rudely snap the user's pan/zoom back to center (item 5).
+    // page loads, which would rudely snap the user's pan/zoom back to center.
     eventsMap.setView([center.lat,center.lng],11);eventsMapCentered=true;
   }
-  // Cluster group: nearby pins collapse into count bubbles, so the map stays smooth
-  // whether there are 50 or 5,000 events. Reused across renders; we just reset its
-  // contents rather than adding thousands of loose layers to the map each time.
   if(!eventsCluster){
     eventsCluster=(typeof L.markerClusterGroup==='function')
-      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:55})
+      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:55,iconCreateFunction:suClusterIcon})
       : L.layerGroup();
     eventsMap.addLayer(eventsCluster);
   }
   eventsCluster.clearLayers();
   if(userLoc){
     if(eventsUserMarker)eventsMap.removeLayer(eventsUserMarker);
-    eventsUserMarker=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(eventsMap);
+    eventsUserMarker=userLocationMarker(userLoc).addTo(eventsMap);
   }
-  const markers=[];
+  const markers=[];let plotted=0;
   list.forEach(e=>{
     if(e.lat==null||e.lng==null)return;
-    const mk=L.marker([e.lat,e.lng]);
+    const icon=L.divIcon({html:'<div class="round-pin"><div class="round-pin-dot" style="background:linear-gradient(135deg,#5B7FFF,#8B5CF6)"></div></div>',className:'',iconSize:[36,36],iconAnchor:[18,18],popupAnchor:[0,-16]});
+    const mk=L.marker([e.lat,e.lng],{icon});
     // Build the popup lazily on first open instead of eagerly for every marker — a big
     // win when thousands of markers exist, since most are never opened.
     mk.on('click',()=>{
@@ -3216,10 +3313,11 @@ function renderEventsMap(list){
           +'<button type="button" class="map-popup-open" onclick="openEventDetail(\''+e.id+'\')">'+t('Open Event')+'</button>').openPopup();
       }
     });
-    markers.push(mk);
+    markers.push(mk);plotted++;
   });
   if(eventsCluster.addLayers)eventsCluster.addLayers(markers); // bulk add (fast path)
   else markers.forEach(m=>eventsCluster.addLayer(m));
+  setMapCount('eventsMapView',plotted,'event');
   setTimeout(()=>eventsMap.invalidateSize(),100);
 }
 function openEventDetail(eid){
@@ -3394,7 +3492,9 @@ function mapTiles(type){
   if(type==='satellite'){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
-  return L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+  // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
+  // than raw OSM tiles, with retina support. Falls back gracefully if a tile 404s.
+  return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
 }
 function setMapType(type){
   mapType=type;
@@ -3405,13 +3505,78 @@ function setMapType(type){
   const s=document.getElementById('mapTypeToggle');
   if(s){s.querySelector('#mt-standard').classList.toggle('on',type==='standard');s.querySelector('#mt-satellite').classList.toggle('on',type==='satellite');}
 }
+
+// ---- Shared map controls (items 3, 4, 5) ----
+// Injected once per map container: a top-left count pill and a bottom-right FAB stack
+// with Recenter (item 3) and Expand/collapse (item 4). Kept as plain DOM overlays on the
+// container (not Leaflet controls) so they're easy to style and toggle.
+function ensureMapControls(containerId, opts){
+  const host=document.getElementById(containerId);
+  if(!host||host._controlsAdded)return;
+  host._controlsAdded=true;
+  const pill=document.createElement('div');pill.className='map-count-pill';pill.id=containerId+'-count';
+  pill.innerHTML='<span class="dot"></span><span class="txt"></span>';pill.style.display='none';
+  host.appendChild(pill);
+  const stack=document.createElement('div');stack.className='map-fab-stack';
+  const recenter=document.createElement('div');recenter.className='map-fab';recenter.id=containerId+'-recenter';
+  recenter.title='Recenter on my location';recenter.innerHTML='◎';
+  recenter.onclick=()=>opts.onRecenter(recenter);
+  const expand=document.createElement('div');expand.className='map-fab';expand.id=containerId+'-expand';
+  expand.title='Expand map';expand.innerHTML='⤢';
+  expand.onclick=()=>toggleMapExpand(containerId,opts.getMap);
+  stack.appendChild(recenter);stack.appendChild(expand);
+  host.appendChild(stack);
+}
+function setMapCount(containerId,n,noun){
+  const pill=document.getElementById(containerId+'-count');if(!pill)return;
+  if(!n){pill.style.display='none';return;}
+  pill.style.display='flex';pill.querySelector('.txt').textContent=n+' '+noun+(n===1?'':'s');
+}
+// Item 4: toggle a map between inline and full-screen. Invalidates size after the CSS
+// transition so Leaflet re-renders tiles to the new dimensions.
+function toggleMapExpand(containerId,getMap){
+  const host=document.getElementById(containerId);if(!host)return;
+  const expanding=!host.classList.contains('map-expanded');
+  host.classList.toggle('map-expanded',expanding);
+  const phone=document.querySelector('.phone');if(phone)phone.classList.toggle('map-is-expanded',expanding);
+  const btn=document.getElementById(containerId+'-expand');if(btn)btn.innerHTML=expanding?'⤡':'⤢';
+  const map=getMap&&getMap();
+  if(map){setTimeout(()=>map.invalidateSize(),300);}
+}
+// Item 3: recenter helper. Re-requests location if we don't have it yet, then smoothly
+// flies the map to the user with a gentle zoom. Spins the button while locating.
+async function recenterMap(getMap,btn){
+  const map=getMap&&getMap();if(!map)return;
+  let loc=userLoc;
+  if(!loc){
+    if(btn)btn.classList.add('locating');
+    loc=await requestLocation();
+    if(btn)btn.classList.remove('locating');
+    if(loc)userLoc=loc;
+  }
+  if(!loc){toast('Turn on location to recenter.');return;}
+  map.flyTo([loc.lat,loc.lng],14,{duration:.6});
+}
+// A branded, pulsing "you are here" marker (item 5).
+function userLocationMarker(loc){
+  return L.marker([loc.lat,loc.lng],{icon:L.divIcon({
+    className:'',html:'<div class="round-pin"><div class="round-pin-pulse" style="background:rgba(45,212,191,.28)"></div><div class="round-pin-dot" style="background:#2DD4BF"></div></div>',
+    iconSize:[36,36],iconAnchor:[18,18]
+  }),zIndexOffset:1000,interactive:false});
+}
+// Branded cluster bubble (item 5).
+function suClusterIcon(cluster){
+  const n=cluster.getChildCount();
+  return L.divIcon({html:'<div>'+n+'</div>',className:'su-cluster'+(n>=25?' su-cluster-lg':''),iconSize:L.point(40,40)});
+}
+
 let roundsCluster=null, roundsUserMarker=null, roundsMapCentered=false;
 function renderMap(list){
   const el=document.getElementById('mapView');
   if(typeof L==='undefined'){el.innerHTML='<p style="padding:20px;text-align:center;color:var(--muted)">Map couldn\'t load.</p>';return;}
   const center=userLoc||{lat:18.4861,lng:-69.9312}; // default: Santo Domingo
   if(!leafletMap){
-    leafletMap=L.map(el,{zoomControl:true,preferCanvas:true}).setView([center.lat,center.lng],11);
+    leafletMap=L.map(el,{zoomControl:true,preferCanvas:true,zoomAnimation:true}).setView([center.lat,center.lng],11);
     mapTileLayer=mapTiles(mapType).addTo(leafletMap);
     roundsMapCentered=true;
     // floating standard/satellite toggle
@@ -3423,33 +3588,31 @@ function renderMap(list){
       return div;
     };
     ctl.addTo(leafletMap);
+    ensureMapControls('mapView',{onRecenter:(b)=>recenterMap(()=>leafletMap,b),getMap:()=>leafletMap});
   }else if(!roundsMapCentered){
     // Recenter only the first time we obtain a location, never on later re-renders
-    // (filter/tab changes), so the user's pan/zoom isn't snapped back each time (item 5).
+    // (filter/tab changes), so the user's pan/zoom isn't snapped back each time.
     leafletMap.setView([center.lat,center.lng],11);roundsMapCentered=true;
   }
-  // Cluster group keeps the Rounds map fast regardless of how many pins there are.
   if(!roundsCluster){
     roundsCluster=(typeof L.markerClusterGroup==='function')
-      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:50})
+      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:50,iconCreateFunction:suClusterIcon})
       : L.layerGroup();
     leafletMap.addLayer(roundsCluster);
   }
   roundsCluster.clearLayers();
   if(userLoc){
     if(roundsUserMarker)leafletMap.removeLayer(roundsUserMarker);
-    roundsUserMarker=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(leafletMap);
-    roundsUserMarker.bindPopup('You are here');
+    roundsUserMarker=userLocationMarker(userLoc).addTo(leafletMap);
   }
   let plotted=0;const markers=[];
   list.forEach(r=>{
     if(r.lat==null||r.lng==null)return;
-    // Rounds with a photo get a circular photo pin instead of the default map marker,
-    // so the same picture that shows on cards/lists/chats also shows here.
+    // Rounds with a photo get a circular photo pin; others get a branded gradient pin.
     const icon=r.photo
       ?L.divIcon({html:'<img class="round-marker-photo" src="'+esc(r.photo)+'" alt="">',className:'',iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-17]})
-      :null;
-    const mk=icon?L.marker([r.lat,r.lng],{icon}):L.marker([r.lat,r.lng]);
+      :L.divIcon({html:'<div class="round-pin"><div class="round-pin-dot"></div></div>',className:'',iconSize:[36,36],iconAnchor:[18,18],popupAnchor:[0,-16]});
+    const mk=L.marker([r.lat,r.lng],{icon});
     mk.on('click',()=>{
       if(!mk._popupBuilt){
         mk._popupBuilt=true;
@@ -3462,7 +3625,7 @@ function renderMap(list){
   });
   if(roundsCluster.addLayers)roundsCluster.addLayers(markers);
   else markers.forEach(m=>roundsCluster.addLayer(m));
-  // Let the host know if their Rounds have no location saved (created before a place was added)
+  setMapCount('mapView',plotted,'Round');
   const note=document.getElementById('mapNoCoordsNote');
   if(note)note.style.display=(list.length>0&&plotted===0)?'block':'none';
   setTimeout(()=>leafletMap.invalidateSize(),100);
@@ -5975,8 +6138,64 @@ let newRoundLoc=null;
 async function attachRoundLocation(){
   document.getElementById('locStatusText').textContent='Finding your location…';
   const loc=await requestLocation();
-  if(loc){newRoundLoc=loc;document.getElementById('locStatusText').textContent='✓ Location added';document.getElementById('locStatusText').style.color='#0d9488';}
+  if(loc){newRoundLoc=loc;document.getElementById('locStatusText').textContent='✓ Location added';document.getElementById('locStatusText').style.color='#0d9488';
+    // A precise fix from the device overrides any earlier typed-address verdict.
+    addrChecked={ok:true,lat:loc.lat,lng:loc.lng};setAddrFeedback('ok','✓ Using your current location.');}
   else{document.getElementById('locStatusText').textContent='Couldn\'t get location';}
+}
+
+// ---- Address validation (item 1) ----
+// The user's country comes from their profile ("City, Country"); we pass it to the
+// server so validation respects local address formats (e.g. resolving DR addresses in
+// the DR). `addrChecked` caches the last verdict so createRound doesn't re-hit the API.
+let addrChecked=null;      // {ok, lat?, lng?, message?} for the current input, or null if unchecked
+let _addrDebounce=null, _addrSeq=0;
+function userCountry(){ return (me && me.city) ? me.city : ''; }
+// Purely client-side pre-check: catches the obvious "that's a link" case instantly,
+// before any network call, so the user gets feedback the moment they paste.
+function looksLikeUrlClient(s){ return /^(https?:\/\/|www\.)|maps\.app\.goo\.gl|goo\.gl\/maps|maps\.google|google\.[a-z.]+\/maps|bing\.com\/maps|maps\.apple\.com/i.test(s); }
+function setAddrFeedback(kind,msg){
+  const el=document.getElementById('addrFeedback');if(!el)return;
+  if(!msg){el.style.display='none';el.innerHTML='';return;}
+  const color=kind==='ok'?'#0d9488':(kind==='warn'?'#B45309':(kind==='error'?'#DC2626':'var(--muted)'));
+  const icon=kind==='ok'?'✓':(kind==='error'?'⚠️':(kind==='warn'?'⚠️':'⏳'));
+  el.style.display='flex';el.style.color=color;
+  el.innerHTML='<span>'+icon+'</span><span>'+esc(msg)+'</span>';
+}
+function onPlaceInput(){
+  addrChecked=null; // input changed → previous verdict is stale
+  const v=document.getElementById('newPlace').value.trim();
+  if(!v){setAddrFeedback('','');return;}
+  if(looksLikeUrlClient(v)){
+    setAddrFeedback('error','That looks like a map link, not an address. Type the street and city instead.');
+    return;
+  }
+  setAddrFeedback('info','Checking address…');
+  clearTimeout(_addrDebounce);
+  _addrDebounce=setTimeout(validatePlaceField,700); // debounce while typing
+}
+// Ask the server to validate + geocode. Returns the verdict object (also cached in addrChecked).
+async function validatePlaceField(){
+  const v=document.getElementById('newPlace').value.trim();
+  if(!v){setAddrFeedback('','');addrChecked=null;return null;}
+  if(looksLikeUrlClient(v)){const r={ok:false,reason:'is-url',message:'That looks like a map link, not an address. Type the street and city instead.'};addrChecked=r;setAddrFeedback('error',r.message);return r;}
+  const seq=++_addrSeq;
+  setAddrFeedback('info','Checking address…');
+  try{
+    const r=await api('/api/validate-address','POST',{address:v,country:userCountry()});
+    if(seq!==_addrSeq)return addrChecked; // a newer check superseded this one
+    addrChecked=r;
+    if(r.ok){
+      newRoundLoc={lat:r.lat,lng:r.lng};
+      setAddrFeedback('ok', r.normalized ? ('✓ Found: '+r.normalized.split(',').slice(0,3).join(', ')) : '✓ Address looks good.');
+    }else{
+      setAddrFeedback(r.reason==='geocode-failed'?'warn':'error', r.message||'That address could not be verified.');
+    }
+    return r;
+  }catch(e){
+    if(seq!==_addrSeq)return addrChecked;
+    const r={ok:false,reason:'geocode-failed',message:"Couldn't check that address right now."};addrChecked=r;setAddrFeedback('warn',r.message);return r;
+  }
 }
 let newRoundPhoto=null;
 function pickRoundPhoto(){document.getElementById('roundPhotoInput').click();}
@@ -6015,9 +6234,10 @@ async function loadLinkPreview(url){
   }catch(e){box.style.display='none';}
 }
 async function geocodeAddress(addr){
-  // Geocode via our own server (which sets the required User-Agent). Returns {lat,lng,name} or null.
+  // Country-aware geocode via our own server (which sets the required User-Agent and
+  // biases by the user's country). Returns {lat,lng,name} or null.
   try{
-    const r=await api('/api/geocode?q='+encodeURIComponent(addr));
+    const r=await api('/api/geocode?q='+encodeURIComponent(addr)+'&country='+encodeURIComponent(userCountry()));
     if(r&&r.found)return {lat:r.lat,lng:r.lng,name:r.name||''};
   }catch(e){}
   return null;
@@ -6030,18 +6250,32 @@ async function createRound(){
   const evVal=document.getElementById('newEventAt').value;
   if(!title){toast('Give your Round a name.');return;}
   const cat=CATEGORIES.find(c=>c.n===selectedCats[0])||customCat||{e:'✨',n:'General'};
-  const body={title,blurb,category:cat.n,emoji:cat.e,place};
-  // Prefer tapped current location; otherwise geocode the typed address so it maps
-  if(newRoundLoc){body.lat=newRoundLoc.lat;body.lng=newRoundLoc.lng;}
-  else if(place){
-    toast('Locating address…');
-    const geo=await geocodeAddress(place);
-    if(geo){
-      body.lat=geo.lat;body.lng=geo.lng;
-      // If the geocoder recognized a business/venue name, prepend it to the place text
-      if(geo.name&&!place.toLowerCase().includes(geo.name.toLowerCase()))body.place=geo.name+' — '+place;
+  const body={title,blurb,category:cat.n,emoji:cat.e};
+  // Resolve the location (item 1). Priority: an explicit current-location fix, then a
+  // validated typed address. A typed address must pass validation before we'll attach
+  // it — this is what stops a pasted Google Maps link (or garbage) from producing a
+  // Round with no distance. A hard "this is a link / not an address" error blocks
+  // submission; a soft "couldn't verify right now" lets the user proceed without a pin.
+  if(newRoundLoc && (!place || (addrChecked&&addrChecked.ok))){
+    body.lat=newRoundLoc.lat;body.lng=newRoundLoc.lng;
+    if(place)body.place=place;
+  }else if(place){
+    // Validate now if we haven't already (or the cached verdict is stale).
+    let verdict=addrChecked;
+    if(!verdict){toast('Checking address…');verdict=await validatePlaceField();}
+    if(verdict&&verdict.ok){
+      body.lat=verdict.lat;body.lng=verdict.lng;body.place=place;
+    }else if(verdict&&(verdict.reason==='is-url'||verdict.reason==='no-letters'||verdict.reason==='too-short')){
+      // Hard stop — the input clearly isn't a usable address.
+      setAddrFeedback('error',verdict.message||'Please enter a valid street address.');
+      document.getElementById('newPlace').focus();
+      toast(verdict.message||'Please enter a valid address.');
+      return;
+    }else{
+      // Soft failure (network / not found): let them create it, just without a map pin.
+      body.place=place; // keep their text, but no coordinates
+      toast("Couldn't pin that address, so the Round won't show on the map. You can add a location later by editing it.");
     }
-    else{toast("Couldn't pin that address — the Round will still be created, but won't show on the map. Try tapping 📍 Use my current location.");}
   }
   if(newRoundPhoto)body.photo=newRoundPhoto;
   if(link)body.link=link;
@@ -6049,10 +6283,11 @@ async function createRound(){
   try{
     await api('/api/rounds','POST',body);toast('Round created! 🎉');
     document.getElementById('newTitle').value='';document.getElementById('newBlurb').value='';
-    document.getElementById('newPlace').value='';newRoundLoc=null;newRoundPhoto=null;customCat=null;
+    document.getElementById('newPlace').value='';newRoundLoc=null;newRoundPhoto=null;customCat=null;addrChecked=null;
     document.getElementById('newLink').value='';document.getElementById('newEventAt').value='';
     document.getElementById('newPhotoPreview').style.display='none';
     document.getElementById('locStatusText').textContent='';
+    setAddrFeedback('','');
     go('s-home');
   }catch(e){toast(e.message);}
 }
