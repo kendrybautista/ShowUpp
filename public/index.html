@@ -439,6 +439,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .chat-item{display:flex;gap:13px;align-items:center;padding:14px 22px;cursor:pointer;border-bottom:1px solid var(--line)}
 .chat-item:active{background:#fff}
 .chat-item .cav{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
+.chat-item .cav.cav-photo{position:relative;padding:0;overflow:visible}
+.chat-item .cav.cav-photo img{width:100%;height:100%;object-fit:cover;border-radius:16px}
 .chat-item .ct{flex:1;min-width:0}
 .chat-item .ct .cn{display:flex;justify-content:space-between;align-items:baseline}
 .chat-item .ct b{font-family:'Fraunces',serif;font-size:15.5px;color:var(--night)}
@@ -446,6 +448,22 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .thread-head{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);flex:none}
 .thread-head .back{position:static;background:#f0eee9;width:38px;height:38px}
 .thread-head .tav{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none;background:#EEF0FF}
+.thread-head .tav.tav-photo{position:relative;padding:0;overflow:visible}
+.thread-head .tav.tav-photo img{width:100%;height:100%;object-fit:cover;border-radius:12px}
+.thread-head .tav .tav-emoji-badge{position:absolute;bottom:-4px;right:-4px;width:17px;height:17px;border-radius:50%;background:rgba(255,255,255,.85);border:1.2px solid rgba(255,255,255,.9);box-shadow:0 2px 6px rgba(40,40,90,.2);display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1}
+.phone[data-theme="dark"] .thread-head .tav .tav-emoji-badge{background:rgba(20,20,36,.8);border-color:rgba(255,255,255,.25)}
+.round-marker-photo{width:34px;height:34px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 3px 10px rgba(40,40,90,.3);object-fit:cover;display:block}
+/* Filter panel (item 4): a glassy translucent sheet that drops from the top, letting the
+   Discover feed stay visible (and updating live) underneath as filters are applied. */
+.filter-overlay{position:absolute;inset:0;z-index:70;display:none;background:rgba(20,20,40,.14);-webkit-backdrop-filter:blur(1.5px);backdrop-filter:blur(1.5px)}
+.filter-overlay.open{display:flex;align-items:flex-start;animation:fade .18s ease}
+.filter-panel{width:100%;max-height:88%;overflow-y:auto;background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);border-radius:0 0 26px 26px;box-shadow:0 24px 60px rgba(20,20,50,.28);padding:16px 22px 22px;border-bottom:1.5px solid rgba(255,255,255,.6);animation:filterdrop .28s cubic-bezier(.2,.8,.3,1)}
+@keyframes filterdrop{from{transform:translateY(-14px);opacity:.4}to{transform:translateY(0);opacity:1}}
+.phone[data-theme="dark"] .filter-panel{background:rgba(24,24,42,.86);border-bottom-color:rgba(255,255,255,.12)}
+.filter-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.filter-panel-head h3{margin:0;font-family:'Fraunces',serif;font-size:19px;color:var(--night)}
+.filter-sec-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px}
+.filter-panel .chips{padding:0 0 4px}
 .thread-head .tt{flex:1}
 .thread-head .tt b{font-family:'Fraunces',serif;font-size:15px;color:var(--night);display:block}
 .thread-head .tt span{font-size:11.5px;color:var(--turq);font-weight:600}
@@ -690,8 +708,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <div class="screen" id="s-home">
   <div class="statusbar"></div>
   <div class="fixed-head">
-    <div class="topbar"><div style="display:flex;align-items:center;gap:10px"><img class="hdr-logo" alt="ShowUpp"><div class="hi"><span id="helloWord">Hi there,</span> <b id="homeGreet">👋</b></div></div><div style="display:flex;align-items:center;gap:14px"><div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div></div>
-    <div class="chips" id="homeChips"></div>
+    <div class="topbar"><div style="display:flex;align-items:center;gap:10px"><img class="hdr-logo" alt="ShowUpp"><div class="hi"><span id="helloWord">Hi there,</span> <b id="homeGreet">👋</b></div></div><div style="display:flex;align-items:center;gap:14px"><div style="position:relative;cursor:pointer" onclick="openFilterPanel()" id="filterBtn"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg><span id="filterActiveDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--coral);border:2px solid var(--bone)"></span></div><div style="position:relative;cursor:pointer" onclick="openNotifs()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--coral);color:#fff;border-radius:10px;min-width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px"></span></div><div class="avatar" id="homeAvatar" onclick="go('s-profile')">M</div></div></div>
   </div>
   <div class="scroll">
     <div id="qaBox" style="position:relative;margin:12px 18px 6px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 14px;box-shadow:var(--shadow)">
@@ -710,22 +727,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div id="qaEditList" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
         <button class="btn btn-mango" onclick="closeQaEditor()" style="margin-top:14px">Done</button>
       </div>
-    </div>
-    <div id="distanceBar" style="display:block;padding:6px 22px 4px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
-        <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
-      </div>
-      <input type="range" id="distSlider" min="1" max="200" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
-    </div>
-    <div style="display:flex;gap:6px;padding:8px 22px 4px;flex-wrap:wrap">
-      <div class="catpill" id="hf-both" onclick="switchHomeSection('both')">Both</div>
-      <div class="catpill on" id="hf-rounds" onclick="switchHomeSection('rounds')">Rounds</div>
-      <div class="catpill" id="hf-events" onclick="switchHomeSection('events')">Events</div>
-    </div>
-    <div id="onlyPartnerWrap" style="display:none;align-items:center;justify-content:space-between;padding:2px 22px 12px">
-      <span style="font-size:12.5px;font-weight:600;color:var(--night)">🎟️ Only partner events (Ticketmaster, etc.)</span>
-      <label class="switch"><input type="checkbox" id="onlyPartnerToggle" onchange="toggleOnlyPartnerEvents(this.checked)"><span class="slider"></span></label>
     </div>
     <div class="sec"><h2 id="homeSecTitle">Rounds near you</h2>
       <div style="display:flex;gap:6px;align-items:center">
@@ -758,6 +759,47 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
   <button id="backToTopBtn" onclick="scrollHomeToTop()" aria-label="Back to top" style="display:none;position:absolute;right:16px;bottom:78px;width:40px;height:40px;border-radius:50%;background:var(--card);border:1.5px solid var(--line);box-shadow:0 4px 14px rgba(40,40,80,.18);color:var(--night);font-size:16px;line-height:1;cursor:pointer;z-index:20;align-items:center;justify-content:center">↑</button>
   <div class="nav" data-nav></div>
+
+  <!-- Filter panel (item 4): distance, time, category & source filters live here now,
+       behind a glassy translucent panel so the Discover feed stays visible/updating underneath. -->
+  <div class="filter-overlay" id="filterOverlay" onclick="if(event.target===this)closeFilterPanel()">
+    <div class="filter-panel" id="filterPanel">
+      <div class="filter-panel-head">
+        <h3>Filters</h3>
+        <div style="display:flex;align-items:center;gap:14px">
+          <span onclick="resetFilters()" style="font-size:13px;font-weight:700;color:var(--coral);cursor:pointer">Reset</span>
+          <div onclick="closeFilterPanel()" style="width:30px;height:30px;border-radius:50%;background:rgba(120,120,140,.14);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+        </div>
+      </div>
+      <div class="filter-sec-label">Category</div>
+      <div class="chips" id="homeChips"></div>
+      <div class="filter-sec-label">Distance</div>
+      <div id="distanceBar" style="padding:0 0 4px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:12.5px;font-weight:700;color:var(--night)">Within <span id="distVal" style="color:var(--coral)">25</span> <span id="distUnitLabel">km</span></span>
+          <span style="font-size:11.5px;color:var(--muted)">how far you'll travel</span>
+        </div>
+        <input type="range" id="distSlider" min="1" max="200" value="25" oninput="onDistChange(this.value)" style="width:100%;accent-color:var(--coral)">
+      </div>
+      <div class="filter-sec-label">When</div>
+      <div style="display:flex;gap:6px;padding:0 0 4px;flex-wrap:wrap">
+        <div class="catpill on" id="tf-any" onclick="pickTimeFilter('any')">Any time</div>
+        <div class="catpill" id="tf-today" onclick="pickTimeFilter('today')">Today</div>
+        <div class="catpill" id="tf-week" onclick="pickTimeFilter('week')">This week</div>
+        <div class="catpill" id="tf-month" onclick="pickTimeFilter('month')">This month</div>
+      </div>
+      <div class="filter-sec-label">Show</div>
+      <div style="display:flex;gap:6px;padding:0 0 4px;flex-wrap:wrap">
+        <div class="catpill" id="hf-both" onclick="switchHomeSection('both')">Both</div>
+        <div class="catpill on" id="hf-rounds" onclick="switchHomeSection('rounds')">Rounds</div>
+        <div class="catpill" id="hf-events" onclick="switchHomeSection('events')">Events</div>
+      </div>
+      <div id="onlyPartnerWrap" style="display:none;align-items:center;justify-content:space-between;padding:4px 0 2px">
+        <span style="font-size:12.5px;font-weight:600;color:var(--night)">🎟️ Only partner events (Ticketmaster, etc.)</span>
+        <label class="switch"><input type="checkbox" id="onlyPartnerToggle" onchange="toggleOnlyPartnerEvents(this.checked)"><span class="slider"></span></label>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- DETAIL -->
@@ -1813,6 +1855,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div id="anzStatus" style="font-size:13px;font-weight:700;color:var(--night)"></div>
       </div>
       <div class="report-opt" id="anzSeeItemBtn" onclick="anzSeeItem()">👤 See item reported</div>
+      <div id="anzItemPreview" style="display:none;background:var(--bone);border-radius:14px;padding:12px 14px;margin-bottom:12px"></div>
       <div class="report-opt" style="color:#2e9e5b;font-weight:700" onclick="anzStartVerdict('validate')">✔ Validate — this violates our terms</div>
       <div class="report-opt" onclick="anzStartVerdict('discard')">✖ Discard — this doesn't violate our terms</div>
       <div class="report-opt" style="color:var(--coral);font-weight:700" onclick="anzCloseReport()">🔒 Close report</div>
@@ -2569,6 +2612,26 @@ function primeLocation(){
   );
 }
 let maxDistKm=25;
+// "When" filter (item 4): narrows Rounds down to ones with an upcoming event_at that
+// falls within the chosen window. Rounds with no date set are excluded once a specific
+// window (other than "Any time") is picked, since we can't know when they meet.
+let currentTimeFilter='any';
+function pickTimeFilter(v){
+  currentTimeFilter=v;
+  ['any','today','week','month'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f===v);});
+  updateFilterActiveDot();
+  renderRoundsList();
+}
+function matchesTimeFilter(r){
+  if(currentTimeFilter==='any')return true;
+  const evTime=r.event_at||r.starts_at;
+  if(!evTime)return false;
+  const d=new Date(evTime),t=new Date();
+  if(currentTimeFilter==='today')return d.toDateString()===t.toDateString();
+  if(currentTimeFilter==='week'){const days=(d-t)/86400000;return days>=-0.001&&days<=7;}
+  if(currentTimeFilter==='month'){const days=(d-t)/86400000;return days>=-0.001&&days<=31;}
+  return true;
+}
 function filteredRounds(){
   let list=allRounds.slice();
   if(currentFilter==='📍 Near me'){
@@ -2577,11 +2640,12 @@ function filteredRounds(){
       list=list.filter(r=>haversine(userLoc,{lat:r.lat,lng:r.lng})<=maxDistKm);
       list.sort((a,b)=>haversine(userLoc,{lat:a.lat,lng:a.lng})-haversine(userLoc,{lat:b.lat,lng:b.lng}));
     }
-    return list;
   }else if(currentFilter!=='✨ For you'){
     const cat=currentFilter.replace(/^[^\sA-Za-z]+\s*/,'').trim();
     list=list.filter(r=>(r.category||'').toLowerCase()===cat.toLowerCase());
   }
+  list=list.filter(matchesTimeFilter);
+  if(currentFilter==='📍 Near me'&&userLoc)return list; // already distance-sorted above
   // Popularity sort: most liked + loved Rounds rise to the top so they gather more people.
   // Ties fall back to newest first.
   list.sort((a,b)=>{
@@ -2592,12 +2656,31 @@ function filteredRounds(){
   });
   return list;
 }
+// Filter panel open/close + a small dot on the icon when any non-default filter is active.
+function openFilterPanel(){document.getElementById('filterOverlay').classList.add('open');}
+function closeFilterPanel(){document.getElementById('filterOverlay').classList.remove('open');}
+function updateFilterActiveDot(){
+  const active=currentFilter!=='✨ For you'||currentTimeFilter!=='any'||homeSection!=='rounds'||maxDistKm!==25||onlyPartnerEvents;
+  const dot=document.getElementById('filterActiveDot');if(dot)dot.style.display=active?'block':'none';
+}
+function resetFilters(){
+  currentFilter='✨ For you';
+  document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.toggle('on',c.getAttribute('data-filter')==='✨ For you'));
+  currentTimeFilter='any';
+  ['any','today','week','month'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f==='any');});
+  maxDistKm=25;
+  const slider=document.getElementById('distSlider');if(slider)slider.value=distUnit==='mi'?Math.round(25*0.621371):25;
+  updateDistLabel();
+  switchHomeSection('rounds');
+  updateFilterActiveDot();
+  renderRoundsList();
+}
 function updateDistLabel(){
   const val=distUnit==='mi'?Math.round(maxDistKm*0.621371):maxDistKm;
   const el=document.getElementById('distVal');if(el)el.textContent=val;
   const unitEl=document.getElementById('distUnitLabel');if(unitEl)unitEl.textContent=distUnit;
 }
-function onDistChange(v){maxDistKm=(distUnit==='mi')?(+v*1.60934):+v;updateDistLabel();renderRoundsList();}
+function onDistChange(v){maxDistKm=(distUnit==='mi')?(+v*1.60934):+v;updateDistLabel();if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();renderRoundsList();}
 async function toggleRoundReact(rid,type,btn){
   try{
     const r=await api('/api/rounds/'+rid+'/react','POST',{type});
@@ -2768,6 +2851,7 @@ function switchHomeSection(which){
   document.getElementById('eventsPane').style.display=(showEvents&&!clear)?'block':'none';
   document.getElementById('onlyPartnerWrap').style.display=(showEvents&&!clear)?'flex':'none';
   const opToggle=document.getElementById('onlyPartnerToggle');if(opToggle)opToggle.checked=onlyPartnerEvents;
+  if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();
   if(clear)return; // "Clear" just hides everything — no fetches, a quick reset
   if(showEvents)loadEvents();
   if(which==='saved')loadSavedRounds();
@@ -2779,6 +2863,7 @@ let onlyPartnerEvents=false;
 function toggleOnlyPartnerEvents(checked){
   onlyPartnerEvents=checked;
   try{localStorage.setItem('su_only_partner_events',checked?'1':'0');}catch(e){}
+  if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();
   renderEvents();
 }
 // restore the full rounds list (used when returning to Rounds tab)
@@ -3106,6 +3191,7 @@ async function pickChip(el){
   document.querySelectorAll('#homeChips .chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');
   currentFilter=el.getAttribute('data-filter')||el.textContent.trim();
   if(currentFilter==='📍 Near me'&&!userLoc){toast('Finding Rounds near you…');await requestLocation();}
+  if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();
   renderRoundsList();
 }
 async function setView(v){
@@ -3155,7 +3241,12 @@ function renderMap(list){
   let plotted=0;
   list.forEach(r=>{
     if(r.lat==null||r.lng==null)return;
-    const mk=L.marker([r.lat,r.lng]).addTo(leafletMap);
+    // Rounds with a photo get a circular photo pin instead of the default map marker,
+    // so the same picture that shows on cards/lists/chats also shows here.
+    const icon=r.photo
+      ?L.divIcon({html:'<img class="round-marker-photo" src="'+esc(r.photo)+'" alt="">',className:'',iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-17]})
+      :null;
+    const mk=icon?L.marker([r.lat,r.lng],{icon}).addTo(leafletMap):L.marker([r.lat,r.lng]).addTo(leafletMap);
     const popupHtml='<div class="map-popup-title">'+esc(r.title)+'</div>'
       +'<div class="map-popup-meta">'+(r.emoji||'')+' '+t(r.category||'')+(r.place?'<br>'+esc(r.place):'')+(userLoc?'<br>📍 '+distLabel(r):'')+'</div>'
       +'<button type="button" class="map-popup-open" onclick="openDetail(\''+r.id+'\')">'+t('Open Round')+'</button>';
@@ -3768,7 +3859,12 @@ function renderChatRoundsList(rounds){
   if(!rounds.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:30px;font-size:14px">Join a Round to start chatting.</p>';return;}
   list.innerHTML=rounds.map(r=>{
     const badge=r.unread>0?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px;margin-left:6px">'+(r.unread>99?'99+':r.unread)+'</span>':'';
-    return '<div class="chat-item" onclick="openThreadById(\''+r.id+'\')"><div class="cav">'+(r.emoji||'✨')+'</div><div class="ct"><div class="cn"><b>'+esc(r.title)+'</b>'+badge+'</div><div class="prev">'+r.member_count+' members · tap to open</div></div></div>';
+    // Same photo + emoji-badge treatment as the Circles tab, so a Round's picture
+    // follows it into its chat entry too.
+    const av=r.photo
+      ?'<div class="cav cav-photo"><img src="'+esc(r.photo)+'" alt="" loading="lazy"><span class="cc-emoji-badge">'+(r.emoji||'✨')+'</span></div>'
+      :'<div class="cav">'+(r.emoji||'✨')+'</div>';
+    return '<div class="chat-item" onclick="openThreadById(\''+r.id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(r.title)+'</b>'+badge+'</div><div class="prev">'+r.member_count+' members · tap to open</div></div></div>';
   }).join('');
 }
 // ---- Direct messages ----
@@ -3831,7 +3927,10 @@ async function runChatMessageSearch(which,q){
     const header='<h4 style="margin:14px 22px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">'+t('Messages')+'</h4>';
     const rows=hits.map(h=>{
       if(which==='rounds'){
-        return '<div class="chat-item" style="padding:0 22px" onclick="openThreadById(\''+h.round_id+'\')"><div class="cav">'+(h.round_emoji||'✨')+'</div><div class="ct"><div class="cn"><b>'+esc(h.round_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
+        const av=h.round_photo
+          ?'<div class="cav cav-photo"><img src="'+esc(h.round_photo)+'" alt="" loading="lazy"><span class="cc-emoji-badge">'+(h.round_emoji||'✨')+'</span></div>'
+          :'<div class="cav">'+(h.round_emoji||'✨')+'</div>';
+        return '<div class="chat-item" style="padding:0 22px" onclick="openThreadById(\''+h.round_id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(h.round_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
       }
       return '<div class="chat-item" style="padding:0" onclick="openDm(\''+h.conv_id+'\')"><div class="cav">💬</div><div class="ct"><div class="cn"><b>'+esc(h.conv_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
     }).join('');
@@ -5134,7 +5233,14 @@ async function openThread(r){
   activeRound=r;
   cancelReply();
   ephemeralOn=false;document.getElementById('ephBtn').classList.remove('on');
-  document.getElementById('threadAv').textContent=r.emoji||'✨';
+  const threadAvEl=document.getElementById('threadAv');
+  if(r.photo){
+    threadAvEl.classList.add('tav-photo');
+    threadAvEl.innerHTML='<img src="'+esc(r.photo)+'" alt="" loading="lazy"><span class="tav-emoji-badge">'+(r.emoji||'✨')+'</span>';
+  }else{
+    threadAvEl.classList.remove('tav-photo');
+    threadAvEl.textContent=r.emoji||'✨';
+  }
   document.getElementById('threadName').textContent=r.title;
   document.getElementById('threadSub').textContent=r.member_count+' members · Group chat';
   document.getElementById('msgs').innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">Loading…</p>';
@@ -6124,17 +6230,71 @@ function renderAnalyzeSheet(){
   document.getElementById('anzVerdictStep').style.display='none';
   document.getElementById('anzMainStep').style.display='block';
   document.getElementById('anzMsgBox').value='';
-  document.getElementById('anzSeeItemBtn').style.display=r.reported_id?'block':'none';
+  const previewBox=document.getElementById('anzItemPreview');
+  previewBox.style.display='none';previewBox.innerHTML='';
+  document.getElementById('anzSeeItemBtn').style.display=r.item?'block':'none';
+  document.getElementById('anzSeeItemBtn').textContent='👤 See item reported';
+}
+// Renders the actual reported message / round / profile inline, right in the Analyze
+// panel, instead of sending the manager off to the Users tab to go find it themselves.
+function anzItemPreviewHTML(item){
+  if(!item)return '<p style="font-size:13px;color:var(--muted);margin:0">Nothing to show — this may have been deleted since the report was filed.</p>';
+  const avatarImg=(src,fallback)=>src
+    ?'<img src="'+esc(src)+'" alt="" style="width:36px;height:36px;border-radius:10px;object-fit:cover;flex:none">'
+    :'<div style="width:36px;height:36px;border-radius:10px;background:#EEF0FF;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none">'+fallback+'</div>';
+  if(item.type==='round_message'||item.type==='dm_message'){
+    if(item.deleted)return '<p style="font-size:13px;color:var(--muted);margin:0;font-style:italic">🚫 This message was unsent by its sender.</p>';
+    const where=item.type==='round_message'?('Round: '+esc(item.round_title||'Unknown Round')):('DM: '+esc(item.conv_title||'Direct message'));
+    const media=(item.kind&&item.kind!=='text'&&item.media_url)
+      ?'<img src="'+esc(item.media_url)+'" alt="" style="max-width:100%;border-radius:12px;margin-top:8px;display:block">'
+      :'';
+    const bodyText=item.body?esc(item.body):(item.kind&&item.kind!=='text'?'<span style="color:var(--muted)">['+esc(item.kind)+']</span>':'');
+    return '<div style="display:flex;gap:10px;align-items:flex-start">'
+      +avatarImg(item.sender_avatar,'👤')
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:12px;font-weight:700;color:var(--muted)">'+where+'</div>'
+        +'<div style="font-size:13.5px;color:var(--night);font-weight:700;margin-top:2px">'+esc(item.sender_name||'Unknown')+'</div>'
+        +'<div style="font-size:13.5px;color:var(--ink);margin-top:4px;word-break:break-word">'+bodyText+'</div>'
+        +media
+      +'</div>'
+    +'</div>';
+  }
+  if(item.type==='round'){
+    const photo=item.photo?'<img src="'+esc(item.photo)+'" alt="" style="width:44px;height:44px;border-radius:14px;object-fit:cover;flex:none">':'<div style="width:44px;height:44px;border-radius:14px;background:#EEF0FF;display:flex;align-items:center;justify-content:center;font-size:22px;flex:none">'+(item.emoji||'✨')+'</div>';
+    return '<div style="display:flex;gap:10px;align-items:center">'
+      +photo
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:14px;font-weight:700;color:var(--night)">'+esc(item.title||'Round')+'</div>'
+        +'<div style="font-size:12.5px;color:var(--muted);margin-top:2px">'+esc(item.category||'Round')+' · '+item.member_count+' members</div>'
+        +(item.blurb?'<div style="font-size:13px;color:var(--ink);margin-top:4px">'+esc(item.blurb)+'</div>':'')
+      +'</div>'
+    +'</div>';
+  }
+  if(item.type==='user'){
+    return '<div style="display:flex;gap:10px;align-items:center">'
+      +avatarImg(item.avatar,'👤')
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:14px;font-weight:700;color:var(--night)">'+esc(item.name||'Unknown')+'</div>'
+        +'<div style="font-size:12.5px;color:var(--muted)">@'+esc(item.username||'')+'</div>'
+        +(item.bio?'<div style="font-size:13px;color:var(--ink);margin-top:4px">'+esc(item.bio)+'</div>':'')
+      +'</div>'
+    +'</div>';
+  }
+  return '<p style="font-size:13px;color:var(--muted);margin:0">Unrecognized report type.</p>';
 }
 function anzSeeItem(){
-  if(!admAnalyzeReport||!admAnalyzeReport.reported_id)return;
-  const username=admAnalyzeReport.reported_username||'';
-  closeAnalyzeSheet();
-  switchAdminTab('users');
-  setTimeout(()=>{
-    const box=document.getElementById('adminSearch');
-    if(box){box.value=username;loadAdminUsers(username);}
-  },50);
+  if(!admAnalyzeReport)return;
+  const box=document.getElementById('anzItemPreview');
+  const btn=document.getElementById('anzSeeItemBtn');
+  const opening=box.style.display==='none';
+  if(opening){
+    box.innerHTML=anzItemPreviewHTML(admAnalyzeReport.item);
+    box.style.display='block';
+    btn.textContent='👤 Hide item reported';
+  }else{
+    box.style.display='none';
+    btn.textContent='👤 See item reported';
+  }
 }
 let anzPendingVerdict=null; // 'discard' | 'validate'
 function anzStartVerdict(kind){
@@ -6463,7 +6623,7 @@ async function submitReport(){
   }catch(e){toast('Report received. 🛡️');}
   reportContext='';reportedUserId=null;reportSelectedReason='';
 }
-function doReport(){reportContext='chat';reportedUserId=null;closeRoundChatOptions();openReport();}
+function doReport(){reportContext='chat:'+(activeRound?activeRound.id:'');reportedUserId=null;closeRoundChatOptions();openReport();}
 
 // ---- Round group-chat "•••" options menu ----
 function isRoundMuted(rid){try{return (JSON.parse(localStorage.getItem('su_muted_rounds')||'[]')).includes(rid);}catch(e){return false;}}
