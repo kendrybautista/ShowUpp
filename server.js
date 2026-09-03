@@ -173,9 +173,10 @@ await db.exec(`
 await db.exec(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
-  -- Fun avatar (item 2): a small JSON blob describing chosen features (face, eyes, hair,
-  -- accessory, colors). Kept separate from the avatar photo column so it's purely
-  -- additive. avatar_on_map (item 3) opts the avatar in as the user's map location pin.
+  -- avatar_on_map: when set, the user's PROFILE PHOTO is shown as their location pin on
+  -- the map (toggled from the Public profile tab). avatar_config is a legacy column from
+  -- a removed "fun avatar" feature; kept only so the migration is a no-op on old DBs and
+  -- is no longer read or written.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_config TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_on_map INTEGER DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'en';
@@ -299,6 +300,10 @@ await db.exec(`
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_ingest_at BIGINT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
+  -- Free-form JSON config for a source. Used by the website-scraper provider to hold the
+  -- page URL to read events from (and optional CSS-selector overrides). Kept generic so
+  -- new provider types can store their own settings here without another migration.
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS config TEXT;
   -- Country the event takes place in (ISO 3166-1 alpha-2, e.g. 'US', 'DO'). Lets the
   -- feed serve users their own country's events instead of a US-only catalog (item 6).
   ALTER TABLE events ADD COLUMN IF NOT EXISTS country TEXT;
@@ -420,8 +425,8 @@ function publicUser(u) {
     isAdmin: !!u.is_admin,
     lang: u.lang || 'en',
     // Fun avatar (item 2) — a small JSON of chosen features. Separate from `avatar`
-    // (the profile photo), so it never replaces the photo. avatarOnMap toggles item 3.
-    avatarConfig: u.avatar_config || '',
+    // When on, the user's profile photo is used as their map location pin (set from the
+    // Public profile tab).
     avatarOnMap: !!u.avatar_on_map
   };
 }
@@ -927,7 +932,7 @@ app.post('/api/reset-password', async (req, res) => {
 
 // Update the current user's profile (name, username, city, interests, lang)
 app.post('/api/me/update', requireAuth, async (req, res) => {
-  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone, gender, showAge, dob } = req.body || {};
+  const { name, username, city, interests, lang, bio, gallery, isPrivate, relationship, email, phone, gender, showAge, dob, avatarOnMap } = req.body || {};
   // Date of birth: if provided, validate it and enforce the 18+ rule (same as signup).
   let cleanDob = null;
   if (dob !== undefined && dob !== null && String(dob).trim() !== '') {
@@ -995,7 +1000,8 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
       show_age = COALESCE(?, show_age),
       dob = COALESCE(?, dob),
       email = COALESCE(?, email),
-      phone = COALESCE(?, phone)
+      phone = COALESCE(?, phone),
+      avatar_on_map = COALESCE(?, avatar_on_map)
     WHERE id = ?`).run(
     name ? String(name).trim() : null,
     cleanUser,
@@ -1011,6 +1017,7 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
     cleanDob,
     cleanEmail,
     cleanPhone,
+    (typeof avatarOnMap === 'boolean') ? (avatarOnMap ? 1 : 0) : null,
     req.user.id
   );
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -1037,32 +1044,6 @@ app.post('/api/me/avatar', requireAuth, async (req, res) => {
 app.post('/api/me/avatar/remove', requireAuth, async (req, res) => {
   await db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
   const updated = await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: publicUser(updated) });
-});
-
-// ---- Fun avatar (items 2 & 3) ----
-// Saves the small JSON config of chosen features. Validated for size and shape only —
-// the actual rendering is done client-side from these keys, so we never store an image.
-// This is separate from the profile photo and never overwrites it.
-app.post('/api/me/fun-avatar', requireAuth, async (req, res) => {
-  let { config, onMap } = req.body || {};
-  if (config != null) {
-    let str = typeof config === 'string' ? config : JSON.stringify(config);
-    if (str.length > 2000) return res.status(413).json({ error: 'Avatar config too large.' });
-    // Ensure it parses as JSON so we never store junk.
-    try { JSON.parse(str); } catch (e) { return res.status(400).json({ error: 'Invalid avatar config.' }); }
-    await db.prepare('UPDATE users SET avatar_config = ? WHERE id = ?').run(str, req.user.id);
-  }
-  if (typeof onMap === 'boolean') {
-    await db.prepare('UPDATE users SET avatar_on_map = ? WHERE id = ?').run(onMap ? 1 : 0, req.user.id);
-  }
-  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: publicUser(updated) });
-});
-// Clear the fun avatar entirely.
-app.post('/api/me/fun-avatar/remove', requireAuth, async (req, res) => {
-  await db.prepare('UPDATE users SET avatar_config = NULL, avatar_on_map = 0 WHERE id = ?').run(req.user.id);
-  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
@@ -2584,10 +2565,132 @@ async function fetchTicketmaster(apiKey, label, countries) {
 }
 // Back-compat alias — older callers referenced fetchTicketmasterUS.
 async function fetchTicketmasterUS(apiKey, label) { return fetchTicketmaster(apiKey, label); }
+// ---- Website scraper (for organizer sites that have an events page but NO API) ----
+// Many local promoters (e.g. sdconcerts.com) only publish an events page. We read that
+// page on the SAME daily schedule as the API providers and pull events into our own
+// table, so the app never scrapes at request time. Strategy, most-robust first:
+//   1) JSON-LD (schema.org/Event) — structured data many event sites already emit. This
+//      is stable across redesigns because it's machine-readable metadata, not layout.
+//   2) A config-driven CSS-selector fallback for sites without JSON-LD.
+// Everything is defensive: a broken/changed page yields an error string (surfaced in the
+// Manager panel) instead of throwing, and never removes previously-good events unless the
+// scrape succeeds with a fresh set.
+function absoluteUrl(href, base) {
+  try { return new URL(href, base).href; } catch (e) { return href || null; }
+}
+function parseEventDate(s) {
+  if (!s) return null;
+  const t = Date.parse(s);
+  return isNaN(t) ? null : t;
+}
+// Pull schema.org Event objects out of any <script type="application/ld+json"> blocks.
+function eventsFromJsonLd(html, pageUrl) {
+  const out = [];
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    let data;
+    try { data = JSON.parse(m[1].trim()); } catch (e) { continue; }
+    // JSON-LD can be a single object, an array, or an @graph container.
+    const items = Array.isArray(data) ? data : (data['@graph'] ? data['@graph'] : [data]);
+    for (const it of items) {
+      if (!it || typeof it !== 'object') continue;
+      const type = it['@type'];
+      const isEvent = type === 'Event' || (Array.isArray(type) && type.includes('Event')) || (typeof type === 'string' && /Event$/.test(type));
+      if (!isEvent) continue;
+      const loc = it.location || {};
+      const addr = (loc && loc.address) || {};
+      const placeName = (typeof loc === 'string') ? loc : (loc.name || (typeof addr === 'string' ? addr : (addr && [addr.streetAddress, addr.addressLocality].filter(Boolean).join(', '))) || '');
+      let img = it.image;
+      if (Array.isArray(img)) img = img[0];
+      if (img && typeof img === 'object') img = img.url;
+      const geo = (loc && loc.geo) || {};
+      out.push({
+        title: it.name || '',
+        description: (typeof it.description === 'string' ? it.description : '') || '',
+        starts_at: parseEventDate(it.startDate),
+        ends_at: parseEventDate(it.endDate),
+        place: placeName || '',
+        link: absoluteUrl(it.url || pageUrl, pageUrl),
+        photo: img ? absoluteUrl(img, pageUrl) : null,
+        lat: (geo && geo.latitude != null) ? parseFloat(geo.latitude) : null,
+        lng: (geo && geo.longitude != null) ? parseFloat(geo.longitude) : null
+      });
+    }
+  }
+  return out;
+}
+// Very small CSS-ish fallback: given selectors in config, pull repeated event blocks.
+// Intentionally minimal (no heavy DOM lib) — regex-scoped to a container. Sites that
+// need this are configured explicitly per-source, so we can keep it simple.
+function eventsFromSelectors(html, pageUrl, cfg) {
+  // Not implemented as a general engine here; JSON-LD covers most event sites. When a
+  // site needs bespoke parsing, add a small per-domain parser keyed by cfg.parser.
+  return [];
+}
+async function fetchWebsiteEvents(source) {
+  let cfg = {};
+  try { cfg = source.config ? JSON.parse(source.config) : {}; } catch (e) {}
+  const url = cfg.url || source.api_key; // allow the URL to live in either field
+  if (!url) return { events: [], error: 'No events-page URL configured for this website source.' };
+  let html;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'ShowUppBot/1.0 (+https://showupp.app; events aggregator)', 'Accept': 'text/html' } });
+    clearTimeout(timer);
+    if (!r.ok) return { events: [], error: `Website returned HTTP ${r.status} for ${url}` };
+    html = await r.text();
+  } catch (err) {
+    return { events: [], error: `Couldn't load ${url}: ${err.message}` };
+  }
+  let raw = eventsFromJsonLd(html, url);
+  if (!raw.length && cfg.parser) raw = eventsFromSelectors(html, url, cfg);
+  if (!raw.length) return { events: [], error: 'No structured events found on the page. The site may not publish schema.org event data — a custom parser may be needed.' };
+
+  const country = (cfg.country || source.country || '').toUpperCase() || null;
+  const events = raw.filter(e => e.title && e.starts_at).map((e, i) => {
+    const cls = classifyScrapedEvent(e);
+    return {
+      id: 'web_' + source.id + '_' + (e.link ? hashStr(e.link) : hashStr(e.title + e.starts_at)),
+      source: 'website', source_id: null,
+      title: e.title, description: e.description,
+      category: cls.category, emoji: cls.emoji,
+      photo: e.photo, link: e.link, place: e.place,
+      lat: e.lat, lng: e.lng,
+      starts_at: e.starts_at, ends_at: e.ends_at,
+      source_label: source.label || 'Local events',
+      country: country
+    };
+  });
+  return { events, error: events.length ? null : 'Events were found but none had a usable title and date.' };
+}
+// Tiny stable string hash → short id, so re-scraping the same event updates (not dupes) it.
+function hashStr(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; } return h.toString(36); }
+// Reuse the same keyword idea as the TM classifier, on scraped title/description.
+function classifyScrapedEvent(e) {
+  const hay = ((e.title || '') + ' ' + (e.description || '')).toLowerCase();
+  const table = [
+    [/concert|music|dj|live|tour|festival|band|singer|orchestra/, 'Music', '🎵'],
+    [/comedy|stand-?up|comedian/, 'Comedy', '🎤'],
+    [/theat(er|re)|broadway|musical|opera|ballet|play/, 'Theater', '🎭'],
+    [/basketball|nba/, 'Basketball', '🏀'], [/baseball|mlb/, 'Baseball', '⚾'],
+    [/football|nfl/, 'Football', '🏈'], [/soccer|fútbol|futbol/, 'Sports', '⚽'],
+    [/sport|game|match|tournament|race|marathon/, 'Sports', '🏆'],
+    [/art|gallery|exhibit|museum/, 'Art', '🎨'],
+    [/food|wine|beer|tasting|culinary|brunch/, 'Food', '🍽️'],
+    [/family|kids|children/, 'Family', '🎪']
+  ];
+  for (const [re, cat, emoji] of table) if (re.test(hay)) return { category: cat, emoji };
+  return { category: 'Event', emoji: '🎟️' };
+}
+
 const EVENT_PROVIDERS = {
-  ticketmaster: async (apiKey, label) => fetchTicketmaster(apiKey, label)
-  // Add more providers here later the same way, e.g.:
-  //   eventbrite: async (apiKey, label) => { ...page through their API, return normalized events... }
+  ticketmaster: async (apiKey, label) => fetchTicketmaster(apiKey, label),
+  // Scrapes an organizer's public events page (no API needed). Receives the whole source
+  // row so it can read `config` (the page URL etc.), unlike the API providers.
+  website: async (apiKey, label, source) => fetchWebsiteEvents(source)
+  // Add more providers here later the same way.
 };
 
 // ---- Daily ingest job ----
@@ -2626,7 +2729,7 @@ async function ingestOneSource(s) {
   if (!fn) return { ok: false, error: 'This source has no automatic provider — add its events manually instead.' };
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   try {
-    const result = await fn(s.api_key, s.label);
+    const result = await fn(s.api_key, s.label, s);
     const evs = result.events || [];
     let kept = 0;
     for (const e of evs) {
@@ -2861,7 +2964,7 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 // EVENT_PROVIDERS (see "Other / manual" in the form) is flagged isManual: true — it's
 // never auto-fetched, and the panel offers an "add event" form for it instead.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
+  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at, last_ingest_at, last_error, last_fetched_count, config FROM event_sources ORDER BY created_at DESC').all();
   const masked = [];
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   for (const r of rows) {
@@ -2875,8 +2978,12 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
       SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events
       WHERE source = ? AND approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
     `).get(r.provider, now() - 6 * 3600 * 1000, cutoff);
+    let scrapeUrl = '';
+    try { const c = r.config ? JSON.parse(r.config) : null; if (c && c.url) scrapeUrl = c.url; } catch (e) {}
     masked.push({
       ...r,
+      config: undefined, // don't leak raw config blob; surface just the url below
+      scrapeUrl,
       api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
       isManual,
       live_events: evRow ? Number(evRow.n) || 0 : 0,
@@ -2890,22 +2997,30 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
 // "ticketmaster", needs an API key) OR any free-typed label for a manual source —
 // one whose events the admin will add by hand from the panel instead of an API pull.
 app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const { provider, label, apiKey } = req.body || {};
+  const { provider, label, apiKey, url } = req.body || {};
   if (!provider || !String(provider).trim()) return res.status(400).json({ error: 'Give the source a provider name.' });
   const providerKey = String(provider).trim().slice(0, 60);
   const isRegistered = !!EVENT_PROVIDERS[providerKey];
-  if (isRegistered && (!apiKey || !String(apiKey).trim())) {
+  // The website scraper needs a page URL rather than an API key.
+  const isWebsite = providerKey === 'website';
+  if (isRegistered && !isWebsite && (!apiKey || !String(apiKey).trim())) {
     return res.status(400).json({ error: 'An API key is required for this provider.' });
+  }
+  let config = null;
+  if (isWebsite) {
+    const u = String(url || '').trim();
+    if (!/^https?:\/\/.+/i.test(u)) return res.status(400).json({ error: 'Enter the full events-page URL (starting with https://).' });
+    config = JSON.stringify({ url: u.slice(0, 500) });
   }
   const row = {
     id: id(), provider: providerKey, label: String(label || '').slice(0, 80) || providerKey,
     api_key: (apiKey && String(apiKey).trim()) ? String(apiKey).trim() : null,
-    enabled: 1, created_by: req.user.id, created_at: now()
+    enabled: 1, created_by: req.user.id, created_at: now(), config
   };
-  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,enabled,created_by,created_at)
-    VALUES (@id,@provider,@label,@api_key,@enabled,@created_by,@created_at)`).run(row);
-  // Kick off an immediate ingest for a freshly-added auto provider so the owner
-  // doesn't have to wait up to 24h to see it start working.
+  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,enabled,created_by,created_at,config)
+    VALUES (@id,@provider,@label,@api_key,@enabled,@created_by,@created_at,@config)`).run(row);
+  // Kick off an immediate ingest for a freshly-added auto provider (API or website) so
+  // the owner doesn't have to wait up to 24h to see it start working.
   if (isRegistered) ingestExternalEvents().catch(() => {});
   res.json({ ok: true, id: row.id, isManual: !isRegistered });
 });
@@ -2917,12 +3032,18 @@ app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res)
 app.post('/api/admin/event-sources/:id/update', requireAuth, requireAdmin, async (req, res) => {
   const src = await db.prepare('SELECT id, provider, label FROM event_sources WHERE id = ?').get(req.params.id);
   if (!src) return res.status(404).json({ error: 'Not found.' });
-  const { label, apiKey } = req.body || {};
+  const { label, apiKey, url } = req.body || {};
   const newLabel = (label !== undefined) ? (String(label).slice(0, 80) || src.provider) : src.label;
   if (apiKey && String(apiKey).trim()) {
     await db.prepare('UPDATE event_sources SET label = ?, api_key = ? WHERE id = ?').run(newLabel, String(apiKey).trim(), req.params.id);
   } else {
     await db.prepare('UPDATE event_sources SET label = ? WHERE id = ?').run(newLabel, req.params.id);
+  }
+  // Website source: update the events-page URL if a new one was supplied.
+  if (src.provider === 'website' && url !== undefined && String(url).trim()) {
+    const u = String(url).trim();
+    if (!/^https?:\/\/.+/i.test(u)) return res.status(400).json({ error: 'Enter a valid https:// URL.' });
+    await db.prepare('UPDATE event_sources SET config = ? WHERE id = ?').run(JSON.stringify({ url: u.slice(0, 500) }), req.params.id);
   }
   res.json({ ok: true });
 });
