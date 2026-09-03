@@ -756,6 +756,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div id="eventsMapView" style="display:none;height:420px;margin:8px 22px;border-radius:20px;overflow:hidden;border:1px solid var(--line)"></div>
     </div>
   </div>
+  <button id="backToTopBtn" onclick="scrollHomeToTop()" aria-label="Back to top" style="display:none;position:absolute;right:16px;bottom:78px;width:40px;height:40px;border-radius:50%;background:var(--card);border:1.5px solid var(--line);box-shadow:0 4px 14px rgba(40,40,80,.18);color:var(--night);font-size:16px;line-height:1;cursor:pointer;z-index:20;align-items:center;justify-content:center">↑</button>
   <div class="nav" data-nav></div>
 </div>
 
@@ -2775,6 +2776,7 @@ async function loadEvents(){
     allEventCategories=(catData&&catData.categories)||[];
     renderEventCatChips();
     renderEvents();
+    attachEventsInfiniteScroll();
   }catch(e){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:20px;font-size:13px">'+e.message+'</p>';}
 }
 function fetchEventCategories(){
@@ -2782,8 +2784,9 @@ function fetchEventCategories(){
   if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
   return api(q).catch(()=>({categories:[]}));
 }
+const EVENTS_PAGE_SIZE=50; // server's max page size — fewer round trips through 4,000+ nationwide events
 function fetchEventsPage(page){
-  let q='/api/events?page='+page+'&pageSize=25';
+  let q='/api/events?page='+page+'&pageSize='+EVENTS_PAGE_SIZE;
   if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
   if(eventCat!=='all')q+='&category='+encodeURIComponent(eventCat);
   return api(q);
@@ -2814,10 +2817,13 @@ async function setEventsView(v){
   document.getElementById('evt-map').classList.toggle('on',v==='map');
   document.getElementById('eventsList').style.display=v==='list'?'block':'none';
   document.getElementById('eventsMapView').style.display=v==='map'?'block':'none';
-  // A single page (25 events) makes for a sparse map, so pull a few more pages first —
-  // still bounded, so switching to Map never triggers loading the entire 30-day feed.
-  if(v==='map'){
-    while(eventsHasMore&&allEvents.length<100){await loadMoreEvents();}
+  // A single page makes for a sparse map, and only showing the first ~100 of a
+  // 4,000+ event nationwide feed left most events permanently invisible on the map.
+  // Pull every remaining page (guarded generously so a runaway feed can't loop forever).
+  if(v==='map'&&eventsHasMore){
+    toast('Loading all events for the map…');
+    let guard=0;
+    while(eventsHasMore&&guard<300){await loadMoreEvents();guard++;}
   }
   renderEvents();
 }
@@ -2835,11 +2841,54 @@ function renderEvents(){
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
     return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px">'+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
   }).join('');
-  // The feed can span up to 30 days of nationwide events, so it's paginated server-side —
-  // fetch more only when asked, rather than loading everything into the page at once.
-  if(eventsHasMore&&!onlyPartnerEvents){
+  // The feed can span up to 30 days of nationwide events, so it's paginated server-side.
+  // The button stays as a fallback/status indicator, but scrolling near the bottom
+  // (see attachEventsInfiniteScroll) auto-loads the next page too — a manual click
+  // shouldn't be the only way to get past the first ~50 of 4,000+ events.
+  if(eventsHasMore){
     box.innerHTML+='<button class="btn" id="eventsLoadMoreBtn" onclick="loadMoreEvents()" style="width:100%;background:var(--bone);color:var(--night);border:1.5px solid var(--line);font-weight:700;margin-top:4px">'+(eventsLoadingMore?t('Loading…'):'Load more events')+'</button>';
   }
+}
+// Auto-load the next page of events once the user scrolls near the bottom of the
+// Discover list, so browsing thousands of nationwide events doesn't require
+// repeatedly hunting for and tapping "Load more". Attached once; cheap to leave
+// listening since it no-ops whenever there's nothing more to load.
+let eventsInfiniteScrollAttached=false;
+function attachEventsInfiniteScroll(){
+  if(eventsInfiniteScrollAttached)return;
+  const scroller=document.querySelector('#s-home .scroll');
+  if(!scroller)return;
+  eventsInfiniteScrollAttached=true;
+  scroller.addEventListener('scroll',()=>{
+    if(eventsView!=='list'||eventsPane_hidden())return;
+    if(!eventsHasMore||eventsLoadingMore)return;
+    const nearBottom=scroller.scrollTop+scroller.clientHeight>=scroller.scrollHeight-400;
+    if(nearBottom)loadMoreEvents();
+  });
+}
+function eventsPane_hidden(){
+  const p=document.getElementById('eventsPane');
+  return !p||p.style.display==='none';
+}
+// Small "back to top" button for the Home/Discover scroll area — only appears once
+// the person has scrolled down a bit, so it doesn't clutter the page when it isn't
+// needed. One listener shared by both the Rounds and Events sections since they use
+// the same scroll container.
+let backToTopAttached=false;
+function attachBackToTop(){
+  if(backToTopAttached)return;
+  const scroller=document.querySelector('#s-home .scroll');
+  const btn=document.getElementById('backToTopBtn');
+  if(!scroller||!btn)return;
+  backToTopAttached=true;
+  scroller.addEventListener('scroll',()=>{
+    const show=scroller.scrollTop>600;
+    btn.style.display=show?'flex':'none';
+  });
+}
+function scrollHomeToTop(){
+  const scroller=document.querySelector('#s-home .scroll');
+  if(scroller)scroller.scrollTo({top:0,behavior:'smooth'});
 }
 function renderEventsMap(list){
   const el=document.getElementById('eventsMapView');
@@ -5786,25 +5835,34 @@ async function loadAdminEventSources(){
       else if(hasError){statusText='⚠ Last fetch failed';}
       else if(!s.last_ingest_at){statusText='Active — waiting for first sync';}
       else{statusText='Active — pulling events daily';}
-      let liveLine=s.isManual?'No events added yet':'No events fetched yet';
-      if(s.live_events>0){
+      // "Live" = currently showing in Discover right now (matches the server's own
+      // Discover filter). "Pulled last run" = how many the most recent fetch actually
+      // returned, which can be higher since some age out of the 30-day window over time.
+      let liveLine=s.isManual?'No events added yet':(s.live_events>0?s.live_events+' event'+(s.live_events===1?'':'s')+' currently live in Discover':'No events currently live in Discover');
+      if(!s.isManual&&s.last_fetched_count!=null){
+        liveLine+=' · pulled '+s.last_fetched_count+' event'+(s.last_fetched_count===1?'':'s')+' last run';
+      }
+      if(s.live_events>0&&s.last_event_added){
         const mins=Math.max(0,Math.round((Date.now()-s.last_event_added)/60000));
         const when=mins<1?'just now':mins<60?mins+'m ago':Math.round(mins/60)+'h ago';
-        liveLine=s.live_events+' event'+(s.live_events===1?'':'s')+' live · last added '+when;
+        liveLine+=' · last added '+when;
       }
       const errorLine=hasError?'<div style="font-size:11.5px;color:#d94b3b;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+esc(s.last_error)+'</div>':'';
       const addBtn=s.isManual?'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admOpenAddEvent(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">+ Add event</span>':'';
+      const refreshBtn=s.isManual?'':'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admRefreshEventSource(\''+s.id+'\')" id="admRefreshBtn-'+s.id+'">↻ Refresh</span>';
+      const editBtn='<span style="font-size:12.5px;font-weight:700;color:var(--night);cursor:pointer" onclick="admOpenEditSource(\''+s.id+'\')">Edit</span>';
       return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
         +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+providerName+(s.api_key?' · '+esc(s.api_key):'')+'</div></div>'
         +'<label class="switch"><input type="checkbox" '+(s.enabled?'checked':'')+' onchange="admToggleEventSource(\''+s.id+'\')"><span class="slider"></span></label>'
         +'</div>'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:6px">'
         +'<span style="font-size:11.5px;font-weight:700;color:'+statusColor+'">● '+statusText+'</span>'
-        +'<div style="display:flex;gap:12px;align-items:center">'+addBtn+'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span></div>'
+        +'<div style="display:flex;gap:12px;align-items:center">'+addBtn+refreshBtn+editBtn+'<span style="font-size:12.5px;font-weight:700;color:#d94b3b;cursor:pointer" onclick="admDeleteEventSource(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">Remove</span></div>'
         +'</div>'
         +'<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+liveLine+(s.isManual?'':' · refreshed once daily, up to '+(data.ingestWindowDays||30)+' days out')+'</div>'
         +errorLine
+        +'<div id="admSrcEdit-'+s.id+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"></div>'
         +'<div id="admSrcEvents-'+s.id+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"></div>'
         +'</div>';
     }).join('');
@@ -5835,6 +5893,45 @@ async function admDeleteEventSource(sid,label){
   if(!confirm('Remove "'+label+'"? It will stop being auto-refreshed (or stop accepting new manual events). Events already live keep showing until they age out.'))return;
   try{await api('/api/admin/event-sources/'+sid+'/delete','POST',{});toast('Account removed');loadAdminEventSources();}
   catch(e){toast(e.message);}
+}
+// Pull a fresh batch for just this one account, without waiting for the scheduled
+// daily run or refreshing every other connected account too.
+async function admRefreshEventSource(sid){
+  const btn=document.getElementById('admRefreshBtn-'+sid);
+  if(btn){btn.textContent='↻ Refreshing…';btn.style.pointerEvents='none';}
+  try{
+    const r=await api('/api/admin/event-sources/'+sid+'/refresh','POST',{});
+    toast('Pulled '+r.kept+' event'+(r.kept===1?'':'s')+' from this account 🎟️');
+  }catch(e){toast(e.message);}
+  finally{loadAdminEventSources();}
+}
+// Edit an account's label (and, for automatic providers, its API key) in place —
+// a lightweight inline form, the same pattern as the manual "add event" form below.
+function admOpenEditSource(sid){
+  const box=document.getElementById('admSrcEdit-'+sid);
+  if(!box)return;
+  const open=box.style.display==='block';
+  box.style.display=open?'none':'block';
+  if(open)return;
+  const card=box.closest('div[style*="box-shadow"]');
+  const currentLabel=card?card.querySelector('b').textContent:'';
+  box.innerHTML='<div style="font-weight:700;font-size:13px;color:var(--night);margin-bottom:8px">Edit account</div>'
+    +'<input id="admEditLabel-'+sid+'" placeholder="Account label" value="'+esc(currentLabel)+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    +'<input id="admEditApiKey-'+sid+'" placeholder="New API key (leave blank to keep current)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:10px;box-sizing:border-box">'
+    +'<div style="display:flex;gap:8px">'
+    +'<button class="btn btn-mango" style="flex:1;padding:10px" onclick="admSaveEditSource(\''+sid+'\')">Save changes</button>'
+    +'<button class="btn" style="flex:1;padding:10px;background:var(--bone);color:var(--night);border:1.5px solid var(--line)" onclick="admOpenEditSource(\''+sid+'\')">Cancel</button>'
+    +'</div>';
+}
+async function admSaveEditSource(sid){
+  const label=document.getElementById('admEditLabel-'+sid).value.trim();
+  const apiKey=document.getElementById('admEditApiKey-'+sid).value.trim();
+  if(!label){toast('Give the account a label');return;}
+  try{
+    await api('/api/admin/event-sources/'+sid+'/update','POST',{label,apiKey:apiKey||undefined});
+    toast('Account updated');
+    loadAdminEventSources();
+  }catch(e){toast(e.message);}
 }
 // Manual sources: a lightweight inline form to add one event at a time, right under
 // that source's card, and a way to see/remove what's already been added.
@@ -6536,6 +6633,9 @@ async function boot(){
   loadTheme();
   loadUnit();
   updateDistSliderMax();
+  updateDistLabel(); // keep the "Within X mi/km" label in sync with the loaded unit on boot —
+                      // without this it kept showing the hardcoded "km" from the HTML until
+                      // the slider was touched or the unit was re-picked in the profile panel
   try{onlyPartnerEvents=localStorage.getItem('su_only_partner_events')==='1';}catch(e){}
   loadLang();
   applyDirection();
@@ -6543,6 +6643,7 @@ async function boot(){
   applyTranslations();
   initCountryPicker('suCountry','Dominican Republic');
   initPullToRefresh();
+  attachBackToTop();
   if(token){
     try{
       showLoginTransition();const _bootAt=Date.now();
