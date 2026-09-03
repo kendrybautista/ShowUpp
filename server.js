@@ -1366,7 +1366,7 @@ app.get('/api/search/messages', requireAuth, async (req, res) => {
   const like = '%' + q.toLowerCase() + '%';
 
   const roundHits = await db.prepare(`
-    SELECT m.id AS message_id, m.round_id, m.body, m.created_at, u.name AS sender, r.title AS round_title, r.emoji AS round_emoji
+    SELECT m.id AS message_id, m.round_id, m.body, m.created_at, u.name AS sender, r.title AS round_title, r.emoji AS round_emoji, r.photo AS round_photo
     FROM messages m
     JOIN memberships mm ON mm.round_id = m.round_id AND mm.user_id = ?
     JOIN rounds r ON r.id = m.round_id
@@ -1741,9 +1741,69 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, async (req, res) => {
   res.json({ reports, counts });
 });
 
+// Looks up the actual content behind a report's `context` field (e.g. "message:<id>",
+// "user:<id>", "chat:<roundId>") so the Analyze panel can show the reported message,
+// round, or profile inline instead of sending the manager off to go find it themselves.
+async function getReportedItemPreview(r) {
+  const context = String(r.context || '');
+  const [kind, refId] = context.includes(':') ? [context.split(':')[0], context.split(':').slice(1).join(':')] : [context, null];
+
+  if (kind === 'message' && refId) {
+    // Could be a Round group-chat message or a DM — try both, Round first.
+    const rm = await db.prepare(`
+      SELECT m.id, m.body, m.kind, m.media_url, m.created_at, m.deleted, u.name AS sender_name, u.avatar AS sender_avatar,
+        r.id AS round_id, r.title AS round_title
+      FROM messages m LEFT JOIN users u ON u.id = m.user_id LEFT JOIN rounds r ON r.id = m.round_id
+      WHERE m.id = ?
+    `).get(refId);
+    if (rm) {
+      return {
+        type: 'round_message', id: rm.id, body: rm.body, kind: rm.kind || 'text', media_url: rm.media_url,
+        created_at: rm.created_at, deleted: !!rm.deleted, sender_name: rm.sender_name, sender_avatar: rm.sender_avatar,
+        round_id: rm.round_id, round_title: rm.round_title
+      };
+    }
+    const dm = await db.prepare(`
+      SELECT m.id, m.body, m.kind, m.media_url, m.created_at, m.deleted, u.name AS sender_name, u.avatar AS sender_avatar,
+        c.id AS conv_id, c.title AS conv_title, c.is_group
+      FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id LEFT JOIN conversations c ON c.id = m.conv_id
+      WHERE m.id = ?
+    `).get(refId);
+    if (dm) {
+      return {
+        type: 'dm_message', id: dm.id, body: dm.body, kind: dm.kind || 'text', media_url: dm.media_url,
+        created_at: dm.created_at, deleted: !!dm.deleted, sender_name: dm.sender_name, sender_avatar: dm.sender_avatar,
+        conv_id: dm.conv_id, conv_title: dm.is_group ? dm.conv_title : null
+      };
+    }
+    return null;
+  }
+
+  if (kind === 'chat') {
+    // refId is the Round id when the whole chat was reported from the group-chat options menu.
+    const roundId = refId || null;
+    if (!roundId) return null;
+    const round = await db.prepare('SELECT id, title, emoji, photo, category, blurb, host_id FROM rounds WHERE id = ?').get(roundId);
+    if (!round) return null;
+    const memberRow = await db.prepare('SELECT COUNT(*) AS n FROM memberships WHERE round_id = ?').get(round.id);
+    return { type: 'round', ...round, member_count: memberRow ? Number(memberRow.n) || 0 : 0 };
+  }
+
+  if (kind === 'user' || r.reported_id) {
+    const uid = refId || r.reported_id;
+    if (!uid) return null;
+    const u = await db.prepare('SELECT id, name, username, avatar, bio FROM users WHERE id = ?').get(uid);
+    if (!u) return null;
+    return { type: 'user', ...u };
+  }
+
+  return null;
+}
+
 // Analyze: opens the report for review. Auto-advances "open" -> "investigating" so the
 // status reflects that a manager is actively on it, and hands back everything the
-// Analyze panel needs (including a nav hint for "see item reported").
+// Analyze panel needs, including the reported message/round/profile itself so the
+// manager can review it inline without leaving the panel.
 app.post('/api/admin/reports/:id/analyze', requireAuth, requireAdmin, async (req, res) => {
   const r = await db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Report not found.' });
@@ -1754,7 +1814,9 @@ app.post('/api/admin/reports/:id/analyze', requireAuth, requireAdmin, async (req
     SELECT r.*, reported.username AS reported_username, reported.name AS reported_name
     FROM reports r LEFT JOIN users reported ON reported.id = r.reported_id WHERE r.id = ?
   `).get(r.id);
-  res.json({ ok: true, report: updated });
+  let item = null;
+  try { item = await getReportedItemPreview(updated); } catch (e) { item = null; }
+  res.json({ ok: true, report: { ...updated, item } });
 });
 
 // Discard: the report didn't hold up — mark it unfounded, optionally tell the reporter
@@ -1765,9 +1827,12 @@ app.post('/api/admin/reports/:id/discard', requireAuth, requireAdmin, async (req
   if (!r) return res.status(404).json({ error: 'Report not found.' });
   await db.prepare('UPDATE reports SET verdict = ? WHERE id = ?').run('discarded', r.id);
   const { message } = req.body || {};
-  if (message && String(message).trim()) {
-    await pushNotif(r.reporter_id, 'report_discarded', 'Update on your report', String(message).slice(0, 500), '');
-  }
+  // Always tell the reporter the actual conclusion — not a vague "update" — so they
+  // know we reviewed it and why it didn't lead to action. Any manager note is appended.
+  const discardBody = 'We reviewed your report' + (r.reason ? ' about "' + r.reason + '"' : '')
+    + " and didn't find that it violated our Community Pact, so no action was taken."
+    + (message && String(message).trim() ? ' Note from our team: "' + String(message).trim().slice(0, 400) + '"' : '');
+  await pushNotif(r.reporter_id, 'report_discarded', 'Report reviewed — no violation found', discardBody.slice(0, 600), '');
   let warning = null;
   const unfoundedRow = await db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ? AND verdict = 'discarded'`).get(r.reporter_id);
   const unfoundedTotal = unfoundedRow ? Number(unfoundedRow.n) || 0 : 0;
@@ -1791,6 +1856,11 @@ app.post('/api/admin/reports/:id/validate', requireAuth, requireAdmin, async (re
   if (!r) return res.status(404).json({ error: 'Report not found.' });
   await db.prepare('UPDATE reports SET verdict = ? WHERE id = ?').run('validated', r.id);
   const { message } = req.body || {};
+  // Tell the reporter their report was confirmed — separate from the (optional) notice
+  // sent to the reported account below, which is about their account, not the report.
+  const validateBody = 'We reviewed your report' + (r.reason ? ' about "' + r.reason + '"' : '')
+    + ' and confirmed it violated our Community Pact. Thanks for helping keep ShowUpp safe — we took action.';
+  await pushNotif(r.reporter_id, 'report_conclusion', 'Report reviewed — violation confirmed', validateBody.slice(0, 600), '');
   if (message && String(message).trim() && r.reported_id) {
     await pushNotif(r.reported_id, 'report_validated', 'Account notice', String(message).slice(0, 500), '');
   }
