@@ -421,6 +421,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Health check (useful for hosts)
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// Public front-end config. Currently just the Google client ID, so the browser can
+// initialize "Sign in with Google" only when the server is actually configured for it.
+app.get('/api/config', (_req, res) => {
+  res.json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '' });
+});
+
 // ---- Auth ----
 // Quick check whether an email is already registered (used during signup)
 app.post('/api/check-email', async (req, res) => {
@@ -497,6 +503,93 @@ app.post('/api/login', async (req, res) => {
     return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
   }
   res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0 } });
+});
+
+// ---- Sign in with Google (item 3) ----
+// The web client runs Google Identity Services, which hands us a signed ID token (JWT).
+// We verify it against Google (tokeninfo) rather than trusting it blind, confirm it was
+// minted for our own client ID, then either log the matching user in or create a fresh
+// account from the Google profile — sorting out name, email, avatar, and a default
+// language automatically so the person lands straight in the app with nothing else to fill in.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+async function verifyGoogleIdToken(idToken) {
+  // tokeninfo does full signature + expiry validation for us and returns the claims.
+  const r = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken));
+  if (!r.ok) return null;
+  const p = await r.json().catch(() => null);
+  if (!p || !p.email) return null;
+  // Must be issued by Google, for OUR app, and to a verified email.
+  const goodIss = p.iss === 'accounts.google.com' || p.iss === 'https://accounts.google.com';
+  const goodAud = !GOOGLE_CLIENT_ID || p.aud === GOOGLE_CLIENT_ID;
+  const verifiedEmail = p.email_verified === true || p.email_verified === 'true';
+  if (!goodIss || !goodAud || !verifiedEmail) return null;
+  return p;
+}
+// Build a unique @username from a display name / email local-part for brand-new Google users.
+async function uniqueUsernameFrom(seed) {
+  let base = String(seed || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20) || 'user';
+  let candidate = base;
+  for (let i = 0; i < 50; i++) {
+    const taken = await db.prepare('SELECT 1 FROM users WHERE username = ?').get(candidate);
+    if (!taken) return candidate;
+    candidate = (base + Math.floor(1000 + Math.random() * 9000)).slice(0, 24);
+  }
+  return base + '_' + id().slice(0, 6);
+}
+app.post('/api/auth/google', async (req, res) => {
+  const idToken = req.body && (req.body.credential || req.body.idToken || req.body.token);
+  if (!idToken) return res.status(400).json({ error: 'Missing Google credential.' });
+  const claims = await verifyGoogleIdToken(idToken);
+  if (!claims) return res.status(401).json({ error: "Couldn't verify that Google account. Please try again." });
+
+  const email = String(claims.email).toLowerCase();
+  let row = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+
+  if (row) {
+    // Existing account — log them in. Refresh a couple of profile fields from Google
+    // if they were never set locally (e.g. an avatar), but never overwrite their choices.
+    if (row.suspended) return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
+    if ((!row.avatar || !row.avatar.trim()) && claims.picture) {
+      await db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(String(claims.picture).slice(0, 3000000), row.id);
+      row.avatar = claims.picture;
+    }
+    return res.json({
+      token: makeToken(row),
+      user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0 },
+      isNew: false
+    });
+  }
+
+  // New account — provision it from the Google profile. Google accounts have no local
+  // password, so we store a random hash they can never log in with directly (they use
+  // "Sign in with Google" from here on, and can set a password later via secure-change).
+  const name = String(claims.name || (claims.given_name || '') || email.split('@')[0]).trim().slice(0, 60) || 'ShowUpp user';
+  const username = await uniqueUsernameFrom(claims.given_name || claims.name || email.split('@')[0]);
+  const langHint = (typeof claims.locale === 'string') ? claims.locale.slice(0, 2).toLowerCase() : 'en';
+  const user = {
+    id: id(),
+    email,
+    pass_hash: bcrypt.hashSync('google-oauth:' + crypto.randomUUID(), 10),
+    name,
+    username,
+    avatar: claims.picture ? String(claims.picture).slice(0, 3000000) : '',
+    phone: '',
+    city: '',
+    origin: '',
+    interests: JSON.stringify([]),
+    lang: ['en', 'es'].includes(langHint) ? langHint : 'en',
+    dob: '',
+    gender: '',
+    created_at: now()
+  };
+  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,username,avatar,phone,city,origin,interests,lang,dob,gender,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@username,@avatar,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
+
+  res.json({
+    token: makeToken(user),
+    user: { ...publicUser(user), email: user.email, phone: '', incognito: false, readReceipts: true },
+    isNew: true
+  });
 });
 
 // Return the current user (used on app load to restore session)
@@ -2158,7 +2251,8 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
 // simply never auto-fetched; its events are added by hand via the admin panel instead.
 // To support a new paid source later (Eventbrite, SeatGeek, etc.), add a key here and
 // list it in the Manager panel's provider dropdown — nothing else needs to change.
-const EVENT_INGEST_WINDOW_DAYS = 30;
+// Pull events up to a full year ahead so people can plan well in advance (item 4).
+const EVENT_INGEST_WINDOW_DAYS = 365;
 function normalizeTicketmasterEvent(e, label) {
   const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
   const loc = v.location || {};
@@ -2226,7 +2320,7 @@ const EVENT_PROVIDERS = {
 // Runs once at boot and then every 24h (see bottom of file). Pulls each enabled
 // provider account's events straight into the `events` table (upserted by id, so
 // re-running just refreshes rows instead of duplicating them), then trims anything
-// that's now outside the 30-day display window. Request time (`/api/events` below)
+// that's now outside the 1-year display window. Request time (`/api/events` below)
 // never talks to a provider — it only ever reads from our own indexed table, so a
 // slow or rate-limited provider can't slow down anyone's app.
 async function upsertExternalEvent(e) {
@@ -2261,7 +2355,7 @@ async function ingestOneSource(s) {
     const evs = result.events || [];
     let kept = 0;
     for (const e of evs) {
-      if (e.starts_at && e.starts_at > cutoff) continue; // outside the 30-day window — skip storing it
+      if (e.starts_at && e.starts_at > cutoff) continue; // outside the display window — skip storing it
       await upsertExternalEvent(e);
       kept++;
     }
@@ -2307,10 +2401,12 @@ async function ingestExternalEvents() {
   } finally { eventIngestRunning = false; }
 }
 
-// List events nationwide (no distance limit), optional category filter, paginated.
-// Reads only from our own DB — see ingest job above. If a location is given, distance
-// is still computed per-event so it can be shown in the UI, but it no longer filters
-// or caps what's returned.
+// List events, paginated. Reads only from our own DB — see ingest job above.
+// The same filters the UI exposes for Rounds now apply to API-sourced events too
+// (item 1): category, a date-range ("when": today | week | month | any), and — when
+// a location and a maxDistance are given — a distance cap. Distance is computed in
+// SQL so the cap and the nearest-first ordering apply across the *entire* feed, not
+// just whatever page happens to be loaded.
 app.get('/api/events', requireAuth, async (req, res) => {
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const category = req.query.category || null;
@@ -2319,30 +2415,52 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize) || 25));
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
 
+  // ---- Date-range ("when") filter — mirrors the app's Today / This week / This month chips.
+  // Computed as an upper bound on starts_at (in ms). "today" also needs a same-calendar-day
+  // check, which we do in JS after the query since day boundaries are timezone-sensitive.
+  const when = (req.query.when || 'any').toLowerCase();
+  const startFloor = now() - 6 * 3600 * 1000; // include things that started in the last few hours
+  let whenCeil = cutoff;
+  if (when === 'today') whenCeil = Math.min(cutoff, now() + 24 * 3600 * 1000);
+  else if (when === 'week') whenCeil = Math.min(cutoff, now() + 7 * 24 * 3600 * 1000);
+  else if (when === 'month') whenCeil = Math.min(cutoff, now() + 31 * 24 * 3600 * 1000);
+
   const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
   const catParams = (category && category !== 'all') ? [category] : [];
 
-  // When we know the user's location, sort the *entire* nationwide feed by distance
-  // (closest first) at the database level. Sorting only the current page client-side
-  // (the old behavior) just re-ordered 25 events at a time and never produced a true
-  // nearest-first feed across pages. Falls back to date ordering with no location.
-  let distSelect = '', orderClause = 'ORDER BY (starts_at IS NULL), starts_at ASC', orderParams = [];
+  // ---- Distance filter. Only meaningful with a location. When maxDistance (miles) is
+  // provided, events are both capped to that radius and sorted nearest-first at the DB
+  // level. Events with no coordinates are excluded once a radius is in force (they can't
+  // be shown to satisfy a "within X miles" request). Without a cap we keep everything and
+  // just sort by distance when we can.
+  const maxDistanceMiles = parseFloat(req.query.maxDistance);
+  const hasDistCap = hasLoc && !isNaN(maxDistanceMiles) && maxDistanceMiles > 0;
+
+  let distSelect = '', orderClause = 'ORDER BY (starts_at IS NULL), starts_at ASC', orderParams = [], distClause = '', distParams = [];
   if (hasLoc) {
-    distSelect = `, (3958.8 * 2 * ASIN(SQRT(
+    const distExpr = `(3958.8 * 2 * ASIN(SQRT(
         POWER(SIN(RADIANS(lat - ?) / 2), 2) +
         COS(RADIANS(?)) * COS(RADIANS(lat)) * POWER(SIN(RADIANS(lng - ?) / 2), 2)
-      ))) AS calc_distance`;
+      )))`;
+    distSelect = `, ${distExpr} AS calc_distance`;
     orderParams = [lat, lat, lng];
     orderClause = 'ORDER BY (lat IS NULL OR lng IS NULL), calc_distance ASC, (starts_at IS NULL), starts_at ASC';
+    if (hasDistCap) {
+      // Require coordinates AND within-radius. Repeats the distance expression in WHERE
+      // (Postgres can't reference a SELECT alias there); params are ordered to match.
+      distClause = ` AND lat IS NOT NULL AND lng IS NOT NULL AND ${distExpr} <= ?`;
+      distParams = [lat, lat, lng, maxDistanceMiles];
+    }
   }
 
   const rows = await db.prepare(`
     SELECT * ${distSelect} FROM events
     WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
     ${catClause}
+    ${distClause}
     ${orderClause}
     LIMIT ? OFFSET ?
-  `).all(...orderParams, now() - 6 * 3600 * 1000, cutoff, ...catParams, pageSize, page * pageSize);
+  `).all(...orderParams, startFloor, whenCeil, ...catParams, ...distParams, pageSize, page * pageSize);
 
   let all = rows.map(e => {
     const { calc_distance, ...rest } = e;
@@ -2350,8 +2468,13 @@ app.get('/api/events', requireAuth, async (req, res) => {
     if (dist == null && hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
     return { ...rest, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
   });
-  // The SQL already sorted the full feed; only re-sort here when we had no location
-  // to sort by distance in the first place, in which case just keep date order.
+
+  // "today" is the one range that needs a calendar-day check (not just "next 24h"),
+  // so apply it here where we have real Date objects to compare against.
+  if (when === 'today') {
+    const todayStr = new Date().toDateString();
+    all = all.filter(e => !e.starts_at || new Date(e.starts_at).toDateString() === todayStr);
+  }
 
   res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
 });
@@ -2962,7 +3085,7 @@ initDb()
       db.prepare('DELETE FROM event_cache WHERE fetched_at < ?').run(Date.now() - 7 * 24 * 60 * 60 * 1000).catch(() => {});
     }, 6 * 60 * 60 * 1000);
     // Event feed: one ingest pass per provider per day, pulling US-wide events up to
-    // 30 days out straight into the `events` table. Delay the first run slightly so it
+    // 1 year out straight into the `events` table. Delay the first run slightly so it
     // doesn't compete with other boot-time work; after that, once every 24h.
     setTimeout(() => { ingestExternalEvents().catch(err => console.log('[events] initial ingest failed:', err.message)); }, 20000);
     setInterval(() => { ingestExternalEvents().catch(err => console.log('[events] scheduled ingest failed:', err.message)); }, 24 * 60 * 60 * 1000);
