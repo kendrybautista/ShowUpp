@@ -173,6 +173,11 @@ await db.exec(`
 await db.exec(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+  -- Fun avatar (item 2): a small JSON blob describing chosen features (face, eyes, hair,
+  -- accessory, colors). Kept separate from the avatar photo column so it's purely
+  -- additive. avatar_on_map (item 3) opts the avatar in as the user's map location pin.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_config TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_on_map INTEGER DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'en';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended INTEGER DEFAULT 0;
@@ -294,6 +299,11 @@ await db.exec(`
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_ingest_at BIGINT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
+  -- Country the event takes place in (ISO 3166-1 alpha-2, e.g. 'US', 'DO'). Lets the
+  -- feed serve users their own country's events instead of a US-only catalog (item 6).
+  ALTER TABLE events ADD COLUMN IF NOT EXISTS country TEXT;
+  CREATE INDEX IF NOT EXISTS idx_events_country ON events (country);
+  CREATE INDEX IF NOT EXISTS idx_events_category ON events (category);
 
   -- Moderation workflow for reports: status walks open -> investigating -> resolved.
   -- verdict records the manager's finding once analyzed (discarded = unfounded,
@@ -408,7 +418,11 @@ function publicUser(u) {
     // Age is only exposed publicly when the person chose to show it.
     age: u.show_age ? age : null,
     isAdmin: !!u.is_admin,
-    lang: u.lang || 'en'
+    lang: u.lang || 'en',
+    // Fun avatar (item 2) — a small JSON of chosen features. Separate from `avatar`
+    // (the profile photo), so it never replaces the photo. avatarOnMap toggles item 3.
+    avatarConfig: u.avatar_config || '',
+    avatarOnMap: !!u.avatar_on_map
   };
 }
 
@@ -765,10 +779,13 @@ const COUNTRY_CODES = {
 };
 function countryToCode(country) {
   if (!country) return '';
+  const s = String(country).trim();
+  // Already an ISO 3166-1 alpha-2 code (e.g. origin stored as "do")?
+  if (/^[a-zA-Z]{2}$/.test(s)) return s.toLowerCase();
   // The app stores city as "City, Country" — take the last comma-separated chunk if present.
-  const parts = String(country).split(',');
+  const parts = s.split(',');
   const tail = parts[parts.length - 1].trim().toLowerCase();
-  return COUNTRY_CODES[tail] || COUNTRY_CODES[String(country).trim().toLowerCase()] || '';
+  return COUNTRY_CODES[tail] || COUNTRY_CODES[s.toLowerCase()] || '';
 }
 
 // Back-compat geocode endpoint (used by the older event-location flow). Now country-aware
@@ -1020,6 +1037,32 @@ app.post('/api/me/avatar', requireAuth, async (req, res) => {
 app.post('/api/me/avatar/remove', requireAuth, async (req, res) => {
   await db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
   const updated = await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
+});
+
+// ---- Fun avatar (items 2 & 3) ----
+// Saves the small JSON config of chosen features. Validated for size and shape only —
+// the actual rendering is done client-side from these keys, so we never store an image.
+// This is separate from the profile photo and never overwrites it.
+app.post('/api/me/fun-avatar', requireAuth, async (req, res) => {
+  let { config, onMap } = req.body || {};
+  if (config != null) {
+    let str = typeof config === 'string' ? config : JSON.stringify(config);
+    if (str.length > 2000) return res.status(413).json({ error: 'Avatar config too large.' });
+    // Ensure it parses as JSON so we never store junk.
+    try { JSON.parse(str); } catch (e) { return res.status(400).json({ error: 'Invalid avatar config.' }); }
+    await db.prepare('UPDATE users SET avatar_config = ? WHERE id = ?').run(str, req.user.id);
+  }
+  if (typeof onMap === 'boolean') {
+    await db.prepare('UPDATE users SET avatar_on_map = ? WHERE id = ?').run(onMap ? 1 : 0, req.user.id);
+  }
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
+});
+// Clear the fun avatar entirely.
+app.post('/api/me/fun-avatar/remove', requireAuth, async (req, res) => {
+  await db.prepare('UPDATE users SET avatar_config = NULL, avatar_on_map = 0 WHERE id = ?').run(req.user.id);
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
 });
 
@@ -2371,65 +2414,178 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
 // list it in the Manager panel's provider dropdown — nothing else needs to change.
 // Pull events up to a full year ahead so people can plan well in advance (item 4).
 const EVENT_INGEST_WINDOW_DAYS = 365;
-function normalizeTicketmasterEvent(e, label) {
+// ---- Event classifier (items 1 & 4) ----
+// Ticketmaster tags each event with a broad "segment" (Sports, Music, Arts & Theatre,
+// Film, Miscellaneous...). Using that raw segment as our category is what let a sporting
+// event land under the wrong bucket — e.g. anything Ticketmaster couldn't segment cleanly
+// defaulted oddly. This classifier maps the RICH classification (segment + genre +
+// subGenre) plus a light keyword pass over the title into ShowUpp's own category names,
+// with a matching emoji. It runs once per event at ingest time (not per request), so it
+// adds zero cost to the hot path and can't slow the app down or crash it. Pure function,
+// no I/O, wrapped by callers in try/catch.
+const EVENT_CATEGORY_EMOJI = {
+  'Sports': '⚽', 'Basketball': '🏀', 'Baseball': '⚾', 'Football': '🏈', 'Tennis': '🎾',
+  'Music': '🎵', 'Comedy': '🎤', 'Theater': '🎭', 'Movies': '🎬', 'Art': '🎨',
+  'Family': '🎪', 'Food': '🍽️', 'Culture': '🌍', 'Event': '🎟️'
+};
+// Keyword → category, checked against genre/subGenre/title when the segment alone is
+// ambiguous (Miscellaneous/Undefined) or to refine a specific sport. Ordered most- to
+// least-specific; first match wins.
+const CLASSIFY_KEYWORDS = [
+  [/\bnba\b|basketball|hoops/i, 'Basketball'],
+  [/\bmlb\b|baseball|béisbol|beisbol/i, 'Baseball'],
+  [/\bnfl\b|american football|gridiron/i, 'Football'],
+  [/\btennis\b|atp|wta/i, 'Tennis'],
+  [/soccer|f[uú]tbol|fifa|la liga|premier league|mls\b/i, 'Sports'],
+  [/hockey|nhl\b/i, 'Sports'],
+  [/golf|pga\b/i, 'Sports'],
+  [/boxing|\bmma\b|\bufc\b|wrestling|wwe\b/i, 'Sports'],
+  [/marathon|running|cycling|swim|athletic|olympic|rugby|cricket|volleyball|motorsport|nascar|racing/i, 'Sports'],
+  [/comedy|comedian|stand-?up|improv/i, 'Comedy'],
+  [/theat(er|re)|broadway|musical|opera|ballet|dance|drama|playhouse/i, 'Theater'],
+  [/film|movie|cinema|screening/i, 'Movies'],
+  [/\bart\b|gallery|exhibit|museum|painting|sculpture/i, 'Art'],
+  [/food|wine|beer|tasting|culinary|restaurant|brunch|dining/i, 'Food'],
+  [/festival|concert|dj\b|live music|symphony|orchestra|band|tour\b/i, 'Music'],
+  [/family|kids|children|circus|disney on ice/i, 'Family']
+];
+// Ticketmaster segment.name → our category (the reliable, coarse mapping).
+const SEGMENT_MAP = {
+  'sports': 'Sports', 'music': 'Music', 'arts & theatre': 'Theater',
+  'arts & theater': 'Theater', 'film': 'Movies', 'comedy': 'Comedy',
+  'family': 'Family', 'miscellaneous': null, 'undefined': null
+};
+// Ticketmaster genre.name → our category, used to refine within a segment (e.g. a Sports
+// event whose genre is "Basketball" becomes Basketball, not generic Sports).
+const GENRE_MAP = {
+  'basketball': 'Basketball', 'baseball': 'Baseball', 'football': 'Football',
+  'tennis': 'Tennis', 'comedy': 'Comedy', 'theatre': 'Theater', 'theater': 'Theater',
+  'dance': 'Theater', 'classical': 'Music', 'rock': 'Music', 'pop': 'Music',
+  'hip-hop/rap': 'Music', 'jazz': 'Music', 'country': 'Music', 'latin': 'Music',
+  'film': 'Movies', 'fine art': 'Art', 'arts': 'Art'
+};
+// Classify one raw Ticketmaster event object. Returns { category, emoji }.
+function classifyTicketmasterEvent(e) {
+  try {
+    const cls = (e.classifications && e.classifications[0]) || {};
+    const segment = (cls.segment && cls.segment.name || '').trim();
+    const genre = (cls.genre && cls.genre.name || '').trim();
+    const subGenre = (cls.subGenre && cls.subGenre.name || '').trim();
+    const title = (e.name || '').trim();
+
+    let category = null;
+
+    // 1) Genre is the most specific reliable signal — try it first.
+    if (genre && GENRE_MAP[genre.toLowerCase()]) category = GENRE_MAP[genre.toLowerCase()];
+
+    // 2) Fall back to the coarse segment mapping.
+    if (!category && segment) {
+      const seg = segment.toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(SEGMENT_MAP, seg)) category = SEGMENT_MAP[seg];
+      else category = null; // unknown segment → let keywords decide
+    }
+
+    // 3) If still unresolved (or the segment was Miscellaneous/Undefined), run the keyword
+    //    pass over genre + subGenre + title so a mis-segmented sporting event, say, still
+    //    lands in Sports instead of a random bucket.
+    if (!category) {
+      const hay = [genre, subGenre, title].filter(Boolean).join(' ');
+      for (const [re, cat] of CLASSIFY_KEYWORDS) { if (re.test(hay)) { category = cat; break; } }
+    }
+
+    // 4) Even when we DID get a category from the segment (e.g. generic "Sports"), let a
+    //    specific keyword refine it to the exact sport when the title makes it obvious.
+    if (category === 'Sports') {
+      const hay = [genre, subGenre, title].filter(Boolean).join(' ');
+      for (const [re, cat] of CLASSIFY_KEYWORDS) {
+        if (['Basketball', 'Baseball', 'Football', 'Tennis'].includes(cat) && re.test(hay)) { category = cat; break; }
+      }
+    }
+
+    if (!category) category = 'Event';
+    return { category, emoji: EVENT_CATEGORY_EMOJI[category] || '🎟️' };
+  } catch (err) {
+    return { category: 'Event', emoji: '🎟️' };
+  }
+}
+
+function normalizeTicketmasterEvent(e, label, country) {
   const v = (e._embedded && e._embedded.venues && e._embedded.venues[0]) || {};
   const loc = v.location || {};
+  const { category, emoji } = classifyTicketmasterEvent(e); // items 1 & 4
+  // Country: prefer the venue's own country code, fall back to the ingest country param.
+  const venueCC = (v.country && (v.country.countryCode || v.country.code)) || '';
   return {
     id: 'tm_' + e.id, source: 'ticketmaster', source_id: e.id,
     title: e.name, description: (e.info || e.pleaseNote || ''),
-    category: (e.classifications && e.classifications[0] && e.classifications[0].segment && e.classifications[0].segment.name) || 'Event',
-    emoji: '🎟️',
+    category: category,
+    emoji: emoji,
     photo: (e.images && e.images[0] && e.images[0].url) || null,
     link: e.url || null,
     place: v.name || (v.city && v.city.name) || '',
     lat: loc.latitude ? parseFloat(loc.latitude) : null,
     lng: loc.longitude ? parseFloat(loc.longitude) : null,
     starts_at: (e.dates && e.dates.start && e.dates.start.dateTime) ? new Date(e.dates.start.dateTime).getTime() : null,
-    ends_at: null, source_label: label || 'Ticketmaster'
+    ends_at: null, source_label: label || 'Ticketmaster',
+    country: (venueCC || country || '').toUpperCase() || null
   };
 }
-// Pages through Ticketmaster's US catalog in weekly slices (rather than one huge date
-// range) so a single slow/failed page never loses the whole window, and caps pages per
-// slice so one ingest run can't run away against the API's rate limit.
-// Returns { events, error } — error is set (and events may be empty) when every request
-// failed, so the ingest job can surface *why* instead of just "0 events fetched".
-async function fetchTicketmasterUS(apiKey, label) {
+// Countries we ingest from Ticketmaster. US is the largest catalog, but ShowUpp is used
+// abroad (e.g. the Dominican Republic), and hardcoding countryCode=US meant non-US users
+// saw nothing local (item 6). This list covers the app's primary markets; Ticketmaster's
+// Discovery API supports each of these country codes. Override with the TICKETMASTER_COUNTRIES
+// env var (comma-separated ISO codes) without a code change.
+const TM_DEFAULT_COUNTRIES = ['US', 'DO', 'CA', 'MX', 'GB', 'IE', 'AU', 'NZ', 'ES', 'DE', 'FR', 'NL', 'PR'];
+function ticketmasterCountries() {
+  const raw = (process.env.TICKETMASTER_COUNTRIES || '').trim();
+  if (raw) return raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  return TM_DEFAULT_COUNTRIES;
+}
+
+// Pages through Ticketmaster's catalog for EACH configured country, in weekly slices
+// (rather than one huge date range) so a single slow/failed page never loses the whole
+// window, and caps pages per slice so one ingest run can't run away against the API's
+// rate limit. Returns { events, error }.
+async function fetchTicketmaster(apiKey, label, countries) {
   if (!apiKey) return { events: [], error: 'No API key configured for this source.' };
   const events = [];
   let lastError = null;
-  const sliceDays = 7, maxPagesPerSlice = 5, pageSize = 200; // 5*200 = 1000 events/slice ceiling
-  for (let offset = 0; offset < EVENT_INGEST_WINDOW_DAYS; offset += sliceDays) {
-    const sliceStart = new Date(Date.now() + offset * 86400000);
-    const sliceEnd = new Date(Date.now() + Math.min(offset + sliceDays, EVENT_INGEST_WINDOW_DAYS) * 86400000);
-    const startDateTime = sliceStart.toISOString().split('.')[0] + 'Z';
-    const endDateTime = sliceEnd.toISOString().split('.')[0] + 'Z';
-    for (let page = 0; page < maxPagesPerSlice; page++) {
-      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=US&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
-      let r;
-      try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; break; } // network hiccup — stop this slice, keep what we have
-      if (!r.ok) {
-        // Surface *why* — an invalid/expired key (401/403), a malformed request (400),
-        // or rate-limiting (429) all look identical if we just silently break, which is
-        // exactly what made this failure mode invisible before.
-        let detail = r.statusText;
-        try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
-        lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''}`;
-        break; // rate-limited or bad request — stop this slice rather than throwing the whole ingest away
+  const ccs = (countries && countries.length) ? countries : ticketmasterCountries();
+  // Keep the per-country page budget modest so covering many countries doesn't multiply
+  // into a runaway number of requests. US gets a little more depth than the rest.
+  const sliceDays = 7, pageSize = 200;
+  for (const cc of ccs) {
+    const maxPagesPerSlice = (cc === 'US') ? 5 : 2; // 5*200 US, 2*200 others per slice
+    for (let offset = 0; offset < EVENT_INGEST_WINDOW_DAYS; offset += sliceDays) {
+      const sliceStart = new Date(Date.now() + offset * 86400000);
+      const sliceEnd = new Date(Date.now() + Math.min(offset + sliceDays, EVENT_INGEST_WINDOW_DAYS) * 86400000);
+      const startDateTime = sliceStart.toISOString().split('.')[0] + 'Z';
+      const endDateTime = sliceEnd.toISOString().split('.')[0] + 'Z';
+      for (let page = 0; page < maxPagesPerSlice; page++) {
+        const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=${encodeURIComponent(cc)}&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
+        let r;
+        try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; break; }
+        if (!r.ok) {
+          let detail = r.statusText;
+          try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
+          lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''} (country ${cc})`;
+          break; // stop this country's slice rather than throwing the whole ingest away
+        }
+        const data = await r.json();
+        const evs = (data._embedded && data._embedded.events) || [];
+        for (const e of evs) events.push(normalizeTicketmasterEvent(e, label, cc));
+        const totalPages = (data.page && data.page.totalPages) || 1;
+        if (page + 1 >= totalPages || evs.length === 0) break;
+        await new Promise(res => setTimeout(res, 250)); // be gentle on the rate limit
       }
-      const data = await r.json();
-      const evs = (data._embedded && data._embedded.events) || [];
-      for (const e of evs) events.push(normalizeTicketmasterEvent(e, label));
-      const totalPages = (data.page && data.page.totalPages) || 1;
-      if (page + 1 >= totalPages || evs.length === 0) break;
-      await new Promise(res => setTimeout(res, 250)); // be gentle on Ticketmaster's rate limit
     }
   }
-  // Only report the error if it actually cost us events — a slice legitimately having
-  // zero events near the end of the window isn't a failure.
   return { events, error: events.length === 0 ? lastError : null };
 }
+// Back-compat alias — older callers referenced fetchTicketmasterUS.
+async function fetchTicketmasterUS(apiKey, label) { return fetchTicketmaster(apiKey, label); }
 const EVENT_PROVIDERS = {
-  ticketmaster: async (apiKey, label) => fetchTicketmasterUS(apiKey, label)
+  ticketmaster: async (apiKey, label) => fetchTicketmaster(apiKey, label)
   // Add more providers here later the same way, e.g.:
   //   eventbrite: async (apiKey, label) => { ...page through their API, return normalized events... }
 };
@@ -2449,15 +2605,16 @@ async function upsertExternalEvent(e) {
     photo: e.photo || null, link: e.link || null, place: String(e.place || '').slice(0, 200),
     lat: (typeof e.lat === 'number') ? e.lat : null, lng: (typeof e.lng === 'number') ? e.lng : null,
     starts_at: e.starts_at || null, ends_at: e.ends_at || null,
-    posted_by: null, approved: 1, created_at: now(), source_label: e.source_label || e.source
+    posted_by: null, approved: 1, created_at: now(), source_label: e.source_label || e.source,
+    country: e.country || null
   };
   await db.prepare(`
-    INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at,source_label)
-    VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at,@source_label)
+    INSERT INTO events (id,source,source_id,title,description,category,emoji,photo,link,place,lat,lng,starts_at,ends_at,posted_by,approved,created_at,source_label,country)
+    VALUES (@id,@source,@source_id,@title,@description,@category,@emoji,@photo,@link,@place,@lat,@lng,@starts_at,@ends_at,@posted_by,@approved,@created_at,@source_label,@country)
     ON CONFLICT (id) DO UPDATE SET
       title=excluded.title, description=excluded.description, category=excluded.category, emoji=excluded.emoji,
       photo=excluded.photo, link=excluded.link, place=excluded.place, lat=excluded.lat, lng=excluded.lng,
-      starts_at=excluded.starts_at, ends_at=excluded.ends_at, source_label=excluded.source_label
+      starts_at=excluded.starts_at, ends_at=excluded.ends_at, source_label=excluded.source_label, country=excluded.country
   `).run(row);
 }
 // Pulls one source's events and records ingest health on its row. Shared by the
@@ -2507,7 +2664,7 @@ async function ingestExternalEvents() {
     // env-var fallback key, for deployments that set it instead of using the Manager panel
     if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
       try {
-        const result = await fetchTicketmasterUS(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
+        const result = await fetchTicketmaster(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
         for (const e of (result.events || [])) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
       } catch (err) {}
     }
@@ -2559,6 +2716,40 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
   const catParams = (category && category !== 'all') ? [category] : [];
 
+  // ---- Country filter (item 6). ShowUpp is used outside the US, so by default a user
+  // sees events in THEIR country rather than a US-only list. The country is taken from an
+  // explicit ?country= (ISO-2) if the client sends one, else derived from the user's saved
+  // city/origin. `international=1` opts out (show everything). If the user's country turns
+  // out to have no events, we transparently fall back to the full list so they're never
+  // staring at an empty feed.
+  const wantsInternational = req.query.international === '1' || req.query.international === 'true';
+  let userCC = String(req.query.country || '').trim().toUpperCase();
+  if (!userCC && !wantsInternational) {
+    userCC = (countryToCode(req.user && (req.user.origin || req.user.city)) || '').toUpperCase();
+  }
+  let countryClause = '', countryParams = [];
+  if (userCC && !wantsInternational) {
+    // Include NULL-country community posts too (they're local user submissions).
+    countryClause = ' AND (country = ? OR country IS NULL OR source = \'community\')';
+    countryParams = [userCC];
+  }
+
+  // ---- Preferred-category ordering (item 4). Events whose category is one of the user's
+  // interests are surfaced FIRST, then the rest, preserving the distance/date ordering
+  // within each group. Implemented as a leading ORDER BY term (0 for preferred, 1 for the
+  // rest) so it costs nothing extra and works across pagination. Skipped when the user is
+  // already filtering to a single category (nothing to prioritize) or has no interests.
+  let interests = [];
+  try { interests = (req.user && req.user.interests) ? JSON.parse(req.user.interests) : []; } catch (e) { interests = []; }
+  const prioritize = (!category || category === 'all') && Array.isArray(interests) && interests.length > 0;
+  let prefSelect = '', prefOrder = '', prefParams = [];
+  if (prioritize) {
+    const placeholders = interests.map(() => '?').join(',');
+    prefSelect = `, (CASE WHEN LOWER(category) IN (${placeholders}) THEN 0 ELSE 1 END) AS pref_rank`;
+    prefParams = interests.map(s => String(s).toLowerCase());
+    prefOrder = 'pref_rank ASC, ';
+  }
+
   // ---- Distance filter. Only meaningful with a location. When maxDistance (miles) is
   // provided, events are both capped to that radius and sorted nearest-first at the DB
   // level. Events with no coordinates are excluded once a radius is in force (they can't
@@ -2567,7 +2758,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const maxDistanceMiles = parseFloat(req.query.maxDistance);
   const hasDistCap = hasLoc && !isNaN(maxDistanceMiles) && maxDistanceMiles > 0;
 
-  let distSelect = '', orderClause = 'ORDER BY (starts_at IS NULL), starts_at ASC', orderParams = [], distClause = '', distParams = [];
+  let distSelect = '', orderClause = 'ORDER BY ' + prefOrder + '(starts_at IS NULL), starts_at ASC', orderParams = [], distClause = '', distParams = [];
   if (hasLoc) {
     const distExpr = `(3958.8 * 2 * ASIN(SQRT(
         POWER(SIN(RADIANS(lat - ?) / 2), 2) +
@@ -2575,7 +2766,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
       )))`;
     distSelect = `, ${distExpr} AS calc_distance`;
     orderParams = [lat, lat, lng];
-    orderClause = 'ORDER BY (lat IS NULL OR lng IS NULL), calc_distance ASC, (starts_at IS NULL), starts_at ASC';
+    orderClause = 'ORDER BY ' + prefOrder + '(lat IS NULL OR lng IS NULL), calc_distance ASC, (starts_at IS NULL), starts_at ASC';
     if (hasDistCap) {
       // Require coordinates AND within-radius. Repeats the distance expression in WHERE
       // (Postgres can't reference a SELECT alias there); params are ordered to match.
@@ -2584,17 +2775,27 @@ app.get('/api/events', requireAuth, async (req, res) => {
     }
   }
 
-  const rows = await db.prepare(`
-    SELECT * ${distSelect} FROM events
+  // Param order must match the SQL: SELECT distance params, SELECT pref params, then WHERE
+  // (floor, ceil, category, country, distance), then LIMIT/OFFSET.
+  const runQuery = (withCountry) => db.prepare(`
+    SELECT * ${distSelect} ${prefSelect} FROM events
     WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
     ${catClause}
+    ${withCountry ? countryClause : ''}
     ${distClause}
     ${orderClause}
     LIMIT ? OFFSET ?
-  `).all(...orderParams, effectiveFloor, whenCeil, ...catParams, ...distParams, pageSize, page * pageSize);
+  `).all(...orderParams, ...prefParams, effectiveFloor, whenCeil, ...catParams, ...(withCountry ? countryParams : []), ...distParams, pageSize, page * pageSize);
+
+  let rows = await runQuery(!!countryClause);
+  // Empty-country fallback: if country filtering returned nothing on the first page,
+  // retry once without it so international users with a thin local catalog still see events.
+  if (countryClause && rows.length === 0 && page === 0) {
+    rows = await runQuery(false);
+  }
 
   let all = rows.map(e => {
-    const { calc_distance, ...rest } = e;
+    const { calc_distance, pref_rank, ...rest } = e;
     let dist = (typeof calc_distance === 'number') ? calc_distance : null;
     if (dist == null && hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
     return { ...rest, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
@@ -2607,7 +2808,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
     all = all.filter(e => !e.starts_at || new Date(e.starts_at).toDateString() === todayStr);
   }
 
-  res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
+  res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, country: userCC || null, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
 });
 
 // Distinct categories currently available (nationwide, no distance limit) — used to
@@ -3215,9 +3416,10 @@ initDb()
     setInterval(() => {
       db.prepare('DELETE FROM event_cache WHERE fetched_at < ?').run(Date.now() - 7 * 24 * 60 * 60 * 1000).catch(() => {});
     }, 6 * 60 * 60 * 1000);
-    // Event feed: one ingest pass per provider per day, pulling US-wide events up to
-    // 1 year out straight into the `events` table. Delay the first run slightly so it
-    // doesn't compete with other boot-time work; after that, once every 24h.
+    // Event feed: one ingest pass per provider per day, pulling events (across all
+    // configured countries — item 6) up to 1 year out straight into the `events` table.
+    // Re-upserting also re-runs classification, so the category fix (item 1) heals
+    // existing rows on the next run. Delay the first run slightly; then once every 24h.
     setTimeout(() => { ingestExternalEvents().catch(err => console.log('[events] initial ingest failed:', err.message)); }, 20000);
     setInterval(() => { ingestExternalEvents().catch(err => console.log('[events] scheduled ingest failed:', err.message)); }, 24 * 60 * 60 * 1000);
   })
