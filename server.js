@@ -2056,6 +2056,39 @@ async function upsertExternalEvent(e) {
       starts_at=excluded.starts_at, ends_at=excluded.ends_at, source_label=excluded.source_label
   `).run(row);
 }
+// Pulls one source's events and records ingest health on its row. Shared by the
+// scheduled all-sources job and the Manager panel's per-account "Refresh now" button,
+// so a manual refresh behaves identically to the nightly one instead of being a
+// second, subtly-different code path.
+async function ingestOneSource(s) {
+  const fn = EVENT_PROVIDERS[s.provider];
+  if (!fn) return { ok: false, error: 'This source has no automatic provider — add its events manually instead.' };
+  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
+  try {
+    const result = await fn(s.api_key, s.label);
+    const evs = result.events || [];
+    let kept = 0;
+    for (const e of evs) {
+      if (e.starts_at && e.starts_at > cutoff) continue; // outside the 30-day window — skip storing it
+      await upsertExternalEvent(e);
+      kept++;
+    }
+    console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})${result.error ? ' — error: ' + result.error : ''}`);
+    await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
+      .run(now(), result.error || null, kept, s.id);
+    // Also trim this source's own events that are now in the past or outside the
+    // display window, so a manual refresh cleans up immediately rather than waiting
+    // for the next scheduled run.
+    await db.prepare(`DELETE FROM events WHERE source = ? AND starts_at IS NOT NULL AND (starts_at < ? OR starts_at > ?)`)
+      .run(s.provider, now() - 6 * 3600 * 1000, cutoff);
+    return { ok: true, kept, total: evs.length, error: result.error || null };
+  } catch (err) {
+    console.log('[events] ingest failed for', s.provider, err.message);
+    await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
+      .run(now(), err.message, 0, s.id).catch(() => {});
+    return { ok: false, error: err.message };
+  }
+}
 let eventIngestRunning = false;
 async function ingestExternalEvents() {
   if (eventIngestRunning) return; // don't overlap a manual "refresh now" with the scheduled run
@@ -2064,27 +2097,8 @@ async function ingestExternalEvents() {
   try {
     const sources = await db.prepare('SELECT * FROM event_sources WHERE enabled = 1').all();
     for (const s of sources) {
-      const fn = EVENT_PROVIDERS[s.provider];
-      if (!fn) continue; // manual/unregistered provider — nothing to auto-fetch
-      try {
-        const result = await fn(s.api_key, s.label);
-        const evs = result.events || [];
-        let kept = 0;
-        for (const e of evs) {
-          if (e.starts_at && e.starts_at > cutoff) continue; // outside the 30-day window — skip storing it
-          await upsertExternalEvent(e);
-          kept++;
-        }
-        console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})${result.error ? ' — error: ' + result.error : ''}`);
-        // Record real ingest health on the source row so the Manager panel can show
-        // it accurately instead of just "Active" because the toggle is on.
-        await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
-          .run(now(), result.error || null, kept, s.id);
-      } catch (err) {
-        console.log('[events] ingest failed for', s.provider, err.message);
-        await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
-          .run(now(), err.message, 0, s.id).catch(() => {});
-      }
+      if (!EVENT_PROVIDERS[s.provider]) continue; // manual/unregistered provider — nothing to auto-fetch
+      await ingestOneSource(s);
     }
     // env-var fallback key, for deployments that set it instead of using the Manager panel
     if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
@@ -2116,20 +2130,36 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
   const catParams = (category && category !== 'all') ? [category] : [];
 
+  // When we know the user's location, sort the *entire* nationwide feed by distance
+  // (closest first) at the database level. Sorting only the current page client-side
+  // (the old behavior) just re-ordered 25 events at a time and never produced a true
+  // nearest-first feed across pages. Falls back to date ordering with no location.
+  let distSelect = '', orderClause = 'ORDER BY (starts_at IS NULL), starts_at ASC', orderParams = [];
+  if (hasLoc) {
+    distSelect = `, (3958.8 * 2 * ASIN(SQRT(
+        POWER(SIN(RADIANS(lat - ?) / 2), 2) +
+        COS(RADIANS(?)) * COS(RADIANS(lat)) * POWER(SIN(RADIANS(lng - ?) / 2), 2)
+      ))) AS calc_distance`;
+    orderParams = [lat, lat, lng];
+    orderClause = 'ORDER BY (lat IS NULL OR lng IS NULL), calc_distance ASC, (starts_at IS NULL), starts_at ASC';
+  }
+
   const rows = await db.prepare(`
-    SELECT * FROM events
+    SELECT * ${distSelect} FROM events
     WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
     ${catClause}
-    ORDER BY (starts_at IS NULL), starts_at ASC
+    ${orderClause}
     LIMIT ? OFFSET ?
-  `).all(now() - 6 * 3600 * 1000, cutoff, ...catParams, pageSize, page * pageSize);
+  `).all(...orderParams, now() - 6 * 3600 * 1000, cutoff, ...catParams, pageSize, page * pageSize);
 
   let all = rows.map(e => {
-    let dist = null;
-    if (hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
-    return { ...e, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
+    const { calc_distance, ...rest } = e;
+    let dist = (typeof calc_distance === 'number') ? calc_distance : null;
+    if (dist == null && hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') dist = distanceMiles(lat, lng, e.lat, e.lng);
+    return { ...rest, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist };
   });
-  all.sort((a, b) => (a.starts_at || Infinity) - (b.starts_at || Infinity) || (a.distance || 0) - (b.distance || 0));
+  // The SQL already sorted the full feed; only re-sort here when we had no location
+  // to sort by distance in the first place, in which case just keep date order.
 
   res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
 });
@@ -2186,12 +2216,18 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
   const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
   const masked = [];
+  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   for (const r of rows) {
     const isManual = !EVENT_PROVIDERS[r.provider];
-    // For an automatic provider, count how many of its events are currently live in
-    // the table (the daily ingest job populates these) so the owner can see it's working.
-    // For a manual source, count how many events an admin has added by hand.
-    const evRow = await db.prepare('SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events WHERE source = ?').get(r.provider);
+    // "Live" here means "currently shows up in Discover" — i.e. approved and inside
+    // the same date window /api/events filters by — not just any row ever ingested
+    // for this provider. Counting unfiltered rows made this number badly overstate
+    // what a user could actually browse to (e.g. including already-past events that
+    // haven't been trimmed yet), so match the exact same WHERE clause as the feed.
+    const evRow = await db.prepare(`
+      SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events
+      WHERE source = ? AND approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
+    `).get(r.provider, now() - 6 * 3600 * 1000, cutoff);
     masked.push({
       ...r,
       api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
@@ -2225,6 +2261,34 @@ app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res)
   // doesn't have to wait up to 24h to see it start working.
   if (isRegistered) ingestExternalEvents().catch(() => {});
   res.json({ ok: true, id: row.id, isManual: !isRegistered });
+});
+
+// Edit an existing account's label and/or API key. The label can be cleared to fall
+// back to the provider name; the API key is only touched if a new one is actually
+// supplied (an empty field means "leave it as-is", not "erase it"), so the manager
+// can rename an account without being forced to re-paste a working key.
+app.post('/api/admin/event-sources/:id/update', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT id, provider, label FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Not found.' });
+  const { label, apiKey } = req.body || {};
+  const newLabel = (label !== undefined) ? (String(label).slice(0, 80) || src.provider) : src.label;
+  if (apiKey && String(apiKey).trim()) {
+    await db.prepare('UPDATE event_sources SET label = ?, api_key = ? WHERE id = ?').run(newLabel, String(apiKey).trim(), req.params.id);
+  } else {
+    await db.prepare('UPDATE event_sources SET label = ? WHERE id = ?').run(newLabel, req.params.id);
+  }
+  res.json({ ok: true });
+});
+
+// Pull a fresh batch for just this one account, on demand — separate from the
+// all-sources "refresh" below, so a manager doesn't have to re-fetch every other
+// connected account just to check on one that looks stalled or was just edited.
+app.post('/api/admin/event-sources/:id/refresh', requireAuth, requireAdmin, async (req, res) => {
+  const src = await db.prepare('SELECT * FROM event_sources WHERE id = ?').get(req.params.id);
+  if (!src) return res.status(404).json({ error: 'Not found.' });
+  const result = await ingestOneSource(src);
+  if (!result.ok) return res.status(400).json({ error: result.error || 'Refresh failed.' });
+  res.json({ ok: true, kept: result.kept, total: result.total });
 });
 
 // Toggle an account on/off without deleting its saved key
