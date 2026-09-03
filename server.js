@@ -659,31 +659,137 @@ app.get('/api/link-preview', requireAuth, async (req, res) => {
 
 // Server-side geocoding (address -> lat/lng). Runs here so we can send a proper
 // User-Agent, which OpenStreetMap's Nominatim requires — browser calls are often blocked.
-app.get('/api/geocode', requireAuth, async (req, res) => {
-  const q = String((req.query && req.query.q) || '').trim();
-  if (!q || q.length < 3) return res.status(400).json({ error: 'Enter an address.' });
+// ---- Address handling (item 1) ----
+// Two problems this solves: (a) people pasting a Google/Apple Maps *link* instead of
+// an address (which geocoders can't resolve, so the Round never got coordinates and
+// never showed a distance), and (b) free-text that isn't really an address at all.
+// A shared helper classifies the raw input and, where possible, salvages coordinates
+// straight out of a pasted maps URL so the Round still lands on the map.
+
+// Pull "@lat,lng" or "?q=lat,lng" / "!3dLAT!4dLNG" out of common Google/Apple Maps URLs.
+function coordsFromMapUrl(s) {
+  try {
+    // google: /maps/@18.47,-69.9,15z  or  ...!3d18.47!4d-69.9
+    let m = s.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+    if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+    m = s.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+    if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+    // ?q=lat,lng  or  &ll=lat,lng  or  &center=lat,lng  (apple/google/bing)
+    m = s.match(/[?&](?:q|ll|sll|center|daddr|destination)=(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)/);
+    if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+    return null;
+  } catch (e) { return null; }
+}
+function looksLikeUrl(s) { return /^(https?:\/\/|www\.)|maps\.app\.goo\.gl|goo\.gl\/maps|maps\.google|google\.[a-z.]+\/maps|bing\.com\/maps|apple\.co\/|maps\.apple\.com/i.test(s); }
+// Is a bare "lat,lng" pair (people sometimes paste just the coordinates).
+function coordsFromPair(s) {
+  const m = s.match(/^\s*(-?\d{1,2}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+  if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat, lng };
+  return null;
+}
+
+// Core validator/geocoder. Returns a structured verdict the client uses to guide the
+// user, and (when it can) the resolved coordinates. `country` biases the geocoder so
+// e.g. "Calle El Conde" resolves in the Dominican Republic, not a same-named street
+// elsewhere — honoring local address formats per the request.
+async function resolveAddress(rawInput, country) {
+  const q = String(rawInput || '').trim();
+  if (!q) return { ok: false, reason: 'empty', message: 'Enter an address.' };
+
+  // A pasted maps LINK: try to salvage coordinates from it; if we can, accept — otherwise
+  // tell the user plainly that a link isn't an address.
+  if (looksLikeUrl(q)) {
+    const fromUrl = coordsFromMapUrl(q);
+    if (fromUrl) return { ok: true, lat: fromUrl.lat, lng: fromUrl.lng, name: '', display: '', source: 'map-url', normalized: '' };
+    return { ok: false, reason: 'is-url', message: "That looks like a map link, not an address. Paste the place's street address or name instead (e.g. \"Av. Winston Churchill 1099, Santo Domingo\")." };
+  }
+
+  // Bare coordinates pasted directly.
+  const pair = coordsFromPair(q);
+  if (pair) return { ok: true, lat: pair.lat, lng: pair.lng, name: '', display: '', source: 'coords', normalized: '' };
+
+  // Too short / clearly not an address.
+  if (q.length < 4) return { ok: false, reason: 'too-short', message: 'That address looks too short. Add a street and city.' };
+  if (!/[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u4e00-\u9fff]/.test(q)) {
+    return { ok: false, reason: 'no-letters', message: 'Enter a street address or place name.' };
+  }
+
+  // Geocode via Nominatim, biased to the user's country when we know it.
+  const cc = countryToCode(country);
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q=' + encodeURIComponent(q);
+    let url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q=' + encodeURIComponent(q);
+    if (cc) url += '&countrycodes=' + encodeURIComponent(cc);
     const r = await fetch(url, {
       signal: ctrl.signal,
       headers: { 'User-Agent': 'ShowUppApp/1.0 (friendship app; contact admin@showupp.app)', 'Accept': 'application/json' }
     });
     clearTimeout(timer);
-    if (!r.ok) return res.json({ found: false });
-    const arr = await r.json();
+    if (!r.ok) return { ok: false, reason: 'geocode-failed', message: "Couldn't check that address right now. You can still continue." };
+    let arr = await r.json();
+    // If a country-biased search finds nothing, retry once without the bias — the place
+    // may legitimately be just across a border, or the country on file may be stale.
+    if ((!Array.isArray(arr) || !arr.length) && cc) {
+      const url2 = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=1&q=' + encodeURIComponent(q);
+      const r2 = await fetch(url2, { headers: { 'User-Agent': 'ShowUppApp/1.0 (friendship app; contact admin@showupp.app)', 'Accept': 'application/json' } });
+      if (r2.ok) arr = await r2.json();
+    }
     if (Array.isArray(arr) && arr.length) {
       const it = arr[0];
       let name = '';
       if (it.namedetails && it.namedetails.name) name = it.namedetails.name;
       else if (it.type && ['office', 'shop', 'restaurant', 'cafe', 'bar', 'amenity'].some(k => (it.class === k || it.type === k))) name = (it.display_name || '').split(',')[0];
-      return res.json({ found: true, lat: parseFloat(it.lat), lng: parseFloat(it.lon), name: name || '', display: it.display_name || '' });
+      return { ok: true, lat: parseFloat(it.lat), lng: parseFloat(it.lon), name: name || '', display: it.display_name || '', normalized: it.display_name || '', source: 'geocode' };
     }
-    res.json({ found: false });
+    return { ok: false, reason: 'not-found', message: "We couldn't find that address. Check the spelling, or add the city so it can be pinned on the map." };
   } catch (e) {
-    res.json({ found: false, error: 'geocode-failed' });
+    return { ok: false, reason: 'geocode-failed', message: "Couldn't check that address right now. You can still continue." };
   }
+}
+
+// Minimal country-name → ISO 3166-1 alpha-2 map for the countries the app ships with.
+// Falls back to null (no bias) for anything unrecognized. Kept here so both the geocode
+// and validate endpoints share it.
+const COUNTRY_CODES = {
+  'dominican republic': 'do', 'united states': 'us', 'usa': 'us', 'united states of america': 'us',
+  'mexico': 'mx', 'canada': 'ca', 'spain': 'es', 'france': 'fr', 'germany': 'de', 'italy': 'it',
+  'portugal': 'pt', 'brazil': 'br', 'argentina': 'ar', 'colombia': 'co', 'chile': 'cl', 'peru': 'pe',
+  'united kingdom': 'gb', 'uk': 'gb', 'ireland': 'ie', 'india': 'in', 'china': 'cn', 'japan': 'jp',
+  'puerto rico': 'pr', 'haiti': 'ht', 'venezuela': 've', 'ecuador': 'ec', 'guatemala': 'gt',
+  'honduras': 'hn', 'el salvador': 'sv', 'nicaragua': 'ni', 'costa rica': 'cr', 'panama': 'pa',
+  'cuba': 'cu', 'jamaica': 'jm', 'netherlands': 'nl', 'belgium': 'be', 'switzerland': 'ch',
+  'australia': 'au', 'new zealand': 'nz', 'south africa': 'za', 'nigeria': 'ng', 'egypt': 'eg'
+};
+function countryToCode(country) {
+  if (!country) return '';
+  // The app stores city as "City, Country" — take the last comma-separated chunk if present.
+  const parts = String(country).split(',');
+  const tail = parts[parts.length - 1].trim().toLowerCase();
+  return COUNTRY_CODES[tail] || COUNTRY_CODES[String(country).trim().toLowerCase()] || '';
+}
+
+// Back-compat geocode endpoint (used by the older event-location flow). Now country-aware
+// and Maps-URL-tolerant via resolveAddress.
+app.get('/api/geocode', requireAuth, async (req, res) => {
+  const q = String((req.query && req.query.q) || '').trim();
+  if (!q || q.length < 3) return res.status(400).json({ error: 'Enter an address.' });
+  // Prefer an explicit country param; otherwise fall back to the user's stored city/country.
+  const country = (req.query && req.query.country) || (req.user && req.user.city) || '';
+  const v = await resolveAddress(q, country);
+  if (v.ok) return res.json({ found: true, lat: v.lat, lng: v.lng, name: v.name || '', display: v.display || '' });
+  res.json({ found: false, reason: v.reason, message: v.message });
+});
+
+// Structured address validation for the create/edit forms (item 1). Returns ok + a
+// human message and, when resolvable, coordinates and a normalized display string.
+app.post('/api/validate-address', requireAuth, async (req, res) => {
+  const raw = (req.body && (req.body.address || req.body.q)) || '';
+  const country = (req.body && req.body.country) || (req.user && req.user.city) || '';
+  const v = await resolveAddress(raw, country);
+  res.json(v);
 });
 app.post('/api/me/secure-change', requireAuth, async (req, res) => {
   const { field, currentPassword, newValue } = req.body || {};
@@ -2118,13 +2224,25 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     if (!/^https?:\/\//i.test(raw)) return res.status(400).json({ error: 'Links must start with http:// or https://' });
     if (urlIsBlocked(raw)) return res.status(400).json({ error: '🚫 That link was blocked. Links to adult or unsafe sites are not allowed on ShowUpp.' });
   }
+  // Item 1 defense-in-depth: if someone pasted a maps LINK into the place field,
+  // never store the raw URL as the "address". Salvage coordinates from it when the
+  // client didn't already supply them, then blank the place text so the UI doesn't
+  // show a URL where a street address belongs.
+  let finalLat = (typeof lat === 'number') ? lat : null;
+  let finalLng = (typeof lng === 'number') ? lng : null;
+  let finalPlace = place || null;
+  if (finalPlace && looksLikeUrl(String(finalPlace))) {
+    const salvaged = coordsFromMapUrl(String(finalPlace));
+    if (salvaged && finalLat == null) { finalLat = salvaged.lat; finalLng = salvaged.lng; }
+    finalPlace = null; // don't keep a link masquerading as an address
+  }
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
     category: category || 'General', blurb: blurb || '',
     host_id: req.user.id, created_at: now(),
-    lat: (typeof lat === 'number') ? lat : null,
-    lng: (typeof lng === 'number') ? lng : null,
-    place: place || null,
+    lat: finalLat,
+    lng: finalLng,
+    place: finalPlace,
     photo: (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null,
     link: safeUrl(link),
     event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
@@ -2421,9 +2539,22 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const when = (req.query.when || 'any').toLowerCase();
   const startFloor = now() - 6 * 3600 * 1000; // include things that started in the last few hours
   let whenCeil = cutoff;
+  let dateFloorOverride = null; // set when a specific-date range is requested
   if (when === 'today') whenCeil = Math.min(cutoff, now() + 24 * 3600 * 1000);
   else if (when === 'week') whenCeil = Math.min(cutoff, now() + 7 * 24 * 3600 * 1000);
   else if (when === 'month') whenCeil = Math.min(cutoff, now() + 31 * 24 * 3600 * 1000);
+
+  // Specific-date range (item 2): overrides the presets. dateFrom/dateTo are YYYY-MM-DD;
+  // we bound starts_at to [00:00 of dateFrom, 23:59:59 of dateTo]. This can look further
+  // ahead than the normal display window, so it also lifts the ceiling up to the range end.
+  const dfRaw = String(req.query.dateFrom || '').trim();
+  const dtRaw = String(req.query.dateTo || dfRaw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dfRaw)) {
+    const from = new Date(dfRaw + 'T00:00:00').getTime();
+    const to = new Date((/^\d{4}-\d{2}-\d{2}$/.test(dtRaw) ? dtRaw : dfRaw) + 'T23:59:59.999').getTime();
+    if (!isNaN(from) && !isNaN(to)) { dateFloorOverride = from; whenCeil = to; }
+  }
+  const effectiveFloor = (dateFloorOverride != null) ? dateFloorOverride : startFloor;
 
   const catClause = (category && category !== 'all') ? ' AND LOWER(category) = LOWER(?)' : '';
   const catParams = (category && category !== 'all') ? [category] : [];
@@ -2460,7 +2591,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
     ${distClause}
     ${orderClause}
     LIMIT ? OFFSET ?
-  `).all(...orderParams, startFloor, whenCeil, ...catParams, ...distParams, pageSize, page * pageSize);
+  `).all(...orderParams, effectiveFloor, whenCeil, ...catParams, ...distParams, pageSize, page * pageSize);
 
   let all = rows.map(e => {
     const { calc_distance, ...rest } = e;
