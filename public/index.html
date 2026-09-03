@@ -6342,56 +6342,149 @@ async function createRound(){
 // client-side. Never stored as an image — just the chosen options — so it's cheap to
 // save and always crisp at any size (profile card, builder preview, map pin).
 const AVATAR_OPTIONS={
-  bg:[{v:'#FFD6E8',n:'Pink'},{v:'#D6EAFF',n:'Blue'},{v:'#D6FFE8',n:'Mint'},{v:'#FFF3D6',n:'Sand'},{v:'#E8D6FF',n:'Lilac'},{v:'#FFE0D6',n:'Peach'}],
-  skin:[{v:'#FCE0C4',n:'Fair'},{v:'#F0C29B',n:'Light'},{v:'#D9A066',n:'Tan'},{v:'#A9714E',n:'Brown'},{v:'#7A4B2E',n:'Deep'}],
-  hair:[{v:'bald',n:'Bald',e:'👨‍🦲'},{v:'short',n:'Short',e:'💇'},{v:'curly',n:'Curly',e:'👩‍🦱'},{v:'long',n:'Long',e:'👱‍♀️'},{v:'bun',n:'Bun',e:'👩‍🦳'},{v:'mohawk',n:'Mohawk',e:'🎸'}],
-  hairColor:[{v:'#2B2222',n:'Black'},{v:'#6B4423',n:'Brown'},{v:'#B5651D',n:'Auburn'},{v:'#E8C15A',n:'Blonde'},{v:'#9B9B9B',n:'Silver'},{v:'#D6336C',n:'Pink'}],
-  eyes:[{v:'round',n:'Round',e:'👀'},{v:'happy',n:'Happy',e:'😊'},{v:'sleepy',n:'Sleepy',e:'😌'},{v:'wink',n:'Wink',e:'😉'},{v:'wide',n:'Wide',e:'😲'}],
-  accessory:[{v:'none',n:'None',e:'🚫'},{v:'glasses',n:'Glasses',e:'👓'},{v:'sunglasses',n:'Sunnies',e:'🕶️'},{v:'hat',n:'Hat',e:'🧢'},{v:'earrings',n:'Earrings',e:'💎'}]
+  bg:[{v:'#7C9CFF',n:'Blue'},{v:'#FF8FB1',n:'Pink'},{v:'#4ECDC4',n:'Teal'},{v:'#FFB454',n:'Amber'},{v:'#A78BFA',n:'Violet'},{v:'#54D98C',n:'Green'},{v:'#FF6B6B',n:'Coral'},{v:'#94A3B8',n:'Slate'}],
+  skin:[{v:'#FFDCB8',n:'Fair'},{v:'#F1C199',n:'Light'},{v:'#E0A870',n:'Golden'},{v:'#C68642',n:'Tan'},{v:'#A9714E',n:'Brown'},{v:'#7A4B2E',n:'Deep'},{v:'#5A3620',n:'Espresso'}],
+  hair:[{v:'bald',n:'Bald',e:'🧑‍🦲'},{v:'buzz',n:'Buzz',e:'💈'},{v:'short',n:'Short',e:'💇'},{v:'quiff',n:'Quiff',e:'🕺'},{v:'curly',n:'Curly',e:'👩‍🦱'},{v:'afro',n:'Afro',e:'🎤'},{v:'long',n:'Long',e:'👱‍♀️'},{v:'bun',n:'Bun',e:'🎎'},{v:'ponytail',n:'Ponytail',e:'🎀'},{v:'mohawk',n:'Mohawk',e:'🎸'}],
+  hairColor:[{v:'#2B2320',n:'Black'},{v:'#5C3A21',n:'Brown'},{v:'#A0522D',n:'Auburn'},{v:'#E8C15A',n:'Blonde'},{v:'#B0B0B8',n:'Silver'},{v:'#FF5FA2',n:'Pink'},{v:'#5B8DEF',n:'Blue'},{v:'#7C4DFF',n:'Purple'}],
+  brows:[{v:'natural',n:'Natural',e:'😐'},{v:'raised',n:'Raised',e:'🤨'},{v:'angry',n:'Serious',e:'😠'}],
+  eyes:[{v:'round',n:'Round',e:'👀'},{v:'happy',n:'Happy',e:'😊'},{v:'sleepy',n:'Chill',e:'😌'},{v:'wink',n:'Wink',e:'😉'},{v:'wide',n:'Wide',e:'😲'},{v:'star',n:'Starry',e:'🤩'}],
+  mouth:[{v:'smile',n:'Smile',e:'🙂'},{v:'grin',n:'Grin',e:'😁'},{v:'laugh',n:'Laugh',e:'😄'},{v:'neutral',n:'Neutral',e:'😐'},{v:'smirk',n:'Smirk',e:'😏'},{v:'ooh',n:'Ooh',e:'😮'}],
+  facialHair:[{v:'none',n:'None',e:'🚫'},{v:'stubble',n:'Stubble',e:'🧔'},{v:'beard',n:'Beard',e:'🧔‍♂️'},{v:'moustache',n:'Moustache',e:'👨'}],
+  accessory:[{v:'none',n:'None',e:'🚫'},{v:'glasses',n:'Glasses',e:'👓'},{v:'sunglasses',n:'Sunnies',e:'🕶️'},{v:'hat',n:'Cap',e:'🧢'},{v:'beanie',n:'Beanie',e:'🧶'},{v:'earrings',n:'Earrings',e:'💎'}]
 };
 const AVATAR_CATS=[
   {key:'bg',label:'Background',type:'color'},
   {key:'skin',label:'Skin tone',type:'color'},
   {key:'hair',label:'Hairstyle',type:'chip'},
   {key:'hairColor',label:'Hair color',type:'color'},
+  {key:'brows',label:'Eyebrows',type:'chip'},
   {key:'eyes',label:'Eyes',type:'chip'},
+  {key:'mouth',label:'Mouth',type:'chip'},
+  {key:'facialHair',label:'Facial hair',type:'chip'},
   {key:'accessory',label:'Accessory',type:'chip'}
 ];
-const AVATAR_DEFAULT={bg:'#D6EAFF',skin:'#F0C29B',hair:'short',hairColor:'#2B2222',eyes:'happy',accessory:'none'};
+const AVATAR_DEFAULT={bg:'#7C9CFF',skin:'#F1C199',hair:'short',hairColor:'#2B2320',brows:'natural',eyes:'happy',mouth:'smile',facialHair:'none',accessory:'none'};
+// ---- Color helpers: derive shadow/highlight tones from a base hex so every avatar
+// gets consistent 3D shading (lighter toward the light source, darker in shadow). ----
+function _avHexToRgb(h){h=String(h).replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return[(n>>16)&255,(n>>8)&255,n&255];}
+function _avRgbToHex(r,g,b){const c=v=>('0'+Math.max(0,Math.min(255,Math.round(v))).toString(16)).slice(-2);return '#'+c(r)+c(g)+c(b);}
+function avShade(hex,amt){ // amt>0 lightens, amt<0 darkens (roughly -1..1)
+  const [r,g,b]=_avHexToRgb(hex);
+  if(amt>=0)return _avRgbToHex(r+(255-r)*amt, g+(255-g)*amt, b+(255-b)*amt);
+  return _avRgbToHex(r*(1+amt), g*(1+amt), b*(1+amt));
+}
+
+// ---- Modern 3D avatar renderer. Same signature as before (drop-in). Builds a soft,
+// dimensional "memoji-style" character entirely from SVG gradients + shading — original
+// art, not based on any copyrighted set. Depth comes from: a glossy background orb, a
+// spherical shaded head with a top-left light source, layered hair (shadow + base +
+// highlight), glossy eyes with catch-lights, and shaded cheeks/nose. ----
 function funAvatarSVG(cfg,size){
   cfg=Object.assign({},AVATAR_DEFAULT,cfg||{});
   size=size||120;
-  let hairShape='';
-  switch(cfg.hair){
-    case 'bald': hairShape=''; break;
-    case 'curly': hairShape='<circle cx="34" cy="38" r="14" fill="'+cfg.hairColor+'"/><circle cx="50" cy="26" r="16" fill="'+cfg.hairColor+'"/><circle cx="66" cy="38" r="14" fill="'+cfg.hairColor+'"/><circle cx="50" cy="42" r="18" fill="'+cfg.hairColor+'"/>'; break;
-    case 'long': hairShape='<path d="M22 50 Q19 92 30 102 L30 58 Q50 28 70 58 L70 102 Q81 92 78 50 Q75 18 50 16 Q25 18 22 50Z" fill="'+cfg.hairColor+'"/>'; break;
-    case 'bun': hairShape='<path d="M24 46 Q21 18 50 16 Q79 18 76 46 Q76 32 50 30 Q24 32 24 46Z" fill="'+cfg.hairColor+'"/><circle cx="50" cy="10" r="9" fill="'+cfg.hairColor+'"/>'; break;
-    case 'mohawk': hairShape='<path d="M41 8 Q50 -2 59 8 L55 34 L45 34Z" fill="'+cfg.hairColor+'"/>'; break;
-    default: hairShape='<path d="M22 46 Q19 14 50 12 Q81 14 78 46 Q78 28 50 26 Q22 28 22 46Z" fill="'+cfg.hairColor+'"/>'; // short
-  }
+  const uid='av'+Math.random().toString(36).slice(2,8); // unique gradient ids per render
+  const skin=cfg.skin, skinLo=avShade(skin,-0.22), skinHi=avShade(skin,0.28), skinShadow=avShade(skin,-0.12);
+  const hair=cfg.hairColor, hairLo=avShade(hair,-0.35), hairHi=avShade(hair,0.4);
+  const bg=cfg.bg, bgLo=avShade(bg,-0.25), bgHi=avShade(bg,0.35);
+  const eyeC='#3A2E2A';
+
+  // ---- Defs: gradients for background, head, and hair (the source of the 3D feel) ----
+  const defs='<defs>'
+    +'<radialGradient id="bg'+uid+'" cx="35%" cy="28%" r="85%"><stop offset="0%" stop-color="'+bgHi+'"/><stop offset="55%" stop-color="'+bg+'"/><stop offset="100%" stop-color="'+bgLo+'"/></radialGradient>'
+    +'<radialGradient id="sk'+uid+'" cx="38%" cy="32%" r="75%"><stop offset="0%" stop-color="'+skinHi+'"/><stop offset="60%" stop-color="'+skin+'"/><stop offset="100%" stop-color="'+skinLo+'"/></radialGradient>'
+    +'<linearGradient id="hr'+uid+'" x1="30%" y1="0%" x2="70%" y2="100%"><stop offset="0%" stop-color="'+hairHi+'"/><stop offset="45%" stop-color="'+hair+'"/><stop offset="100%" stop-color="'+hairLo+'"/></linearGradient>'
+    +'<radialGradient id="gl'+uid+'" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff" stop-opacity=".9"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/></radialGradient>'
+    +'</defs>';
+
+  // ---- Hair BACK layer (behind head) for long styles, so it frames the face ----
+  let hairBack='';
+  if(cfg.hair==='long') hairBack='<path d="M20 52 Q16 96 28 106 L34 106 Q28 74 32 56 Q50 40 68 56 Q72 74 66 106 L72 106 Q84 96 80 52 Q80 20 50 18 Q20 20 20 52Z" fill="url(#hr'+uid+')"/>';
+  else if(cfg.hair==='ponytail') hairBack='<path d="M70 40 Q92 44 86 72 Q84 84 76 88 Q82 72 74 58Z" fill="url(#hr'+uid+')"/><ellipse cx="74" cy="44" rx="6" ry="5" fill="'+hairLo+'"/>';
+  else if(cfg.hair==='afro') hairBack='<circle cx="30" cy="40" r="16" fill="url(#hr'+uid+')"/><circle cx="70" cy="40" r="16" fill="url(#hr'+uid+')"/><circle cx="50" cy="30" r="20" fill="url(#hr'+uid+')"/><circle cx="24" cy="52" r="11" fill="url(#hr'+uid+')"/><circle cx="76" cy="52" r="11" fill="url(#hr'+uid+')"/>';
+  else if(cfg.hair==='curly') hairBack='<g fill="url(#hr'+uid+')"><circle cx="26" cy="44" r="12"/><circle cx="74" cy="44" r="12"/></g>';
+
+  // ---- Head (sphere) + soft neck/shoulders + cheek/nose shading ----
+  const head='<path d="M50 84 Q22 84 22 54 Q22 22 50 22 Q78 22 78 54 Q78 84 50 84Z" fill="url(#sk'+uid+')"/>'
+    +'<ellipse cx="50" cy="97" rx="24" ry="15" fill="'+skinShadow+'"/>' // shoulders hint
+    +'<path d="M50 84 Q22 84 22 54 Q22 22 50 22 Q78 22 78 54 Q78 84 50 84Z" fill="none"/>'
+    +'<ellipse cx="34" cy="64" rx="6" ry="4.5" fill="#ff8f9c" opacity=".28"/>' // left cheek blush
+    +'<ellipse cx="66" cy="64" rx="6" ry="4.5" fill="#ff8f9c" opacity=".28"/>' // right cheek blush
+    +'<path d="M50 58 Q47 64 50 66 Q53 64 50 58" fill="'+skinLo+'" opacity=".55"/>'; // nose shadow
+
+  // ---- Eyebrows ----
+  let brows='';
+  const bw='2.4';
+  if(cfg.brows==='raised') brows='<path d="M36 45 Q42 41 47 44" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/><path d="M53 44 Q58 41 64 45" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/>';
+  else if(cfg.brows==='angry') brows='<path d="M36 44 L47 47" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/><path d="M64 44 L53 47" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/>';
+  else brows='<path d="M36 46 Q42 43 47 46" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/><path d="M53 46 Q58 43 64 46" stroke="'+hairLo+'" stroke-width="'+bw+'" fill="none" stroke-linecap="round"/>';
+
+  // ---- Eyes: glossy whites with iris + catch-light for a 3D wet look ----
+  const eye=(cx)=>'<ellipse cx="'+cx+'" cy="55" rx="6" ry="6.6" fill="#fff"/>'
+    +'<circle cx="'+cx+'" cy="56" r="3.6" fill="'+eyeC+'"/>'
+    +'<circle cx="'+cx+'" cy="56" r="1.7" fill="#111"/>'
+    +'<circle cx="'+(cx-1.3)+'" cy="53.6" r="1.3" fill="#fff"/>'; // catch-light
   let eyesShape='';
   switch(cfg.eyes){
-    case 'happy': eyesShape='<path d="M38 56 Q42 51 46 56" stroke="#2B2222" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M54 56 Q58 51 62 56" stroke="#2B2222" stroke-width="3" fill="none" stroke-linecap="round"/>'; break;
-    case 'sleepy': eyesShape='<path d="M37 56 L47 56" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/><path d="M53 56 L63 56" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/>'; break;
-    case 'wink': eyesShape='<circle cx="42" cy="55" r="3.2" fill="#2B2222"/><path d="M54 55 L62 55" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/>'; break;
-    case 'wide': eyesShape='<circle cx="42" cy="55" r="4.6" fill="#2B2222"/><circle cx="58" cy="55" r="4.6" fill="#2B2222"/>'; break;
-    default: eyesShape='<circle cx="42" cy="55" r="3.4" fill="#2B2222"/><circle cx="58" cy="55" r="3.4" fill="#2B2222"/>'; // round
+    case 'happy': eyesShape='<path d="M37 56 Q42 50 47 56" stroke="'+eyeC+'" stroke-width="3.2" fill="none" stroke-linecap="round"/><path d="M53 56 Q58 50 63 56" stroke="'+eyeC+'" stroke-width="3.2" fill="none" stroke-linecap="round"/>'; break;
+    case 'sleepy': eyesShape='<path d="M37 55 Q42 57 47 55" stroke="'+eyeC+'" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M53 55 Q58 57 63 55" stroke="'+eyeC+'" stroke-width="3" fill="none" stroke-linecap="round"/>'; break;
+    case 'wink': eyesShape=eye(42)+'<path d="M53 55 Q58 51 63 55" stroke="'+eyeC+'" stroke-width="3.2" fill="none" stroke-linecap="round"/>'; break;
+    case 'wide': eyesShape='<ellipse cx="42" cy="55" rx="6.6" ry="7.6" fill="#fff"/><circle cx="42" cy="55.5" r="3.6" fill="'+eyeC+'"/><circle cx="42" cy="55.5" r="1.8" fill="#111"/><circle cx="40.7" cy="53" r="1.3" fill="#fff"/><ellipse cx="58" cy="55" rx="6.6" ry="7.6" fill="#fff"/><circle cx="58" cy="55.5" r="3.6" fill="'+eyeC+'"/><circle cx="58" cy="55.5" r="1.8" fill="#111"/><circle cx="56.7" cy="53" r="1.3" fill="#fff"/>'; break;
+    case 'star': eyesShape='<text x="42" y="60" font-size="13" text-anchor="middle">⭐</text><text x="58" y="60" font-size="13" text-anchor="middle">⭐</text>'; break;
+    default: eyesShape=eye(42)+eye(58); // round
   }
+
+  // ---- Mouth ----
+  let mouth='';
+  switch(cfg.mouth){
+    case 'grin': mouth='<path d="M41 65 Q50 74 59 65 Q50 69 41 65Z" fill="#7A2B33"/><path d="M42 66 Q50 70 58 66 L58 66 Q50 68 42 66Z" fill="#fff"/>'; break;
+    case 'laugh': mouth='<path d="M40 64 Q50 78 60 64 Z" fill="#7A2B33"/><path d="M43 65 Q50 67 57 65 Z" fill="#fff"/><path d="M45 72 Q50 75 55 72" fill="#E86A7C"/>'; break;
+    case 'neutral': mouth='<path d="M43 68 Q50 70 57 68" stroke="#7A2B33" stroke-width="2.6" fill="none" stroke-linecap="round"/>'; break;
+    case 'smirk': mouth='<path d="M43 68 Q52 72 58 65" stroke="#7A2B33" stroke-width="2.8" fill="none" stroke-linecap="round"/>'; break;
+    case 'ooh': mouth='<ellipse cx="50" cy="69" rx="4.5" ry="5.5" fill="#7A2B33"/><ellipse cx="50" cy="70.5" rx="2.6" ry="3" fill="#C24C5A"/>'; break;
+    default: mouth='<path d="M43 66 Q50 73 57 66" stroke="#7A2B33" stroke-width="2.8" fill="none" stroke-linecap="round"/>'; // smile
+  }
+
+  // ---- Facial hair (drawn over jaw, under mouth) ----
+  let facial='';
+  if(cfg.facialHair==='stubble') facial='<path d="M32 66 Q50 90 68 66 Q68 80 50 82 Q32 80 32 66Z" fill="'+hairLo+'" opacity=".28"/>';
+  else if(cfg.facialHair==='beard') facial='<path d="M30 60 Q31 88 50 84 Q69 88 70 60 Q66 76 50 76 Q34 76 30 60Z" fill="url(#hr'+uid+')"/><path d="M42 72 Q50 76 58 72 Q50 80 42 72Z" fill="'+hairLo+'"/>';
+  else if(cfg.facialHair==='moustache') facial='<path d="M40 70 Q45 67 50 69 Q55 67 60 70 Q55 73 50 71 Q45 73 40 70Z" fill="url(#hr'+uid+')"/>';
+
+  // ---- Hair FRONT layer (over the head) with a highlight sweep ----
+  let hairFront='';
+  const HH='url(#hr'+uid+')';
+  switch(cfg.hair){
+    case 'bald': hairFront=''; break;
+    case 'buzz': hairFront='<path d="M24 50 Q22 24 50 22 Q78 24 76 50 Q76 34 50 33 Q24 34 24 50Z" fill="'+HH+'" opacity=".92"/>'; break;
+    case 'quiff': hairFront='<path d="M23 49 Q21 22 50 22 Q79 22 77 49 Q74 34 50 33 Q26 34 23 49Z" fill="'+HH+'"/><path d="M40 24 Q50 8 66 18 Q60 24 54 25 Q44 26 40 24Z" fill="'+HH+'"/><path d="M44 20 Q54 12 62 18" stroke="'+hairHi+'" stroke-width="3" fill="none" stroke-linecap="round" opacity=".7"/>'; break;
+    case 'curly': hairFront='<g fill="'+HH+'"><circle cx="32" cy="32" r="12"/><circle cx="50" cy="25" r="13"/><circle cx="68" cy="32" r="12"/><circle cx="41" cy="26" r="11"/><circle cx="59" cy="26" r="11"/><circle cx="26" cy="42" r="9"/><circle cx="74" cy="42" r="9"/></g><path d="M30 28 Q40 20 50 22" stroke="'+hairHi+'" stroke-width="2.5" fill="none" opacity=".55" stroke-linecap="round"/>'; break;
+    case 'afro': hairFront='<circle cx="34" cy="30" r="14" fill="'+HH+'"/><circle cx="66" cy="30" r="14" fill="'+HH+'"/><circle cx="50" cy="24" r="16" fill="'+HH+'"/><circle cx="26" cy="40" r="10" fill="'+HH+'"/><circle cx="74" cy="40" r="10" fill="'+HH+'"/><path d="M28 46 Q26 30 40 26 Q50 22 60 26 Q74 30 72 46 Q68 34 50 34 Q32 34 28 46Z" fill="'+HH+'"/><path d="M34 26 Q44 19 56 23" stroke="'+hairHi+'" stroke-width="3" fill="none" stroke-linecap="round" opacity=".5"/>'; break;
+    case 'long': hairFront='<path d="M22 50 Q20 20 50 18 Q80 20 78 50 Q76 30 50 30 Q24 30 22 50Z" fill="'+HH+'"/><path d="M30 28 Q42 20 54 24" stroke="'+hairHi+'" stroke-width="3" fill="none" stroke-linecap="round" opacity=".6"/>'; break;
+    case 'bun': hairFront='<circle cx="50" cy="13" r="9" fill="'+HH+'"/><path d="M24 48 Q22 22 50 20 Q78 22 76 48 Q74 32 50 32 Q26 32 24 48Z" fill="'+HH+'"/><ellipse cx="47" cy="11" rx="3" ry="2.5" fill="'+hairHi+'" opacity=".6"/>'; break;
+    case 'ponytail': hairFront='<path d="M24 48 Q22 22 50 20 Q78 22 76 48 Q74 32 50 32 Q26 32 24 48Z" fill="'+HH+'"/><path d="M32 28 Q44 20 56 24" stroke="'+hairHi+'" stroke-width="2.6" fill="none" stroke-linecap="round" opacity=".6"/>'; break;
+    case 'mohawk': hairFront='<path d="M42 8 Q50 -2 58 8 L56 36 L44 36Z" fill="'+HH+'"/><path d="M50 6 L50 32" stroke="'+hairHi+'" stroke-width="2.4" opacity=".55" stroke-linecap="round"/>'; break;
+    default: hairFront='<path d="M24 49 Q21 19 50 19 Q79 19 76 49 Q73 32 58 30 Q53 27 48 28 Q34 30 24 49Z" fill="'+HH+'"/><path d="M34 27 Q46 21 58 27" stroke="'+hairHi+'" stroke-width="2.8" fill="none" stroke-linecap="round" opacity=".55"/>'; // short
+  }
+
+  // ---- Accessories (drawn last, on top) ----
   let accShape='';
   switch(cfg.accessory){
-    case 'glasses': accShape='<circle cx="42" cy="55" r="8" fill="none" stroke="#2B2222" stroke-width="2.4"/><circle cx="58" cy="55" r="8" fill="none" stroke="#2B2222" stroke-width="2.4"/><path d="M50 55h0M34 55h-6M66 55h6" stroke="#2B2222" stroke-width="2.4"/>'; break;
-    case 'sunglasses': accShape='<rect x="33" y="49" width="17" height="12" rx="4" fill="#1c1c1c"/><rect x="50" y="49" width="17" height="12" rx="4" fill="#1c1c1c"/><path d="M50 55h0M27 55h-6M73 55h6" stroke="#1c1c1c" stroke-width="2.4"/>'; break;
-    case 'hat': accShape='<path d="M20 34 Q50 6 80 34 L80 39 L20 39Z" fill="#E8544E"/><rect x="18" y="34" width="64" height="7" rx="3.5" fill="#C7413B"/>'; break;
-    case 'earrings': accShape='<circle cx="23" cy="66" r="3" fill="#F5C542"/><circle cx="77" cy="66" r="3" fill="#F5C542"/>'; break;
+    case 'glasses': accShape='<g fill="none" stroke="#2A2A2E" stroke-width="2.6"><rect x="34" y="49" width="14" height="12" rx="5"/><rect x="52" y="49" width="14" height="12" rx="5"/><path d="M48 54 h4"/><path d="M34 53 l-6 -1"/><path d="M66 53 l6 -1"/></g><rect x="35" y="50" width="12" height="5" rx="3" fill="#fff" opacity=".22"/>'; break;
+    case 'sunglasses': accShape='<g fill="#16181D"><path d="M32 49 h16 a2 2 0 0 1 2 2 v3 q0 6 -8 6 t-8 -6 v-3 a2 2 0 0 1 2 -2Z"/><path d="M52 49 h16 a2 2 0 0 1 2 2 v3 q0 6 -8 6 t-8 -6 v-3 a2 2 0 0 1 2 -2Z"/></g><path d="M48 51 h4" stroke="#16181D" stroke-width="2.6"/><path d="M34 51 l8 2" stroke="#fff" stroke-width="2" opacity=".35"/>'; break;
+    case 'hat': accShape='<path d="M24 40 Q24 16 50 16 Q76 16 76 40 Q76 41 74 41 Q50 34 26 41 Q24 41 24 40Z" fill="#E8544E"/><path d="M24 41 Q50 33 68 41 Q80 43 82 40 Q84 46 74 48 Q50 42 26 47 Q22 44 24 41Z" fill="#C7413B"/><ellipse cx="42" cy="24" rx="10" ry="5" fill="#fff" opacity=".2"/><circle cx="50" cy="17" r="2.4" fill="#C7413B"/>'; break;
+    case 'beanie': accShape='<path d="M22 42 Q22 16 50 16 Q78 16 78 42 Q50 34 22 42Z" fill="#5B8DEF"/><rect x="20" y="40" width="60" height="8" rx="4" fill="#3F6FCC"/><ellipse cx="42" cy="24" rx="9" ry="4" fill="#fff" opacity=".18"/>'; break;
+    case 'earrings': accShape='<circle cx="22" cy="64" r="3" fill="#FFD54A"/><circle cx="21" cy="63" r="1" fill="#fff"/><circle cx="78" cy="64" r="3" fill="#FFD54A"/><circle cx="77" cy="63" r="1" fill="#fff"/>'; break;
     default: accShape='';
   }
+
   return '<svg viewBox="0 0 100 100" width="'+size+'" height="'+size+'" xmlns="http://www.w3.org/2000/svg">'
-    +'<circle cx="50" cy="50" r="50" fill="'+cfg.bg+'"/>'
-    +'<circle cx="50" cy="58" r="30" fill="'+cfg.skin+'"/>'
-    +eyesShape
-    +'<path d="M44 68 Q50 72 56 68" stroke="#2B2222" stroke-width="2.4" fill="none" stroke-linecap="round"/>'
-    +hairShape
+    +defs
+    +'<circle cx="50" cy="50" r="50" fill="url(#bg'+uid+')"/>'
+    +'<ellipse cx="34" cy="30" rx="22" ry="14" fill="url(#gl'+uid+')" opacity=".5"/>' // bg gloss
+    +hairBack
+    +head
+    +brows+eyesShape+mouth+facial
+    +hairFront
     +accShape
     +'</svg>';
 }
