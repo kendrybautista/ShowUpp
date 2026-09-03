@@ -294,6 +294,16 @@ await db.exec(`
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_ingest_at BIGINT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
+
+  -- Moderation workflow for reports: status walks open -> investigating -> resolved.
+  -- verdict records the manager's finding once analyzed (discarded = unfounded,
+  -- validated = confirmed a violation) and feeds the repeat-offender/malicious-reporter
+  -- counts below. description lets the reporter add context up front.
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS verdict TEXT;
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS description TEXT;
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS analyzed_at BIGINT;
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_at BIGINT;
   -- Indexes for the daily-ingested nationwide event feed: requests filter by date
   -- range and a lat/lng bounding box, so both need to be fast on a large table.
   CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
@@ -1220,10 +1230,37 @@ app.get('/api/blocks', requireAuth, async (req, res) => {
 
 // Report a user / content
 app.post('/api/report', requireAuth, async (req, res) => {
-  const { reportedId, context, reason } = req.body || {};
-  await db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,created_at) VALUES (?,?,?,?,?,?)')
-    .run(id(), req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), now());
-  res.json({ ok: true });
+  const { reportedId, context, reason, description } = req.body || {};
+  const reportId = id();
+  await db.prepare('INSERT INTO reports (id,reporter_id,reported_id,context,reason,description,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(reportId, req.user.id, reportedId || null, String(context || '').slice(0, 200), String(reason || '').slice(0, 500), String(description || '').slice(0, 1000), 'open', now());
+
+  // Let the reporter know it went through, with a running count so they can keep
+  // track of how many reports they've filed (also doubles as an early, visible signal
+  // if their own account is filing an unusual number of them).
+  const reporterCountRow = await db.prepare('SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ?').get(req.user.id);
+  const reporterTotal = reporterCountRow ? Number(reporterCountRow.n) || 0 : 0;
+  await pushNotif(
+    req.user.id,
+    'report_submitted',
+    'Report received ✅',
+    'You reported "' + (reason || 'an issue') + '"' + (description ? ' — "' + String(description).slice(0, 120) + '"' : '') + '. Our team will review it. This is report #' + reporterTotal + ' you\'ve submitted.',
+    ''
+  );
+
+  // Notify every manager so reports don't sit unseen until someone happens to open the panel.
+  const admins = await db.prepare('SELECT id FROM users WHERE is_admin = 1').all();
+  for (const a of admins) {
+    await pushNotif(
+      a.id,
+      'report_new',
+      '🚩 New report submitted',
+      'Reason: ' + (reason || 'Unspecified') + (description ? ' — "' + String(description).slice(0, 120) + '"' : ''),
+      'admin:reports'
+    );
+  }
+
+  res.json({ ok: true, id: reportId, total: reporterTotal });
 });
 
 // ---- Notifications ----
@@ -1679,18 +1716,103 @@ app.post('/api/admin/delete', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// View reports (admin only)
+// View reports (admin only) — includes moderation status/verdict, an "incomplete for
+// N days" age, and status counts for the metrics pills at the top of the panel.
 app.get('/api/admin/reports', requireAuth, requireAdmin, async (req, res) => {
   const rows = await db.prepare(`
-    SELECT r.id, r.context, r.reason, r.created_at,
-      reporter.name AS reporter_name, reporter.username AS reporter_username,
-      reported.id AS reported_id, reported.name AS reported_name, reported.username AS reported_username
+    SELECT r.id, r.context, r.reason, r.description, r.status, r.verdict, r.created_at, r.analyzed_at, r.resolved_at,
+      r.reporter_id, reporter.name AS reporter_name, reporter.username AS reporter_username,
+      r.reported_id, reported.name AS reported_name, reported.username AS reported_username, reported.suspended AS reported_suspended
     FROM reports r
     LEFT JOIN users reporter ON reporter.id = r.reporter_id
     LEFT JOIN users reported ON reported.id = r.reported_id
-    ORDER BY r.created_at DESC LIMIT 100
+    ORDER BY r.created_at DESC LIMIT 200
   `).all();
-  res.json({ reports: rows });
+  const t = now();
+  const reports = rows.map(r => ({
+    ...r,
+    // Only counts up while the report is unresolved — freezes once resolved, per spec.
+    days_incomplete: r.status === 'resolved' ? null : Math.floor((t - r.created_at) / 86400000)
+  }));
+  const countRows = await db.prepare('SELECT status, COUNT(*) AS n FROM reports GROUP BY status').all();
+  const counts = { open: 0, investigating: 0, resolved: 0 };
+  for (const c of countRows) { if (Object.prototype.hasOwnProperty.call(counts, c.status)) counts[c.status] = Number(c.n) || 0; }
+  counts.all = counts.open + counts.investigating + counts.resolved;
+  res.json({ reports, counts });
+});
+
+// Analyze: opens the report for review. Auto-advances "open" -> "investigating" so the
+// status reflects that a manager is actively on it, and hands back everything the
+// Analyze panel needs (including a nav hint for "see item reported").
+app.post('/api/admin/reports/:id/analyze', requireAuth, requireAdmin, async (req, res) => {
+  const r = await db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  if (r.status === 'open') {
+    await db.prepare('UPDATE reports SET status = ?, analyzed_at = ? WHERE id = ?').run('investigating', now(), r.id);
+  }
+  const updated = await db.prepare(`
+    SELECT r.*, reported.username AS reported_username, reported.name AS reported_name
+    FROM reports r LEFT JOIN users reported ON reported.id = r.reported_id WHERE r.id = ?
+  `).get(r.id);
+  res.json({ ok: true, report: updated });
+});
+
+// Discard: the report didn't hold up — mark it unfounded, optionally tell the reporter
+// why, and check whether this reporter is racking up a pattern of unfounded reports
+// (especially repeatedly against the same account, which reads as targeted/malicious).
+app.post('/api/admin/reports/:id/discard', requireAuth, requireAdmin, async (req, res) => {
+  const r = await db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  await db.prepare('UPDATE reports SET verdict = ? WHERE id = ?').run('discarded', r.id);
+  const { message } = req.body || {};
+  if (message && String(message).trim()) {
+    await pushNotif(r.reporter_id, 'report_discarded', 'Update on your report', String(message).slice(0, 500), '');
+  }
+  let warning = null;
+  const unfoundedRow = await db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ? AND verdict = 'discarded'`).get(r.reporter_id);
+  const unfoundedTotal = unfoundedRow ? Number(unfoundedRow.n) || 0 : 0;
+  if (unfoundedTotal >= 5) {
+    let sameTargetNote = '';
+    if (r.reported_id) {
+      const sameTargetRow = await db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ? AND reported_id = ? AND verdict = 'discarded'`).get(r.reporter_id, r.reported_id);
+      const sameTargetCount = sameTargetRow ? Number(sameTargetRow.n) || 0 : 0;
+      if (sameTargetCount >= 3) sameTargetNote = ' ' + sameTargetCount + ' of those were against the very same account — this looks targeted.';
+    }
+    warning = { type: 'reporter_unfounded', count: unfoundedTotal, message: 'This account has filed ' + unfoundedTotal + ' reports that turned out to be unfounded.' + sameTargetNote + ' Consider reviewing their reporting activity for possible misuse.' };
+  }
+  res.json({ ok: true, warning });
+});
+
+// Validate: the report held up — mark it confirmed, optionally notify the reported
+// account, and check the account's validated-report count against the escalation
+// thresholds (3+ = suggest a temporary suspension, 5+ = recommend termination).
+app.post('/api/admin/reports/:id/validate', requireAuth, requireAdmin, async (req, res) => {
+  const r = await db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  await db.prepare('UPDATE reports SET verdict = ? WHERE id = ?').run('validated', r.id);
+  const { message } = req.body || {};
+  if (message && String(message).trim() && r.reported_id) {
+    await pushNotif(r.reported_id, 'report_validated', 'Account notice', String(message).slice(0, 500), '');
+  }
+  let warning = null;
+  if (r.reported_id) {
+    const row = await db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE reported_id = ? AND verdict = 'validated'`).get(r.reported_id);
+    const validatedTotal = row ? Number(row.n) || 0 : 0;
+    if (validatedTotal >= 5) {
+      warning = { type: 'terminate', count: validatedTotal, message: 'This account now has ' + validatedTotal + ' validated reports against it. We recommend terminating this account.' };
+    } else if (validatedTotal >= 3) {
+      warning = { type: 'suspend', count: validatedTotal, message: 'This account now has ' + validatedTotal + ' validated reports against it. Consider temporarily suspending it.' };
+    }
+  }
+  res.json({ ok: true, warning });
+});
+
+// Close: analysis is done — move the report to Resolved and freeze its "days incomplete" count.
+app.post('/api/admin/reports/:id/close', requireAuth, requireAdmin, async (req, res) => {
+  const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  await db.prepare('UPDATE reports SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', now(), r.id);
+  res.json({ ok: true });
 });
 
 // List / search all Rounds (admin only) — for moderation, e.g. finding a Round that was reported
