@@ -1094,6 +1094,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div id="adminSourcesList" style="padding:0 22px"></div>
     </div>
     <div id="adm-reports-pane" style="display:none">
+      <div id="adminReportsMetrics" style="display:flex;gap:8px;overflow-x:auto;padding:0 22px 12px;-webkit-overflow-scrolling:touch"></div>
       <div id="adminReportsList" style="padding:0 22px"></div>
     </div>
   </div>
@@ -1776,13 +1777,54 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 </div>
 
 <div class="sheet" id="reportSheet" onclick="if(event.target===this)closeReport()">
-  <div class="sheet-inner"><div class="grabber"></div><h3>Report</h3><p>Your safety comes first. The person is never told who reported them, and our team reviews every report.</p>
-    <div class="report-opt" onclick="sendReport('Harassment or bullying')">🚫 Harassment or bullying</div>
-    <div class="report-opt" onclick="sendReport('Unwanted romantic/sexual advances')">💔 Unwanted advances</div>
-    <div class="report-opt" onclick="sendReport('Inappropriate or offensive content')">⚠️ Inappropriate content</div>
-    <div class="report-opt" onclick="sendReport('Spam or scam')">🎣 Spam or scam</div>
-    <div class="report-opt" onclick="sendReport('Safety concern')">🛡️ Safety concern</div>
-    <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeReport()">Cancel</div>
+  <div class="sheet-inner"><div class="grabber"></div><h3>Report</h3>
+    <div id="reportReasonStep">
+      <p>Your safety comes first. The person is never told who reported them, and our team reviews every report.</p>
+      <div class="report-opt" onclick="selectReportReason('Harassment or bullying')">🚫 Harassment or bullying</div>
+      <div class="report-opt" onclick="selectReportReason('Unwanted romantic/sexual advances')">💔 Unwanted advances</div>
+      <div class="report-opt" onclick="selectReportReason('Inappropriate or offensive content')">⚠️ Inappropriate content</div>
+      <div class="report-opt" onclick="selectReportReason('Spam or scam')">🎣 Spam or scam</div>
+      <div class="report-opt" onclick="selectReportReason('Safety concern')">🛡️ Safety concern</div>
+      <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeReport()">Cancel</div>
+    </div>
+    <div id="reportDescStep" style="display:none">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Reporting: <b id="reportDescReason" style="color:var(--night)"></b></p>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">Add any details that could help our team review this faster — optional, but it helps.</p>
+      <textarea id="reportDescBox" placeholder="What happened? (optional)" style="width:100%;min-height:90px;padding:11px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box;margin-bottom:10px"></textarea>
+      <button class="btn btn-mango" style="width:100%" onclick="submitReport()">Submit report</button>
+      <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:8px" onclick="backToReportReasons()">← Back</div>
+    </div>
+  </div>
+</div>
+
+<!-- Manager: Analyze report panel (item 3) -->
+<div class="sheet" id="reportAnalyzeSheet" onclick="if(event.target===this)closeAnalyzeSheet()">
+  <div class="sheet-inner">
+    <div class="grabber"></div><h3>Analyze report</h3>
+    <div id="anzMainStep">
+      <div style="background:var(--bone);border-radius:14px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Reason</div>
+        <div id="anzReason" style="font-size:14px;font-weight:700;color:var(--night);margin-bottom:8px"></div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Description</div>
+        <div id="anzDesc" style="font-size:13px;color:var(--ink);margin-bottom:8px"></div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Against</div>
+        <div id="anzAgainst" style="font-size:13px;color:var(--ink);margin-bottom:8px"></div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Status</div>
+        <div id="anzStatus" style="font-size:13px;font-weight:700;color:var(--night)"></div>
+      </div>
+      <div class="report-opt" id="anzSeeItemBtn" onclick="anzSeeItem()">👤 See item reported</div>
+      <div class="report-opt" style="color:#2e9e5b;font-weight:700" onclick="anzStartVerdict('validate')">✔ Validate — this violates our terms</div>
+      <div class="report-opt" onclick="anzStartVerdict('discard')">✖ Discard — this doesn't violate our terms</div>
+      <div class="report-opt" style="color:var(--coral);font-weight:700" onclick="anzCloseReport()">🔒 Close report</div>
+      <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeAnalyzeSheet()">Cancel</div>
+    </div>
+    <div id="anzVerdictStep" style="display:none">
+      <h4 id="anzVerdictTitle" style="margin:0 0 4px;font-size:15px;color:var(--night)"></h4>
+      <p id="anzVerdictHint" style="font-size:13px;color:var(--muted);margin:0 0 10px"></p>
+      <textarea id="anzMsgBox" placeholder="Optional message to send…" style="width:100%;min-height:80px;padding:11px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box;margin-bottom:10px"></textarea>
+      <button class="btn btn-mango" style="width:100%" onclick="anzConfirmVerdict()">Confirm</button>
+      <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:8px" onclick="anzCancelVerdict()">← Back</div>
+    </div>
   </div>
 </div>
 
@@ -2924,6 +2966,12 @@ function showEventDetail(e){
   document.getElementById('evdWhen').style.display=when?'block':'none';
   document.getElementById('evdPlace').textContent=e.place?('📍 '+e.place):'';
   document.getElementById('evdPlace').style.display=e.place?'block':'none';
+  // Tappable to open in the device's map app — deliberately left styled as plain
+  // muted text (no blue color, no underline) rather than a conventional link, per
+  // request, while still being obviously tappable via the pointer cursor + pin emoji.
+  const placeEl=document.getElementById('evdPlace');
+  placeEl.style.cursor=e.place?'pointer':'default';
+  placeEl.onclick=e.place?(()=>openEventPlaceInMaps(e)):null;
   document.getElementById('evdCat').textContent=e.category||'Event';
   document.getElementById('evdDesc').textContent=e.description||'';
   const ph=document.getElementById('evdPhoto');
@@ -2935,6 +2983,12 @@ function showEventDetail(e){
   document.getElementById('eventDetailSheet').classList.add('open');
 }
 function closeEventDetail(){document.getElementById('eventDetailSheet').classList.remove('open');}
+// Opens the event's address/place in the device's map app. Prefers exact coordinates
+// (a precise pin) when we have them; falls back to the place text as a search query.
+function openEventPlaceInMaps(e){
+  const q=(typeof e.lat==='number'&&typeof e.lng==='number')?(e.lat+','+e.lng):encodeURIComponent(e.place||'');
+  window.open('https://maps.google.com/?q='+q,'_blank');
+}
 function eventToCalendar(){
   if(!activeEvent||!activeEvent.starts_at)return;
   const start=new Date(activeEvent.starts_at);
@@ -4951,7 +5005,7 @@ async function openNotifs(){
     if(!data.notifications.length){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:24px;font-size:14px">No notifications yet.</p>';}
     else box.innerHTML=data.notifications.map(n=>{
       const when=timeAgo(n.created_at);
-      const icon=n.type==='dm'?'💬':n.type==='friend_request'?'👋':n.type==='friend_accept'?'🎉':n.type==='group'?'👥':n.type==='gallery'?'💛':n.type==='birthday'?'🎂':'🔔';
+      const icon=n.type==='dm'?'💬':n.type==='friend_request'?'👋':n.type==='friend_accept'?'🎉':n.type==='group'?'👥':n.type==='gallery'?'💛':n.type==='birthday'?'🎂':(n.type==='report_new'||n.type==='report_submitted'||n.type==='report_discarded'||n.type==='report_validated')?'🚩':'🔔';
       // Birthday notifications carry a friendId in the link (birthday:<id>) and get action buttons
       let actions='';
       if(n.type==='birthday'&&(n.link||'').startsWith('birthday:')){
@@ -5012,6 +5066,7 @@ function handleNotifClick(link){
   if(link.startsWith('dm:')){openDm(link.slice(3));}
   else if(link==='friends:requests'){go('s-circles');switchCircTab('friends');setTimeout(()=>switchFriendSub('requests'),50);}
   else if(link.startsWith('friends:')){go('s-circles');switchCircTab('friends');}
+  else if(link==='admin:reports'){openAdmin();setTimeout(()=>switchAdminTab('reports'),50);}
 }
 function timeAgo(ts){
   const s=Math.floor((Date.now()-ts)/1000);
@@ -5990,16 +6045,149 @@ async function admDeleteSourceEvent(eid,sid){
   try{await api('/api/events/'+eid+'/delete','POST',{});toast('Event removed');admLoadSourceEvents(sid);loadAdminEventSources();}
   catch(e){toast(e.message);}
 }
+// Reports panel: metrics pills (filterable), status + days-incomplete per report,
+// and an Analyze panel with see-item / discard / validate / close actions.
+let adminReportsData=[],adminReportsFilter='all',adminReportsCounts={all:0,open:0,investigating:0,resolved:0};
 async function loadAdminReports(){
   try{
     const data=await api('/api/admin/reports');
-    const box=document.getElementById('adminReportsList');
-    if(!data.reports.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No reports yet.</p>';return;}
-    box.innerHTML=data.reports.map(r=>{
-      const when=new Date(r.created_at).toLocaleDateString();
-      const against=r.reported_name?('@'+(r.reported_username||'')+' ('+esc(r.reported_name)+')'):'(general)';
-      return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:4px"><b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b><span style="font-size:12px;color:var(--muted)">Against: '+against+' · by @'+esc(r.reporter_username||'?')+' · '+when+'</span></div>';
-    }).join('');
+    adminReportsData=data.reports;
+    adminReportsCounts=data.counts;
+    renderAdminReportsMetrics();
+    renderAdminReportsList();
+  }catch(e){toast(e.message);}
+}
+function renderAdminReportsMetrics(){
+  const box=document.getElementById('adminReportsMetrics');
+  const pills=[
+    {key:'all',label:'All',n:adminReportsCounts.all},
+    {key:'open',label:'Open',n:adminReportsCounts.open},
+    {key:'investigating',label:'Investigating',n:adminReportsCounts.investigating},
+    {key:'resolved',label:'Resolved',n:adminReportsCounts.resolved}
+  ];
+  box.innerHTML=pills.map(p=>{
+    const on=adminReportsFilter===p.key;
+    return '<button onclick="admFilterReports(\''+p.key+'\')" style="flex:0 0 auto;padding:8px 14px;border-radius:999px;border:1.5px solid '+(on?'var(--coral)':'var(--line)')+';background:'+(on?'var(--coral)':'var(--card)')+';color:'+(on?'#fff':'var(--night)')+';font-size:12.5px;font-weight:700;white-space:nowrap;cursor:pointer">'+p.label+' · '+p.n+'</button>';
+  }).join('');
+}
+function admFilterReports(key){adminReportsFilter=key;renderAdminReportsMetrics();renderAdminReportsList();}
+const REPORT_STATUS_LABEL={open:'Open',investigating:'Under investigation',resolved:'Resolved'};
+const REPORT_STATUS_COLOR={open:'#d94b3b',investigating:'#c98a1f',resolved:'#2e9e5b'};
+function renderAdminReportsList(){
+  const box=document.getElementById('adminReportsList');
+  const list=adminReportsFilter==='all'?adminReportsData:adminReportsData.filter(r=>r.status===adminReportsFilter);
+  if(!list.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No reports here.</p>';return;}
+  box.innerHTML=list.map(r=>{
+    const when=new Date(r.created_at).toLocaleDateString();
+    const against=r.reported_name?('@'+(r.reported_username||'')+' ('+esc(r.reported_name)+')'):'(general)';
+    const status=r.status||'open';
+    const daysLine=r.days_incomplete!=null?('<span style="font-size:11.5px;color:'+(r.days_incomplete>=3?'#d94b3b':'var(--muted)')+';font-weight:700">⏱ '+r.days_incomplete+' day'+(r.days_incomplete===1?'':'s')+' incomplete</span>'):'';
+    const verdictBadge=r.verdict?('<span style="font-size:11px;font-weight:700;color:'+(r.verdict==='validated'?'#d94b3b':'var(--muted)')+'">'+(r.verdict==='validated'?'✔ Validated':'✖ Discarded')+'</span>'):'';
+    return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+      +'<b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b>'
+      +'<span style="font-size:11px;font-weight:700;color:'+REPORT_STATUS_COLOR[status]+';white-space:nowrap">● '+REPORT_STATUS_LABEL[status]+'</span>'
+      +'</div>'
+      +(r.description?'<p style="font-size:12.5px;color:var(--ink);margin:0;background:var(--bone);border-radius:10px;padding:8px 10px">'+esc(r.description)+'</p>':'')
+      +'<span style="font-size:12px;color:var(--muted)">Against: '+against+' · by @'+esc(r.reporter_username||'?')+' · '+when+'</span>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">'
+      +'<div style="display:flex;gap:8px;align-items:center">'+daysLine+verdictBadge+'</div>'
+      +'<button class="btn" style="padding:7px 14px;font-size:12.5px;background:var(--coral);color:#fff;border:none" onclick="admOpenAnalyze(\''+r.id+'\')">🔎 Analyze</button>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+let admAnalyzeReport=null;
+async function admOpenAnalyze(rid){
+  try{
+    const data=await api('/api/admin/reports/'+rid+'/analyze','POST',{});
+    admAnalyzeReport=data.report;
+    // Reflect the auto "open -> investigating" transition in the list and pill counts
+    // underneath without a full refetch.
+    const idx=adminReportsData.findIndex(x=>x.id===rid);
+    if(idx>-1&&adminReportsData[idx].status==='open'){
+      adminReportsData[idx].status='investigating';adminReportsData[idx].analyzed_at=Date.now();
+      adminReportsCounts.open=Math.max(0,adminReportsCounts.open-1);adminReportsCounts.investigating++;
+      renderAdminReportsMetrics();renderAdminReportsList();
+    }
+    renderAnalyzeSheet();
+    document.getElementById('reportAnalyzeSheet').classList.add('open');
+  }catch(e){toast(e.message);}
+}
+function closeAnalyzeSheet(){document.getElementById('reportAnalyzeSheet').classList.remove('open');admAnalyzeReport=null;}
+function renderAnalyzeSheet(){
+  const r=admAnalyzeReport;if(!r)return;
+  document.getElementById('anzReason').textContent=r.reason||'Report';
+  document.getElementById('anzDesc').textContent=r.description||'(No description provided.)';
+  document.getElementById('anzAgainst').textContent=r.reported_name?('@'+(r.reported_username||'')+' ('+r.reported_name+')'):'(general — no specific account)';
+  document.getElementById('anzStatus').textContent=REPORT_STATUS_LABEL[r.status||'open'];
+  document.getElementById('anzVerdictStep').style.display='none';
+  document.getElementById('anzMainStep').style.display='block';
+  document.getElementById('anzMsgBox').value='';
+  document.getElementById('anzSeeItemBtn').style.display=r.reported_id?'block':'none';
+}
+function anzSeeItem(){
+  if(!admAnalyzeReport||!admAnalyzeReport.reported_id)return;
+  const username=admAnalyzeReport.reported_username||'';
+  closeAnalyzeSheet();
+  switchAdminTab('users');
+  setTimeout(()=>{
+    const box=document.getElementById('adminSearch');
+    if(box){box.value=username;loadAdminUsers(username);}
+  },50);
+}
+let anzPendingVerdict=null; // 'discard' | 'validate'
+function anzStartVerdict(kind){
+  anzPendingVerdict=kind;
+  document.getElementById('anzMainStep').style.display='none';
+  document.getElementById('anzVerdictStep').style.display='block';
+  document.getElementById('anzVerdictTitle').textContent=kind==='validate'?'Validate this report':'Discard this report';
+  document.getElementById('anzVerdictHint').textContent=kind==='validate'
+    ?'This confirms the reported account violated our terms. An optional message can be sent to let them know.'
+    :'This marks the report as not violating our terms. An optional message can be sent to the person who reported it.';
+}
+function anzCancelVerdict(){
+  anzPendingVerdict=null;
+  document.getElementById('anzVerdictStep').style.display='none';
+  document.getElementById('anzMainStep').style.display='block';
+}
+async function anzConfirmVerdict(){
+  if(!admAnalyzeReport||!anzPendingVerdict)return;
+  const message=document.getElementById('anzMsgBox').value.trim();
+  const endpoint=anzPendingVerdict==='validate'?'validate':'discard';
+  try{
+    const data=await api('/api/admin/reports/'+admAnalyzeReport.id+'/'+endpoint,'POST',{message});
+    admAnalyzeReport.verdict=anzPendingVerdict==='validate'?'validated':'discarded';
+    toast(anzPendingVerdict==='validate'?'Marked as validated ✔':'Marked as discarded ✖');
+    anzPendingVerdict=null;
+    document.getElementById('anzVerdictStep').style.display='none';
+    document.getElementById('anzMainStep').style.display='block';
+    if(data.warning)admShowReportWarning(data.warning,admAnalyzeReport.reported_id,admAnalyzeReport.reported_name);
+  }catch(e){toast(e.message);}
+}
+// Escalation warnings from item 6/7: 3+ validated reports -> suggest suspend, 5+ -> suggest
+// terminate; 5+ unfounded reports by the same reporter -> flag possible malicious reporting.
+function admShowReportWarning(warning,reportedId,reportedName){
+  if(warning.type==='suspend'){
+    if(confirm('⚠️ '+warning.message+'\n\nTemporarily suspend this account now?')){
+      admSuspend(reportedId,true);
+    }
+  }else if(warning.type==='terminate'){
+    if(confirm('🛑 '+warning.message+'\n\nPermanently terminate (delete) this account now? This cannot be undone.')){
+      admDelete(reportedId,reportedName||'this account');
+    }
+  }else if(warning.type==='reporter_unfounded'){
+    alert('🚩 Possible malicious reporting\n\n'+warning.message);
+  }
+}
+async function anzCloseReport(){
+  if(!admAnalyzeReport)return;
+  if(!confirm('Close this report? It will move to Resolved.'))return;
+  try{
+    await api('/api/admin/reports/'+admAnalyzeReport.id+'/close','POST',{});
+    toast('Report closed');
+    closeAnalyzeSheet();
+    loadAdminReports();
   }catch(e){toast(e.message);}
 }
 
@@ -6244,14 +6432,36 @@ async function saveProfile(){
 }
 
 // ---- Report / toast ----
-let reportContext='',reportedUserId=null;
-function openReport(){document.getElementById('reportSheet').classList.add('open');}
+let reportContext='',reportedUserId=null,reportSelectedReason='';
+function openReport(){
+  reportSelectedReason='';
+  document.getElementById('reportReasonStep').style.display='block';
+  document.getElementById('reportDescStep').style.display='none';
+  document.getElementById('reportSheet').classList.add('open');
+}
 function closeReport(){document.getElementById('reportSheet').classList.remove('open');}
-async function sendReport(reason){
+// Selecting a reason no longer submits immediately — it opens a short optional
+// description step first, so the manager reviewing it has more to go on.
+function selectReportReason(reason){
+  reportSelectedReason=reason;
+  document.getElementById('reportDescReason').textContent=reason;
+  document.getElementById('reportDescBox').value='';
+  document.getElementById('reportReasonStep').style.display='none';
+  document.getElementById('reportDescStep').style.display='block';
+}
+function backToReportReasons(){
+  document.getElementById('reportDescStep').style.display='none';
+  document.getElementById('reportReasonStep').style.display='block';
+}
+async function submitReport(){
+  const reason=reportSelectedReason;
+  const description=document.getElementById('reportDescBox').value.trim();
   closeReport();
-  try{await api('/api/report','POST',{reportedId:reportedUserId,context:reportContext,reason});toast('Thanks — our team will review this. 🛡️');}
-  catch(e){toast('Report received. 🛡️');}
-  reportContext='';reportedUserId=null;
+  try{
+    const r=await api('/api/report','POST',{reportedId:reportedUserId,context:reportContext,reason,description});
+    toast('Thanks — our team will review this. 🛡️ (Report #'+(r.total||1)+' from you)');
+  }catch(e){toast('Report received. 🛡️');}
+  reportContext='';reportedUserId=null;reportSelectedReason='';
 }
 function doReport(){reportContext='chat';reportedUserId=null;closeRoundChatOptions();openReport();}
 
