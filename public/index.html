@@ -12,8 +12,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<!-- Marker clustering keeps the map fast even with thousands of pins (item 5): nearby
+     markers collapse into a single cluster bubble instead of each being its own layer. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<!-- Google Identity Services — powers "Sign in with Google" (item 3). Loads async; the
+     app only initializes it once /api/config confirms a client ID is configured. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{--night:#1B1B3A;--coral:#5B5FEF;--mango:#8B5CF6;--turq:#2DD4BF;--bone:#F0EFF7;--ink:#2A2A3C;--muted:#8A8699;--line:#E6E4F0;--card:#FFFFFF;--detail-bg:#E9E7F6;--shadow:0 8px 30px rgba(27,27,58,.08)}
 /* Dark theme */
@@ -142,6 +150,16 @@ svg :is(path,line,polyline,rect,circle){stroke-linecap:round;stroke-linejoin:rou
 body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .phone{width:390px;max-width:100vw;height:844px;max-height:calc(100vh - 24px);background:var(--bone);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(27,27,58,.28),0 0 0 12px #0f0f1e,0 0 0 13px #2a2a3c}
 .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:30px;background:#0f0f1e;border-radius:0 0 20px 20px;z-index:60}
+/* Sign in with Google (item 3) */
+.google-wrap{margin-top:10px}
+.auth-or{display:flex;align-items:center;gap:10px;margin:14px 0 4px;color:rgba(255,255,255,.6);font-size:12px;font-weight:600}
+.auth-or::before,.auth-or::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.22)}
+.btn-google{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#1f1f1f;border:1.5px solid #dadce0;border-radius:12px;padding:12px;font-weight:700;font-size:14px;font-family:inherit;cursor:pointer;transition:background .15s,box-shadow .15s}
+.btn-google:hover{background:#f7f8fa;box-shadow:0 2px 8px rgba(60,64,67,.15)}
+.btn-google:active{background:#eef0f3}
+.btn-google svg{flex:none}
+/* On the photo-backdrop intro screen the plain white button needs a little lift */
+.btn-google-onphoto{box-shadow:0 8px 24px rgba(0,0,0,.35)}
 /* On real phones (or installed as an app): drop the fake bezel, go full-screen, no bounce */
 @media (max-width:520px){
   html,body{background:var(--bone);height:100%;overflow:hidden;position:fixed;width:100%;overscroll-behavior:none}
@@ -150,6 +168,26 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   .notch{display:none}
   .statusbar{height:env(safe-area-inset-top,0px)}
   .nav{padding-bottom:env(safe-area-inset-bottom,0px);height:calc(84px + env(safe-area-inset-bottom,0px))}
+}
+/* ---- Web version (item 2) ----
+   When ShowUpp is opened in a desktop/laptop browser — i.e. NOT the packaged mobile app
+   (which sets the .native-app flag) and NOT a narrow phone-width screen — the app takes
+   over the ENTIRE window instead of sitting inside a centered phone mock. The mobile-app
+   builds and phones are unaffected: they fall under the max-width:520px rules above.
+   Content is capped at a comfortable reading width and centered, so a very wide monitor
+   doesn't stretch cards across the full span. */
+@media (min-width:521px){
+  html:not(.native-app) body{padding:0;display:block;background:var(--bone)}
+  html:not(.native-app) .phone{
+    width:100vw;max-width:100vw;height:100vh;height:100dvh;max-height:none;
+    border-radius:0;box-shadow:none;margin:0
+  }
+  html:not(.native-app) .notch{display:none}
+  /* Center each screen's content column and give it a sensible max width on big displays. */
+  html:not(.native-app) .phone .screen{align-items:center}
+  html:not(.native-app) .phone .screen>*{width:100%;max-width:720px;margin-left:auto;margin-right:auto}
+  /* The bottom nav and any full-bleed overlays should still span the whole window. */
+  html:not(.native-app) .phone .nav{max-width:none}
 }
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
 .phone[data-theme="dark"] .screen{background:#0B0B16}
@@ -629,6 +667,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div style="position:absolute;left:0;right:0;bottom:0;height:38%;background:linear-gradient(to bottom, rgba(16,16,31,0), rgba(16,16,31,.5) 50%, rgba(16,16,31,.92));z-index:1"></div>
       <div style="position:relative;z-index:2;margin-top:auto;padding:24px 28px 32px;display:flex;flex-direction:column;gap:12px">
         <button class="btn btn-primary" style="box-shadow:0 8px 30px rgba(91,127,255,.5)" onclick="authStep('a-signup')" data-i18n="create_account">Create your account</button>
+        <div class="google-wrap" id="googleWrapIntro" style="display:none">
+          <button type="button" class="btn-google btn-google-onphoto" onclick="startGoogleSignIn()">
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+            <span>Sign up with Google</span>
+          </button>
+        </div>
         <div class="small-link" style="text-align:center">Already here? <a onclick="authStep('a-login')" style="font-weight:800" data-i18n="log_in">Log in</a></div>
       </div>
     </div>
@@ -651,6 +695,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="err" id="loginErr"></div>
         <div class="auth-foot"><button class="btn btn-mango" onclick="doLogin()">Log in</button>
         <button id="bioLoginBtn" onclick="loginWithBiometric()" style="display:none;width:100%;margin-top:10px;background:var(--card);color:var(--night);border:1.5px solid var(--line);padding:12px;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer">🔐 Log in with Face ID / fingerprint</button>
+        <div class="google-wrap" id="googleWrapLogin" style="display:none">
+          <div class="auth-or"><span>or</span></div>
+          <button type="button" class="btn-google" onclick="startGoogleSignIn()">
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+            <span>Sign in with Google</span>
+          </button>
+        </div>
         <div class="small-link">New here? <a onclick="authStep('a-signup')">Create an account</a></div></div>
       </div>
 
@@ -2335,6 +2386,68 @@ async function doLogin(){
     runLoginTransition(startedAt,1700);
   }catch(e){hideLoginTransition();showErr('loginErr',e.message);}
 }
+// ---- Sign in with Google (item 3) ----
+// We fetch the client ID from /api/config, initialize Google Identity Services once its
+// script has loaded, and reveal the Google buttons only when everything is ready. Tapping
+// a button opens Google's account chooser; the resulting ID token is verified server-side
+// and either logs the person in or creates their account, then drops them into the app —
+// with name, email, photo and language all sorted out automatically.
+let googleClientId='', googleReady=false;
+async function initGoogleAuth(){
+  try{
+    const cfg=await api('/api/config');
+    googleClientId=(cfg&&cfg.googleClientId)||'';
+  }catch(e){googleClientId='';}
+  if(!googleClientId)return; // Google sign-in not configured on this server — leave buttons hidden
+  // GIS may still be loading; poll briefly for window.google.
+  let tries=0;
+  const tryInit=()=>{
+    if(window.google&&google.accounts&&google.accounts.id){
+      google.accounts.id.initialize({client_id:googleClientId,callback:onGoogleCredential});
+      googleReady=true;
+      showGoogleButtons();
+    }else if(tries++<40){setTimeout(tryInit,150);}
+  };
+  tryInit();
+}
+function showGoogleButtons(){
+  ['googleWrapLogin','googleWrapIntro'].forEach(idv=>{const el=document.getElementById(idv);if(el)el.style.display='block';});
+}
+function startGoogleSignIn(){
+  if(!googleReady){toast('Google sign-in is still loading — one moment…');return;}
+  // Prompt shows Google's One Tap / account chooser. If it can't display (e.g. blocked),
+  // fall back to rendering a native Google button the user can click.
+  google.accounts.id.prompt(notification=>{
+    if(notification.isNotDisplayed&&notification.isNotDisplayed()||notification.isSkippedMoment&&notification.isSkippedMoment()){
+      renderFallbackGoogleButton();
+    }
+  });
+}
+// If One Tap is suppressed, drop Google's own rendered button into the login foot so the
+// user still has a working entry point.
+function renderFallbackGoogleButton(){
+  const host=document.getElementById('googleWrapLogin');
+  if(!host||host._fallbackRendered)return;
+  host._fallbackRendered=true;
+  const slot=document.createElement('div');slot.style.marginTop='10px';slot.style.display='flex';slot.style.justifyContent='center';
+  host.appendChild(slot);
+  try{google.accounts.id.renderButton(slot,{theme:'outline',size:'large',text:'continue_with',width:280});}catch(e){}
+}
+async function onGoogleCredential(response){
+  if(!response||!response.credential){toast('Google sign-in was cancelled.');return;}
+  try{
+    showLoginTransition();const startedAt=Date.now();
+    const data=await api('/api/auth/google','POST',{credential:response.credential});
+    token=data.token;saveToken(token,true);me=data.user;
+    if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();applyTranslations();}
+    connectWS();enterApp();
+    runLoginTransition(startedAt,1700);
+  }catch(e){hideLoginTransition();
+    // Surface the error on whichever auth step is visible.
+    const onLogin=document.getElementById('a-login')&&document.getElementById('a-login').classList.contains('on');
+    showErr(onLogin?'loginErr':'suErr',e.message);
+  }
+}
 function togglePw(id,btn){
   const el=document.getElementById(id);if(!el)return;
   if(el.type==='password'){el.type='text';if(btn)btn.textContent='🙈';}
@@ -2621,6 +2734,9 @@ function pickTimeFilter(v){
   ['any','today','week','month'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f===v);});
   updateFilterActiveDot();
   renderRoundsList();
+  // Events are filtered server-side (item 1), so a When change must re-fetch them
+  // whenever the Events section is on screen.
+  if(homeSection==='events'||homeSection==='both')loadEvents();
 }
 function matchesTimeFilter(r){
   if(currentTimeFilter==='any')return true;
@@ -2674,13 +2790,26 @@ function resetFilters(){
   switchHomeSection('rounds');
   updateFilterActiveDot();
   renderRoundsList();
+  // switchHomeSection('rounds') hides Events; if it had been showing, its next open
+  // re-fetches with cleared filters, so nothing else to do here.
 }
 function updateDistLabel(){
   const val=distUnit==='mi'?Math.round(maxDistKm*0.621371):maxDistKm;
   const el=document.getElementById('distVal');if(el)el.textContent=val;
   const unitEl=document.getElementById('distUnitLabel');if(unitEl)unitEl.textContent=distUnit;
 }
-function onDistChange(v){maxDistKm=(distUnit==='mi')?(+v*1.60934):+v;updateDistLabel();if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();renderRoundsList();}
+let _eventsDistDebounce=null;
+function onDistChange(v){
+  maxDistKm=(distUnit==='mi')?(+v*1.60934):+v;updateDistLabel();
+  if(typeof updateFilterActiveDot==='function')updateFilterActiveDot();
+  renderRoundsList();
+  // Distance is a server-side filter for events (item 1). Debounce so dragging the
+  // slider doesn't fire a request on every pixel — only once the user pauses.
+  if(homeSection==='events'||homeSection==='both'){
+    clearTimeout(_eventsDistDebounce);
+    _eventsDistDebounce=setTimeout(()=>loadEvents(),350);
+  }
+}
 async function toggleRoundReact(rid,type,btn){
   try{
     const r=await api('/api/rounds/'+rid+'/react','POST',{type});
@@ -2911,11 +3040,20 @@ function fetchEventCategories(){
   if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
   return api(q).catch(()=>({categories:[]}));
 }
-const EVENTS_PAGE_SIZE=50; // server's max page size — fewer round trips through 4,000+ nationwide events
+const EVENTS_PAGE_SIZE=50; // server's max page size — fewer round trips through the nationwide feed
 function fetchEventsPage(page){
   let q='/api/events?page='+page+'&pageSize='+EVENTS_PAGE_SIZE;
   if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
   if(eventCat!=='all')q+='&category='+encodeURIComponent(eventCat);
+  // Apply the same When / Distance filters the user set in the filter panel, so API
+  // events respond to them exactly like Rounds do (item 1). "When" maps straight to the
+  // server's date-range param; distance is sent in MILES (server expects miles), and only
+  // when the user has narrowed it below the full range so an untouched slider stays "all".
+  if(currentTimeFilter&&currentTimeFilter!=='any')q+='&when='+encodeURIComponent(currentTimeFilter);
+  if(userLoc&&typeof maxDistKm==='number'&&maxDistKm<MAX_DIST_KM){
+    const miles=maxDistKm*0.621371;
+    q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
+  }
   return api(q);
 }
 async function loadMoreEvents(){
@@ -2938,21 +3076,40 @@ function renderEventCatChips(){
   }).join('');
 }
 function pickEventCat(c){eventCat=c;renderEventCatChips();loadEvents();}
+let mapBackgroundLoadToken=0;
 async function setEventsView(v){
   eventsView=v;
   document.getElementById('evt-list').classList.toggle('on',v==='list');
   document.getElementById('evt-map').classList.toggle('on',v==='map');
   document.getElementById('eventsList').style.display=v==='list'?'block':'none';
   document.getElementById('eventsMapView').style.display=v==='map'?'block':'none';
-  // A single page makes for a sparse map, and only showing the first ~100 of a
-  // 4,000+ event nationwide feed left most events permanently invisible on the map.
-  // Pull every remaining page (guarded generously so a runaway feed can't loop forever).
-  if(v==='map'&&eventsHasMore){
-    toast('Loading all events for the map…');
-    let guard=0;
-    while(eventsHasMore&&guard<300){await loadMoreEvents();guard++;}
-  }
+  // Render whatever we already have IMMEDIATELY so the switch is instant (item 5).
+  // The old code awaited every remaining page before rendering, which froze the app
+  // when the nationwide 1-year feed ran to thousands of events. Now markers are
+  // clustered (fast at any count) and extra pages stream in progressively in the
+  // background without ever blocking the view switch.
   renderEvents();
+  if(v==='map'){
+    // Invalidate a beat after the container becomes visible so Leaflet sizes correctly.
+    if(eventsMap)setTimeout(()=>eventsMap.invalidateSize(),120);
+    backgroundLoadEventsForMap();
+  }
+}
+// Streams the remaining event pages in one at a time, re-plotting the (clustered) map
+// after each so pins fill in progressively. Cancellable — flipping back to List or
+// leaving the section bumps the token so an in-flight loop stops. Capped so an
+// unexpectedly huge feed can't loop forever.
+async function backgroundLoadEventsForMap(){
+  const myToken=++mapBackgroundLoadToken;
+  let guard=0;
+  while(eventsHasMore&&guard<400){
+    if(myToken!==mapBackgroundLoadToken)return; // superseded/cancelled
+    if(eventsView!=='map'||eventsPane_hidden())return;
+    await loadMoreEvents();           // fetches next page, appends, and re-renders
+    guard++;
+    // Yield to the event loop so the UI stays responsive between pages.
+    await new Promise(r=>setTimeout(r,0));
+  }
 }
 function renderEvents(){
   let list=allEvents.slice();
@@ -3017,23 +3174,52 @@ function scrollHomeToTop(){
   const scroller=document.querySelector('#s-home .scroll');
   if(scroller)scroller.scrollTo({top:0,behavior:'smooth'});
 }
+let eventsCluster=null, eventsUserMarker=null, eventsMapCentered=false;
 function renderEventsMap(list){
   const el=document.getElementById('eventsMapView');
   if(typeof L==='undefined'){el.innerHTML='<p style="padding:20px;text-align:center;color:var(--muted)">Map couldn\'t load.</p>';return;}
   const center=userLoc||{lat:18.4861,lng:-69.9312};
-  if(!eventsMap){eventsMap=L.map(el,{zoomControl:true}).setView([center.lat,center.lng],11);mapTiles(mapType).addTo(eventsMap);}
-  else eventsMap.setView([center.lat,center.lng],11);
-  eventsMapMarkers.forEach(m=>eventsMap.removeLayer(m));eventsMapMarkers=[];
-  if(userLoc){const me2=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(eventsMap);eventsMapMarkers.push(me2);}
+  if(!eventsMap){
+    eventsMap=L.map(el,{zoomControl:true,preferCanvas:true}).setView([center.lat,center.lng],11);
+    mapTiles(mapType).addTo(eventsMap);
+    eventsMapCentered=true;
+  }else if(!eventsMapCentered){
+    // Only recenter the very first time we get a location — never on later background
+    // page loads, which would rudely snap the user's pan/zoom back to center (item 5).
+    eventsMap.setView([center.lat,center.lng],11);eventsMapCentered=true;
+  }
+  // Cluster group: nearby pins collapse into count bubbles, so the map stays smooth
+  // whether there are 50 or 5,000 events. Reused across renders; we just reset its
+  // contents rather than adding thousands of loose layers to the map each time.
+  if(!eventsCluster){
+    eventsCluster=(typeof L.markerClusterGroup==='function')
+      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:55})
+      : L.layerGroup();
+    eventsMap.addLayer(eventsCluster);
+  }
+  eventsCluster.clearLayers();
+  if(userLoc){
+    if(eventsUserMarker)eventsMap.removeLayer(eventsUserMarker);
+    eventsUserMarker=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(eventsMap);
+  }
+  const markers=[];
   list.forEach(e=>{
     if(e.lat==null||e.lng==null)return;
-    const mk=L.marker([e.lat,e.lng]).addTo(eventsMap);
-    const popupHtml='<div class="map-popup-title">'+esc(e.title)+'</div>'
-      +'<div class="map-popup-meta">'+(e.emoji||'')+' '+esc(e.category||'')+(e.place?'<br>'+esc(e.place):'')+(userLoc?'<br>📍 '+distLabel(e):'')+'</div>'
-      +'<button type="button" class="map-popup-open" onclick="openEventDetail(\''+e.id+'\')">'+t('Open Event')+'</button>';
-    mk.bindPopup(popupHtml);
-    eventsMapMarkers.push(mk);
+    const mk=L.marker([e.lat,e.lng]);
+    // Build the popup lazily on first open instead of eagerly for every marker — a big
+    // win when thousands of markers exist, since most are never opened.
+    mk.on('click',()=>{
+      if(!mk._popupBuilt){
+        mk._popupBuilt=true;
+        mk.bindPopup('<div class="map-popup-title">'+esc(e.title)+'</div>'
+          +'<div class="map-popup-meta">'+(e.emoji||'')+' '+esc(e.category||'')+(e.place?'<br>'+esc(e.place):'')+(userLoc?'<br>📍 '+distLabel(e):'')+'</div>'
+          +'<button type="button" class="map-popup-open" onclick="openEventDetail(\''+e.id+'\')">'+t('Open Event')+'</button>').openPopup();
+      }
+    });
+    markers.push(mk);
   });
+  if(eventsCluster.addLayers)eventsCluster.addLayers(markers); // bulk add (fast path)
+  else markers.forEach(m=>eventsCluster.addLayer(m));
   setTimeout(()=>eventsMap.invalidateSize(),100);
 }
 function openEventDetail(eid){
@@ -3219,13 +3405,15 @@ function setMapType(type){
   const s=document.getElementById('mapTypeToggle');
   if(s){s.querySelector('#mt-standard').classList.toggle('on',type==='standard');s.querySelector('#mt-satellite').classList.toggle('on',type==='satellite');}
 }
+let roundsCluster=null, roundsUserMarker=null, roundsMapCentered=false;
 function renderMap(list){
   const el=document.getElementById('mapView');
   if(typeof L==='undefined'){el.innerHTML='<p style="padding:20px;text-align:center;color:var(--muted)">Map couldn\'t load.</p>';return;}
   const center=userLoc||{lat:18.4861,lng:-69.9312}; // default: Santo Domingo
   if(!leafletMap){
-    leafletMap=L.map(el,{zoomControl:true}).setView([center.lat,center.lng],11);
+    leafletMap=L.map(el,{zoomControl:true,preferCanvas:true}).setView([center.lat,center.lng],11);
     mapTileLayer=mapTiles(mapType).addTo(leafletMap);
+    roundsMapCentered=true;
     // floating standard/satellite toggle
     const ctl=L.control({position:'topright'});
     ctl.onAdd=function(){
@@ -3235,10 +3423,25 @@ function renderMap(list){
       return div;
     };
     ctl.addTo(leafletMap);
-  }else{leafletMap.setView([center.lat,center.lng],11);}
-  mapMarkers.forEach(m=>leafletMap.removeLayer(m));mapMarkers=[];
-  if(userLoc){const me2=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(leafletMap);me2.bindPopup('You are here');mapMarkers.push(me2);}
-  let plotted=0;
+  }else if(!roundsMapCentered){
+    // Recenter only the first time we obtain a location, never on later re-renders
+    // (filter/tab changes), so the user's pan/zoom isn't snapped back each time (item 5).
+    leafletMap.setView([center.lat,center.lng],11);roundsMapCentered=true;
+  }
+  // Cluster group keeps the Rounds map fast regardless of how many pins there are.
+  if(!roundsCluster){
+    roundsCluster=(typeof L.markerClusterGroup==='function')
+      ? L.markerClusterGroup({chunkedLoading:true,spiderfyOnMaxZoom:true,maxClusterRadius:50})
+      : L.layerGroup();
+    leafletMap.addLayer(roundsCluster);
+  }
+  roundsCluster.clearLayers();
+  if(userLoc){
+    if(roundsUserMarker)leafletMap.removeLayer(roundsUserMarker);
+    roundsUserMarker=L.circleMarker([userLoc.lat,userLoc.lng],{radius:8,color:'#2DD4BF',fillColor:'#2DD4BF',fillOpacity:1}).addTo(leafletMap);
+    roundsUserMarker.bindPopup('You are here');
+  }
+  let plotted=0;const markers=[];
   list.forEach(r=>{
     if(r.lat==null||r.lng==null)return;
     // Rounds with a photo get a circular photo pin instead of the default map marker,
@@ -3246,13 +3449,19 @@ function renderMap(list){
     const icon=r.photo
       ?L.divIcon({html:'<img class="round-marker-photo" src="'+esc(r.photo)+'" alt="">',className:'',iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-17]})
       :null;
-    const mk=icon?L.marker([r.lat,r.lng],{icon}).addTo(leafletMap):L.marker([r.lat,r.lng]).addTo(leafletMap);
-    const popupHtml='<div class="map-popup-title">'+esc(r.title)+'</div>'
-      +'<div class="map-popup-meta">'+(r.emoji||'')+' '+t(r.category||'')+(r.place?'<br>'+esc(r.place):'')+(userLoc?'<br>📍 '+distLabel(r):'')+'</div>'
-      +'<button type="button" class="map-popup-open" onclick="openDetail(\''+r.id+'\')">'+t('Open Round')+'</button>';
-    mk.bindPopup(popupHtml);
-    mapMarkers.push(mk);plotted++;
+    const mk=icon?L.marker([r.lat,r.lng],{icon}):L.marker([r.lat,r.lng]);
+    mk.on('click',()=>{
+      if(!mk._popupBuilt){
+        mk._popupBuilt=true;
+        mk.bindPopup('<div class="map-popup-title">'+esc(r.title)+'</div>'
+          +'<div class="map-popup-meta">'+(r.emoji||'')+' '+t(r.category||'')+(r.place?'<br>'+esc(r.place):'')+(userLoc?'<br>📍 '+distLabel(r):'')+'</div>'
+          +'<button type="button" class="map-popup-open" onclick="openDetail(\''+r.id+'\')">'+t('Open Round')+'</button>').openPopup();
+      }
+    });
+    markers.push(mk);plotted++;
   });
+  if(roundsCluster.addLayers)roundsCluster.addLayers(markers);
+  else markers.forEach(m=>roundsCluster.addLayer(m));
   // Let the host know if their Rounds have no location saved (created before a place was added)
   const note=document.getElementById('mapNoCoordsNote');
   if(note)note.style.display=(list.length>0&&plotted===0)?'block':'none';
@@ -6995,8 +7204,25 @@ function loadUnit(){
 }
 
 // ---- Boot ----
+// Item 2: distinguish the packaged mobile app (App Store / Google Play build, which wraps
+// this same HTML in a native WebView) from a plain desktop/web browser. The native builds
+// run inside Capacitor/Cordova, so we tag <html> with .native-app when we detect that
+// wrapper. Everything without the tag on a wide screen gets the full-window "web version"
+// layout; the mobile builds keep the phone-style layout. A ?native=1 URL flag or a
+// preset window.SHOWUPP_NATIVE let the app shells force it explicitly.
+function detectNativeApp(){
+  try{
+    const forced = window.SHOWUPP_NATIVE===true ||
+      /[?&]native=1\b/.test(location.search) ||
+      !!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform()) ||
+      !!window.cordova ||
+      /ShowUppApp/i.test(navigator.userAgent||'');
+    document.documentElement.classList.toggle('native-app', !!forced);
+  }catch(e){}
+}
 async function boot(){
-  console.log('ShowUpp build: 2026-08-30-U (delete-round-button, detail-page-redesign)');
+  console.log('ShowUpp build: 2026-09-03-W (year-ahead events, filtered events, google sign-in, web fullscreen, map perf)');
+  detectNativeApp();
   if(typeof attachPhoneFormatter==='function')attachPhoneFormatter('suPhone');
   if(typeof attachAllSearchClears==='function')attachAllSearchClears();
   renderCats('');
@@ -7014,6 +7240,7 @@ async function boot(){
   initCountryPicker('suCountry','Dominican Republic');
   initPullToRefresh();
   attachBackToTop();
+  initGoogleAuth(); // set up "Sign in with Google" if the server has a client ID configured
   if(token){
     try{
       showLoginTransition();const _bootAt=Date.now();
