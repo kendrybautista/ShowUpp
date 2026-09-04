@@ -349,11 +349,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .map-count-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 3px rgba(255,111,97,.25)}
 
 /* ---- Expanded / fullscreen map ----
-   While expanded the map is moved to <body> (see toggleMapExpand) so NO transformed/
-   animated ancestor can become its containing block — that ancestor-transform trap is
-   what previously left the map short in portrait (height:100% resolved against the phone
-   frame, not the screen). Pinned with inset:0 + dynamic viewport units so it truly fills
-   the device in both orientations, including under iOS's dynamic toolbars. */
+   While expanded, the map is moved to <body> (see toggleMapExpand) so no transformed or
+   animated ancestor can become its containing block — that's what previously left it
+   covering only part of the screen. Pinned with inset:0 + dynamic viewport units so it
+   truly fills the device in both orientations, including under iOS's dynamic toolbars. */
 #mapView.map-expanded,#eventsMapView.map-expanded{
   position:fixed;left:0;top:0;right:0;bottom:0;inset:0;
   width:100vw;width:100dvw;height:100vh;height:100dvh;
@@ -1235,7 +1234,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           </select>
           <input id="esProviderCustom" placeholder="Provider name, e.g. Downtown Events Calendar" style="display:none;width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
           <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Account label</label>
-          <input id="esLabel" placeholder="e.g. Ticketmaster — main account" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
+          <input id="esLabel" placeholder="e.g. SD Concerts" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
           <div id="esApiKeyWrap">
             <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">API key</label>
             <input id="esApiKey" type="password" placeholder="Paste the API key" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:14px;box-sizing:border-box">
@@ -1243,7 +1242,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           <div id="esUrlWrap" style="display:none">
             <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Events page URL</label>
             <input id="esUrl" type="url" placeholder="https://www.sdconcerts.com/" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:8px;box-sizing:border-box">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">We read this page once a day and pull in any events it publishes as structured data (schema.org). Works best on sites built with common event tools. If nothing comes through after the first sync, the site may not expose machine-readable events — the source card will tell you.</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">We read this page once a day and pull in any events it publishes as structured data. Works best on sites built with common event tools. If nothing comes through after the first sync, the source card below will say so.</div>
           </div>
           <div id="esManualNote" style="display:none;font-size:12px;color:var(--muted);margin-bottom:14px">No API key needed — you'll add this source's events by hand from the list below once it's created.</div>
           <button class="btn btn-mango" style="width:100%" onclick="admAddEventSource()">➕ Add account</button>
@@ -1269,6 +1268,16 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="scroll">
     <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="onAvatarChosen(event)">
     <input type="file" id="mediaInput" accept="image/*,video/*" style="display:none" onchange="onMediaChosen(event)">
+    <!-- Fun avatar entry point (item 1) — deliberately the very first thing in the
+         scroll area, right under the header, so it can't be missed. -->
+    <div id="funAvatarCard" onclick="openAvatarBuilder()" style="margin:14px 18px 4px;background:linear-gradient(135deg,#FFE8A3,#FFB4C6);border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;box-shadow:0 4px 14px rgba(255,150,120,.28)">
+      <div id="funAvatarCardPreview" style="width:52px;height:52px;flex:none;border-radius:50%;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center"></div>
+      <div style="flex:1;min-width:0">
+        <div id="funAvatarCardTitle" style="font-weight:800;font-size:14.5px;color:#3a2a12">🎨 Create your Fun Avatar</div>
+        <div id="funAvatarCardSub" style="font-size:12px;color:#5c4726;margin-top:1px">Design a fun character &amp; use it as your map pin</div>
+      </div>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3a2a12" stroke-width="2.5" style="flex:none"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
     <div class="prof-tags" id="profTags"></div>
     <div id="profMoments" style="margin:8px 18px 4px;background:linear-gradient(135deg,#EEF0FF,#F1ECFF);border:1px solid var(--line);border-radius:16px;padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px">
@@ -1342,7 +1351,23 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 </div>
 
 <!-- Fun avatar builder (item 1) -->
-
+<div class="sheet" id="avatarBuilderSheet" onclick="if(event.target===this)closeAvatarBuilder()">
+  <div class="sheet-inner" style="max-height:90%;overflow-y:auto">
+    <div class="grabber"></div>
+    <h3>🎨 Fun avatar</h3>
+    <div style="display:flex;justify-content:center;margin-bottom:16px">
+      <div id="avbPreview" style="border-radius:50%;box-shadow:0 6px 20px rgba(40,40,90,.2);border:3px solid #fff;line-height:0"></div>
+    </div>
+    <div id="avbCategories"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 14px;padding:12px 14px;background:var(--bone);border-radius:14px">
+      <div style="flex:1"><div style="font-weight:700;font-size:13.5px;color:var(--night)">📍 Use as my map pin</div><div style="font-size:11.5px;color:var(--muted)">Show your avatar instead of a dot on the map</div></div>
+      <label class="switch"><input type="checkbox" id="avbOnMap" onchange="avbSetOnMap(this.checked)"><span class="slider"></span></label>
+    </div>
+    <button class="btn btn-mango" style="width:100%" onclick="avbSave()">Save avatar</button>
+    <div class="report-opt" id="avbRemoveBtn" style="text-align:center;color:#d94b3b;margin-top:8px;display:none" onclick="avbRemove()">Remove avatar</div>
+    <div class="report-opt" style="text-align:center;color:var(--muted)" onclick="closeAvatarBuilder()">Cancel</div>
+  </div>
+</div>
 
 <div class="sheet" id="editSheet" onclick="if(event.target===this)closeEdit()">
   <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
@@ -1442,11 +1467,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       </div>
       <input type="file" id="galleryCameraInput" accept="image/*" capture="environment" style="display:none" onchange="onGalleryChosen(event)">
       <input type="file" id="galleryInput" accept="image/*" multiple style="display:none" onchange="onGalleryChosen(event)">
-    </div>
-    <!-- Map pin: show the user's profile photo as their "you are here" marker -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 4px;padding:12px 14px;background:var(--bone);border-radius:14px">
-      <div style="flex:1"><div style="font-weight:700;font-size:13.5px;color:var(--night)">📍 Use my photo as my map pin</div><div style="font-size:11.5px;color:var(--muted)">Show your profile picture instead of a dot where you are on the map</div></div>
-      <label class="switch"><input type="checkbox" id="pubAvatarOnMap"><span class="slider"></span></label>
     </div>
     <button class="btn btn-mango" onclick="savePublic()" style="margin-top:6px">Save public profile</button>
     <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:10px;background:none;border:none" onclick="closePublic()">Cancel</div>
@@ -3517,9 +3537,11 @@ function mapTiles(type){
   if(type==='satellite'){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
-  // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
-  // than raw OSM tiles, with retina support. Falls back gracefully if a tile 404s.
-  return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
+  // Standard basemap: OpenStreetMap's own tiles. These are free and require NO API key,
+  // unlike the CARTO "rastertiles" endpoint which now returns "API KEY REQUIRED" watermarks.
+  // Reliable worldwide and good enough visually; swap in a keyed provider later only if you
+  // want a custom style.
+  return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap',crossOrigin:true});
 }
 function setMapType(type){
   mapType=type;
@@ -3567,7 +3589,7 @@ function toggleMapExpand(containerId,getMap){
     if(!host._origParent){host._origParent=host.parentNode;host._origNext=host.nextSibling;}
     // Move it out to <body>: this guarantees the fixed positioning resolves against the
     // real viewport (no transformed/animated ancestor can shrink it), which is what makes
-    // it cover the screen vertically in portrait as well as landscape.
+    // it cover the whole screen vertically as well as horizontally.
     document.body.appendChild(host);
     document.body.classList.add('body-map-expanded');
     host.classList.add('map-expanded');
@@ -3584,7 +3606,7 @@ function toggleMapExpand(containerId,getMap){
   const phone=document.querySelector('.phone');if(phone)phone.classList.toggle('map-is-expanded',expanding);
   const btn=document.getElementById(containerId+'-expand');if(btn)btn.innerHTML=expanding?'⤡':'⤢';
   const map=getMap&&getMap();
-  // Invalidate twice — right after the reflow and after any layout settles — so Leaflet
+  // Invalidate twice — right after the reflow and after layout settles — so Leaflet
   // re-measures the new full-screen size and tiles fill completely.
   if(map){setTimeout(()=>map.invalidateSize(),60);setTimeout(()=>map.invalidateSize(),350);}
 }
@@ -3602,15 +3624,15 @@ async function recenterMap(getMap,btn){
   if(!loc){toast('Turn on location to recenter.');return;}
   map.flyTo([loc.lat,loc.lng],14,{duration:.6});
 }
-// A branded, pulsing "you are here" marker. If the person turned on "use my profile
-// photo as my map pin", show their photo in the pin instead of the plain teal dot —
-// same pulse halo, just a personalized center. Falls back to the dot when they have no
-// photo set or the toggle is off.
+// A branded, pulsing "you are here" marker (item 5).
 function userLocationMarker(loc){
-  if(me&&me.avatarOnMap&&me.avatar){
+  // If the person designed a fun avatar and opted it in as their map pin, show that
+  // instead of the plain teal dot — same pulse halo, just a personalized center.
+  if(me&&me.avatarOnMap&&me.avatarConfig){
+    const cfg=parseAvatarConfig();
     return L.marker([loc.lat,loc.lng],{icon:L.divIcon({
       className:'',
-      html:'<div class="round-pin"><div class="round-pin-pulse" style="background:rgba(45,212,191,.28)"></div><div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:32px;height:32px;border-radius:50%;overflow:hidden;border:2.5px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.25);background-image:url('+esc(me.avatar)+');background-size:cover;background-position:center"></div></div>',
+      html:'<div class="round-pin"><div class="round-pin-pulse" style="background:rgba(45,212,191,.28)"></div><div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:32px;height:32px;border-radius:50%;overflow:hidden;border:2.5px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.25)">'+funAvatarSVG(cfg,32)+'</div></div>',
       iconSize:[36,36],iconAnchor:[18,18]
     }),zIndexOffset:1000,interactive:false});
   }
@@ -6348,11 +6370,129 @@ async function createRound(){
 }
 
 // ---- Profile ----
+// ---- Fun avatar (item 1): a small config of simple shapes/colors, rendered as SVG
+// client-side. Never stored as an image — just the chosen options — so it's cheap to
+// save and always crisp at any size (profile card, builder preview, map pin).
+const AVATAR_OPTIONS={
+  bg:[{v:'#FFD6E8',n:'Pink'},{v:'#D6EAFF',n:'Blue'},{v:'#D6FFE8',n:'Mint'},{v:'#FFF3D6',n:'Sand'},{v:'#E8D6FF',n:'Lilac'},{v:'#FFE0D6',n:'Peach'}],
+  skin:[{v:'#FCE0C4',n:'Fair'},{v:'#F0C29B',n:'Light'},{v:'#D9A066',n:'Tan'},{v:'#A9714E',n:'Brown'},{v:'#7A4B2E',n:'Deep'}],
+  hair:[{v:'bald',n:'Bald',e:'👨‍🦲'},{v:'short',n:'Short',e:'💇'},{v:'curly',n:'Curly',e:'👩‍🦱'},{v:'long',n:'Long',e:'👱‍♀️'},{v:'bun',n:'Bun',e:'👩‍🦳'},{v:'mohawk',n:'Mohawk',e:'🎸'}],
+  hairColor:[{v:'#2B2222',n:'Black'},{v:'#6B4423',n:'Brown'},{v:'#B5651D',n:'Auburn'},{v:'#E8C15A',n:'Blonde'},{v:'#9B9B9B',n:'Silver'},{v:'#D6336C',n:'Pink'}],
+  eyes:[{v:'round',n:'Round',e:'👀'},{v:'happy',n:'Happy',e:'😊'},{v:'sleepy',n:'Sleepy',e:'😌'},{v:'wink',n:'Wink',e:'😉'},{v:'wide',n:'Wide',e:'😲'}],
+  accessory:[{v:'none',n:'None',e:'🚫'},{v:'glasses',n:'Glasses',e:'👓'},{v:'sunglasses',n:'Sunnies',e:'🕶️'},{v:'hat',n:'Hat',e:'🧢'},{v:'earrings',n:'Earrings',e:'💎'}]
+};
+const AVATAR_CATS=[
+  {key:'bg',label:'Background',type:'color'},
+  {key:'skin',label:'Skin tone',type:'color'},
+  {key:'hair',label:'Hairstyle',type:'chip'},
+  {key:'hairColor',label:'Hair color',type:'color'},
+  {key:'eyes',label:'Eyes',type:'chip'},
+  {key:'accessory',label:'Accessory',type:'chip'}
+];
+const AVATAR_DEFAULT={bg:'#D6EAFF',skin:'#F0C29B',hair:'short',hairColor:'#2B2222',eyes:'happy',accessory:'none'};
+function funAvatarSVG(cfg,size){
+  cfg=Object.assign({},AVATAR_DEFAULT,cfg||{});
+  size=size||120;
+  let hairShape='';
+  switch(cfg.hair){
+    case 'bald': hairShape=''; break;
+    case 'curly': hairShape='<circle cx="34" cy="38" r="14" fill="'+cfg.hairColor+'"/><circle cx="50" cy="26" r="16" fill="'+cfg.hairColor+'"/><circle cx="66" cy="38" r="14" fill="'+cfg.hairColor+'"/><circle cx="50" cy="42" r="18" fill="'+cfg.hairColor+'"/>'; break;
+    case 'long': hairShape='<path d="M22 50 Q19 92 30 102 L30 58 Q50 28 70 58 L70 102 Q81 92 78 50 Q75 18 50 16 Q25 18 22 50Z" fill="'+cfg.hairColor+'"/>'; break;
+    case 'bun': hairShape='<path d="M24 46 Q21 18 50 16 Q79 18 76 46 Q76 32 50 30 Q24 32 24 46Z" fill="'+cfg.hairColor+'"/><circle cx="50" cy="10" r="9" fill="'+cfg.hairColor+'"/>'; break;
+    case 'mohawk': hairShape='<path d="M41 8 Q50 -2 59 8 L55 34 L45 34Z" fill="'+cfg.hairColor+'"/>'; break;
+    default: hairShape='<path d="M22 46 Q19 14 50 12 Q81 14 78 46 Q78 28 50 26 Q22 28 22 46Z" fill="'+cfg.hairColor+'"/>'; // short
+  }
+  let eyesShape='';
+  switch(cfg.eyes){
+    case 'happy': eyesShape='<path d="M38 56 Q42 51 46 56" stroke="#2B2222" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M54 56 Q58 51 62 56" stroke="#2B2222" stroke-width="3" fill="none" stroke-linecap="round"/>'; break;
+    case 'sleepy': eyesShape='<path d="M37 56 L47 56" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/><path d="M53 56 L63 56" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/>'; break;
+    case 'wink': eyesShape='<circle cx="42" cy="55" r="3.2" fill="#2B2222"/><path d="M54 55 L62 55" stroke="#2B2222" stroke-width="3" stroke-linecap="round"/>'; break;
+    case 'wide': eyesShape='<circle cx="42" cy="55" r="4.6" fill="#2B2222"/><circle cx="58" cy="55" r="4.6" fill="#2B2222"/>'; break;
+    default: eyesShape='<circle cx="42" cy="55" r="3.4" fill="#2B2222"/><circle cx="58" cy="55" r="3.4" fill="#2B2222"/>'; // round
+  }
+  let accShape='';
+  switch(cfg.accessory){
+    case 'glasses': accShape='<circle cx="42" cy="55" r="8" fill="none" stroke="#2B2222" stroke-width="2.4"/><circle cx="58" cy="55" r="8" fill="none" stroke="#2B2222" stroke-width="2.4"/><path d="M50 55h0M34 55h-6M66 55h6" stroke="#2B2222" stroke-width="2.4"/>'; break;
+    case 'sunglasses': accShape='<rect x="33" y="49" width="17" height="12" rx="4" fill="#1c1c1c"/><rect x="50" y="49" width="17" height="12" rx="4" fill="#1c1c1c"/><path d="M50 55h0M27 55h-6M73 55h6" stroke="#1c1c1c" stroke-width="2.4"/>'; break;
+    case 'hat': accShape='<path d="M20 34 Q50 6 80 34 L80 39 L20 39Z" fill="#E8544E"/><rect x="18" y="34" width="64" height="7" rx="3.5" fill="#C7413B"/>'; break;
+    case 'earrings': accShape='<circle cx="23" cy="66" r="3" fill="#F5C542"/><circle cx="77" cy="66" r="3" fill="#F5C542"/>'; break;
+    default: accShape='';
+  }
+  return '<svg viewBox="0 0 100 100" width="'+size+'" height="'+size+'" xmlns="http://www.w3.org/2000/svg">'
+    +'<circle cx="50" cy="50" r="50" fill="'+cfg.bg+'"/>'
+    +'<circle cx="50" cy="58" r="30" fill="'+cfg.skin+'"/>'
+    +eyesShape
+    +'<path d="M44 68 Q50 72 56 68" stroke="#2B2222" stroke-width="2.4" fill="none" stroke-linecap="round"/>'
+    +hairShape
+    +accShape
+    +'</svg>';
+}
+function parseAvatarConfig(){
+  let cfg={};
+  if(me&&me.avatarConfig){try{cfg=JSON.parse(me.avatarConfig);}catch(e){}}
+  return Object.assign({},AVATAR_DEFAULT,cfg);
+}
+function renderFunAvatarCard(){
+  const box=document.getElementById('funAvatarCardPreview');
+  if(!box||!me)return;
+  const has=!!(me.avatarConfig&&me.avatarConfig.trim());
+  box.innerHTML=has?funAvatarSVG(parseAvatarConfig(),52):'<span style="font-size:24px">🎨</span>';
+  document.getElementById('funAvatarCardTitle').textContent=has?'🎨 Edit your Fun Avatar':'🎨 Create your Fun Avatar';
+  document.getElementById('funAvatarCardSub').textContent=has?(me.avatarOnMap?'Showing on the map · tap to edit':'Tap to edit, or use it as your map pin'):'Design a fun character & use it as your map pin';
+}
+let avbConfig={},avbOnMapVal=false;
+function openAvatarBuilder(){
+  avbConfig=parseAvatarConfig();
+  avbOnMapVal=!!(me&&me.avatarOnMap);
+  document.getElementById('avbOnMap').checked=avbOnMapVal;
+  document.getElementById('avbRemoveBtn').style.display=(me&&me.avatarConfig)?'block':'none';
+  renderAvbCategories();
+  renderAvbPreview();
+  document.getElementById('avatarBuilderSheet').classList.add('open');
+}
+function closeAvatarBuilder(){document.getElementById('avatarBuilderSheet').classList.remove('open');}
+function renderAvbPreview(){document.getElementById('avbPreview').innerHTML=funAvatarSVG(avbConfig,140);}
+function renderAvbCategories(){
+  const box=document.getElementById('avbCategories');
+  box.innerHTML=AVATAR_CATS.map(cat=>{
+    const opts=AVATAR_OPTIONS[cat.key];
+    const row=opts.map(o=>{
+      const on=avbConfig[cat.key]===o.v;
+      if(cat.type==='color'){
+        return '<div onclick="avbSetOption(\''+cat.key+'\',\''+o.v+'\')" title="'+o.n+'" style="width:34px;height:34px;border-radius:50%;background:'+o.v+';border:'+(on?'3px solid var(--coral)':'2px solid var(--line)')+';cursor:pointer;flex:none"></div>';
+      }
+      return '<div onclick="avbSetOption(\''+cat.key+'\',\''+o.v+'\')" style="padding:8px 12px;border-radius:12px;border:1.5px solid '+(on?'var(--coral)':'var(--line)')+';background:'+(on?'var(--coral)':'var(--card)')+';color:'+(on?'#fff':'var(--night)')+';font-size:12.5px;font-weight:700;white-space:nowrap;cursor:pointer;flex:none">'+o.e+' '+o.n+'</div>';
+    }).join('');
+    return '<div style="margin-bottom:14px"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">'+cat.label+'</div><div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">'+row+'</div></div>';
+  }).join('');
+}
+function avbSetOption(key,val){avbConfig[key]=val;renderAvbCategories();renderAvbPreview();}
+function avbSetOnMap(checked){avbOnMapVal=checked;}
+async function avbSave(){
+  try{
+    const data=await api('/api/me/fun-avatar','POST',{config:JSON.stringify(avbConfig),onMap:avbOnMapVal});
+    me=data.user;
+    closeAvatarBuilder();
+    renderFunAvatarCard();
+    toast('Avatar saved 🎉');
+  }catch(e){toast(e.message);}
+}
+async function avbRemove(){
+  if(!confirm('Remove your fun avatar?'))return;
+  try{
+    const data=await api('/api/me/fun-avatar/remove','POST',{});
+    me=data.user;
+    closeAvatarBuilder();
+    renderFunAvatarCard();
+    toast('Avatar removed');
+  }catch(e){toast(e.message);}
+}
 
 function renderProfile(){
   if(!me)return;
   if(typeof closeAllGroups==='function')closeAllGroups();
   applyAvatar(document.getElementById('profAv'));
+  renderFunAvatarCard();
   // Default the Account group open so the page isn't fully collapsed
   const acc=document.getElementById('grpAccount');
   if(acc&&!acc.dataset.init){acc.classList.add('open');const h=acc.previousElementSibling;if(h&&h.classList.contains('gp-toggle'))h.classList.add('open');acc.dataset.init='1';}
@@ -6466,7 +6606,6 @@ function esProviderChanged(){
   const isManual=v==='__manual__';
   const isWebsite=v==='website';
   document.getElementById('esProviderCustom').style.display=isManual?'block':'none';
-  // API key only for real API providers (not manual, not website scraper).
   document.getElementById('esApiKeyWrap').style.display=(isManual||isWebsite)?'none':'block';
   document.getElementById('esUrlWrap').style.display=isWebsite?'block':'none';
   document.getElementById('esManualNote').style.display=isManual?'block':'none';
@@ -6898,7 +7037,6 @@ function openPublic(){
   else{gSel.value=me.gender||'';gCustom.value='';gCustom.style.display='none';}
   document.getElementById('edShowAge').checked=!!me.showAge;
   document.getElementById('edDob').value=me.dob||'';
-  const pm=document.getElementById('pubAvatarOnMap');if(pm)pm.checked=!!me.avatarOnMap;
   renderEditGallery();
   document.getElementById('publicSheet').classList.add('open');
 }
@@ -6919,12 +7057,8 @@ async function savePublic(){
   }
   if(showAge&&!dob&&!me.dob){toast('Add your date of birth first to show your age.');return;}
   try{
-    const avatarOnMap=document.getElementById('pubAvatarOnMap').checked;
-    const data=await api('/api/me/update','POST',{bio,gallery:editGallery,isPrivate,relationship,gender,showAge,dob,avatarOnMap});
-    me=data.user;closePublic();renderProfile();
-    // If the map is showing, re-render so the pin updates immediately.
-    if(typeof renderRoundsList==='function')renderRoundsList();
-    toast('Public profile updated ✓');
+    const data=await api('/api/me/update','POST',{bio,gallery:editGallery,isPrivate,relationship,gender,showAge,dob});
+    me=data.user;closePublic();renderProfile();toast('Public profile updated ✓');
   }catch(e){toast(e.message);}
 }
 
