@@ -34,9 +34,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@showupp.app';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
-// Secondary "supervisor" password required to permanently delete a report.
-// This is a placeholder gate until deletion is scoped to real supervisor accounts.
-const SUPERVISOR_PASSWORD = process.env.SUPERVISOR_PASSWORD || 'supervisor123';
 
 // --- Database setup (Neon Postgres) ---
 // All data lives in Neon, separate from the app host, so it survives restarts/deploys.
@@ -201,6 +198,9 @@ await db.exec(`
 
   ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS show_age INTEGER DEFAULT 0;
+  -- Friendship Engine ("Vibe Check"): stores the user's questionnaire answers as JSON.
+  -- Shape: {"answers":{"0":[1,3],"1":[0],...},"archetype":"...","updated_at":1234567890}
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS vibe_answers TEXT;
 
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
@@ -1068,6 +1068,13 @@ async function areFriends(a, b) {
 async function isBlocked(a, b) { // has a blocked b OR b blocked a
   return !!(await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(a, b, b, a));
 }
+// Relationship of `me` toward `other`: 'friend' | 'pending' (I sent) | 'incoming' (they sent) | 'none'
+async function friendStatus(me, other) {
+  if (await areFriends(me, other)) return 'friend';
+  if (await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(me, other)) return 'pending';
+  if (await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(other, me)) return 'incoming';
+  return 'none';
+}
 
 // Search users by username or name, excluding yourself and anyone blocked
 // View a user's profile — respects privacy. Friends always see full profile.
@@ -1216,6 +1223,203 @@ app.get('/api/discover-people', requireAuth, async (req, res) => {
   matches.sort((a, b) => b.sharedCount - a.sharedCount || (a.distance ?? 1e9) - (b.distance ?? 1e9));
   res.json({ people: matches });
 });
+
+// ============================================================================
+//  FRIENDSHIP ENGINE — "Vibe Check"
+//  A 25-question multi-select questionnaire that learns how people *socialize*,
+//  not just what they like. Matching is done server-side so scores are
+//  authoritative. The engine returns up to 5 people scoring >= 80% within 25 mi.
+// ============================================================================
+
+// There are 25 questions. Some questions predict social compatibility more
+// strongly than others (energy level, social battery, planner-vs-spontaneous,
+// ideal Saturday), so they carry more base weight. Indices here MUST line up
+// with the VIBE_QUESTIONS array on the client.
+const VIBE_QUESTION_COUNT = 25;
+const VIBE_BASE_WEIGHTS = [
+  3.0, // 0  ideal Saturday
+  3.0, // 1  social battery
+  2.5, // 2  energy at gatherings
+  2.5, // 3  planner vs spontaneous
+  2.0, // 4  group size preference
+  2.0, // 5  how you recharge
+  2.0, // 6  ideal hangout vibe
+  1.5, // 7  conversation style
+  1.5, // 8  humor style
+  1.5, // 9  friday night
+  1.5, // 10 travel style
+  1.5, // 11 how you show you care
+  1.5, // 12 conflict style
+  1.5, // 13 food/eating out vibe
+  1.0, // 14 music setting
+  1.0, // 15 morning vs night
+  1.0, // 16 texting style
+  1.0, // 17 what you bond over
+  1.0, // 18 activity pace
+  1.0, // 19 new experiences appetite
+  1.0, // 20 how you make plans
+  1.0, // 21 what a good friend is
+  1.0, // 22 weekend getaway
+  1.0, // 23 how you unwind after a hard day
+  1.0  // 24 what you're looking for here
+];
+const VIBE_MATCH_THRESHOLD = 80;   // percent
+const VIBE_MAX_RESULTS = 5;
+const VIBE_RADIUS_MI = 25;
+
+function parseVibe(raw) {
+  if (!raw) return null;
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (v && v.answers && typeof v.answers === 'object') return v;
+  } catch (e) {}
+  return null;
+}
+function answeredCount(vibe) {
+  if (!vibe || !vibe.answers) return 0;
+  let n = 0;
+  for (let i = 0; i < VIBE_QUESTION_COUNT; i++) {
+    const a = vibe.answers[i] || vibe.answers[String(i)];
+    if (Array.isArray(a) && a.length) n++;
+  }
+  return n;
+}
+// Per-question overlap using Jaccard (|A∩B| / |A∪B|) on the chosen option sets.
+function questionOverlap(a, b) {
+  const A = new Set(a || []), B = new Set(b || []);
+  if (!A.size && !B.size) return null;      // neither answered → skip
+  if (!A.size || !B.size) return 0;          // one answered, one didn't → no overlap
+  let inter = 0;
+  A.forEach(x => { if (B.has(x)) inter++; });
+  const uni = A.size + B.size - inter;
+  return uni ? inter / uni : 0;
+}
+// The "learning" part: questions where the whole nearby population answers
+// almost identically carry little signal, so we down-weight them; questions
+// that split the population carry more. We compute a normalized entropy per
+// question across the candidate pool and blend it with the base weights.
+function adaptiveWeights(pool) {
+  const w = VIBE_BASE_WEIGHTS.slice();
+  if (pool.length < 4) return w; // not enough data to learn yet — use base weights
+  for (let q = 0; q < VIBE_QUESTION_COUNT; q++) {
+    const counts = {};
+    let total = 0;
+    for (const p of pool) {
+      const a = p.answers[q] || p.answers[String(q)];
+      if (!Array.isArray(a) || !a.length) continue;
+      for (const opt of a) { counts[opt] = (counts[opt] || 0) + 1; total++; }
+    }
+    if (!total) continue;
+    // Shannon entropy of the option distribution, normalized to 0..1.
+    const opts = Object.values(counts);
+    let H = 0;
+    for (const c of opts) { const pr = c / total; H -= pr * Math.log2(pr); }
+    const maxH = opts.length > 1 ? Math.log2(opts.length) : 1;
+    const norm = maxH ? H / maxH : 0;        // 0 = everyone agrees, 1 = evenly split
+    // Blend: keep 60% of base weight, scale the rest by how discriminating it is.
+    w[q] = w[q] * (0.6 + 0.4 * norm);
+  }
+  return w;
+}
+function vibeScore(mine, theirs, weights) {
+  let num = 0, den = 0, sharedQ = 0;
+  for (let q = 0; q < VIBE_QUESTION_COUNT; q++) {
+    const a = mine[q] || mine[String(q)];
+    const b = theirs[q] || theirs[String(q)];
+    const ov = questionOverlap(a, b);
+    if (ov === null) continue;
+    num += weights[q] * ov;
+    den += weights[q];
+    if (ov > 0) sharedQ++;
+  }
+  if (!den) return { score: 0, sharedQ: 0 };
+  return { score: Math.round((num / den) * 100), sharedQ };
+}
+
+// Save / update my questionnaire answers.
+app.post('/api/vibe/save', requireAuth, async (req, res) => {
+  const { answers, archetype } = req.body || {};
+  if (!answers || typeof answers !== 'object') return res.status(400).json({ error: 'No answers provided.' });
+  const clean = {};
+  for (let i = 0; i < VIBE_QUESTION_COUNT; i++) {
+    const a = answers[i] ?? answers[String(i)];
+    if (Array.isArray(a)) {
+      const opts = a.filter(x => Number.isInteger(x) && x >= 0 && x < 20).slice(0, 12);
+      if (opts.length) clean[i] = opts;
+    }
+  }
+  const payload = { answers: clean, archetype: (typeof archetype === 'string' ? archetype.slice(0, 60) : ''), updated_at: now() };
+  await db.prepare('UPDATE users SET vibe_answers = ? WHERE id = ?').run(JSON.stringify(payload), req.user.id);
+  res.json({ ok: true, answeredCount: answeredCount(payload) });
+});
+
+// Fetch my own saved answers (to resume / re-take).
+app.get('/api/vibe/me', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT vibe_answers FROM users WHERE id = ?').get(req.user.id);
+  const vibe = parseVibe(me && me.vibe_answers);
+  res.json({ vibe: vibe || null, answeredCount: answeredCount(vibe), total: VIBE_QUESTION_COUNT });
+});
+
+// The matcher: up to 5 people >= 80% within 25 miles.
+app.get('/api/vibe/matches', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const myVibe = parseVibe(me.vibe_answers);
+  if (!myVibe || answeredCount(myVibe) < 10) {
+    return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(myVibe), total: VIBE_QUESTION_COUNT });
+  }
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const myLat = hasLoc ? lat : me.lat, myLng = hasLoc ? lng : me.lng;
+  const haveLoc = typeof myLat === 'number' && typeof myLng === 'number';
+
+  const others = await db.prepare('SELECT * FROM users WHERE id != ? AND vibe_answers IS NOT NULL AND suspended = 0').all(req.user.id);
+
+  // Build the candidate pool (in range, not blocked, has enough answers) first —
+  // the adaptive weights are learned from this pool.
+  const pool = [];
+  for (const u of others) {
+    const v = parseVibe(u.vibe_answers);
+    if (!v || answeredCount(v) < 10) continue;
+    if (await isBlocked(req.user.id, u.id)) continue;
+    let dist = null;
+    if (haveLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
+      dist = distanceMiles(myLat, myLng, u.lat, u.lng);
+      if (dist > VIBE_RADIUS_MI) continue;
+    } else {
+      // No coordinates for one side — fall back to same-city so we still respect "nearby".
+      const a = (me.city || '').toLowerCase().trim();
+      const b = (u.city || '').toLowerCase().trim();
+      if (!a || !b || a !== b) continue;
+    }
+    pool.push({ u, answers: v.answers, dist, archetype: v.archetype || '' });
+  }
+
+  const weights = adaptiveWeights(pool.concat([{ answers: myVibe.answers }]));
+  const scored = [];
+  for (const c of pool) {
+    const { score, sharedQ } = vibeScore(myVibe.answers, c.answers, weights);
+    if (score < VIBE_MATCH_THRESHOLD) continue;
+    const rel = await friendStatus(req.user.id, c.u.id); // 'friend' | 'pending' | 'incoming' | 'none'
+    scored.push({
+      id: c.u.id, name: c.u.name, username: c.u.username || '', avatar: c.u.avatar || '',
+      city: c.u.city || '', bio: c.u.bio || '', archetype: c.archetype,
+      distance: c.dist, score, sharedQuestions: sharedQ,
+      status: rel,
+      answers: c.answers // sent so the client can show "you both chose…" highlights
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  res.json({
+    ready: true,
+    threshold: VIBE_MATCH_THRESHOLD,
+    radius: VIBE_RADIUS_MI,
+    myAnswers: myVibe.answers,
+    myArchetype: myVibe.archetype || '',
+    poolSize: pool.length,
+    matches: scored.slice(0, VIBE_MAX_RESULTS)
+  });
+});
+
 
 // ---- Moments: temporary 24h profile posts ----
 const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
@@ -2101,20 +2305,6 @@ app.post('/api/admin/reports/:id/close', requireAuth, requireAdmin, async (req, 
   const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Report not found.' });
   await db.prepare('UPDATE reports SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', now(), r.id);
-  res.json({ ok: true });
-});
-
-// Permanently delete a report (admin only) — gated by a secondary "supervisor" password.
-// Eventually this action will be restricted to supervisor accounts; for now any admin
-// may perform it, but only after re-entering the separate supervisor password.
-app.post('/api/admin/reports/:id/delete', requireAuth, requireAdmin, async (req, res) => {
-  const { supervisorPassword } = req.body || {};
-  if (!supervisorPassword || String(supervisorPassword) !== SUPERVISOR_PASSWORD) {
-    return res.status(403).json({ error: 'Incorrect supervisor password.' });
-  }
-  const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Report not found.' });
-  await db.prepare('DELETE FROM reports WHERE id = ?').run(r.id);
   res.json({ ok: true });
 });
 
