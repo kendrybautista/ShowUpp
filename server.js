@@ -2569,7 +2569,7 @@ app.post('/api/admin/rounds/:id/delete', requireAuth, requireAdmin, async (req, 
 // ---- Rounds ----
 app.get('/api/rounds', requireAuth, async (req, res) => {
   const rounds = await db.prepare(`
-    SELECT r.*,
+    SELECT r.*, u.city AS host_city,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
       (r.host_id = ?) AS is_host,
@@ -2578,7 +2578,7 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
       EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='like') AS i_liked,
       EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='love') AS i_loved,
       EXISTS(SELECT 1 FROM saved_rounds sr WHERE sr.round_id = r.id AND sr.user_id = ?) AS i_saved
-    FROM rounds r ORDER BY r.created_at DESC
+    FROM rounds r LEFT JOIN users u ON u.id = r.host_id ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
   // attach up to 4 member avatars for the card preview
   const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
