@@ -3100,14 +3100,12 @@ function matchesTimeFilter(r){
 }
 function filteredRounds(){
   let list=allRounds.slice();
-  // Country filter (matches the filter panel's country picker, item 3): only show
-  // Rounds hosted by someone in the selected country. Rounds with no resolvable
-  // host country are left in rather than silently disappearing.
+  // Country filter (matches the filter panel's country picker, item 3): show only
+  // Rounds hosted by someone in the selected country. This is strict — a Round whose
+  // host country can't be resolved from its host_city is treated as NOT matching, so
+  // picking a country never leaks in Rounds from elsewhere (or with unknown origin).
   if(currentCountryFilter){
-    list=list.filter(r=>{
-      const rc=countryFromCityString(r.host_city||'','');
-      return !rc||rc===currentCountryFilter;
-    });
+    list=list.filter(r=>countryFromCityString(r.host_city||'','')===currentCountryFilter);
   }
   if(currentFilter==='📍 Near me'){
     list=list.filter(r=>r.lat!=null&&r.lng!=null);
