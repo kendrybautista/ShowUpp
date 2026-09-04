@@ -188,6 +188,12 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   html:not(.native-app) .phone .screen>*{width:100%;max-width:720px;margin-left:auto;margin-right:auto}
   /* The bottom nav and any full-bleed overlays should still span the whole window. */
   html:not(.native-app) .phone .nav{max-width:none}
+  /* An expanded map is pinned to the app frame (position:absolute), so keep it centered
+     within the same reading column instead of letting it bleed off the right edge. */
+  html:not(.native-app) .phone .screen>#mapView.map-expanded,
+  html:not(.native-app) .phone .screen>#eventsMapView.map-expanded{
+    max-width:720px;left:50%;right:auto;transform:translateX(-50%)
+  }
 }
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
 .phone[data-theme="dark"] .screen{background:#0B0B16}
@@ -352,7 +358,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
    Fills the phone frame. position:absolute pins to the .screen (which is the app's
    full viewport), above content but below the top status bar and bottom nav. */
 #mapView.map-expanded,#eventsMapView.map-expanded{
-  position:fixed;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
+  position:absolute;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
   margin:0;border-radius:0;border:none;z-index:1200
 }
 /* When any map is expanded, hide the bottom nav so the map truly covers the screen. */
@@ -505,6 +511,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .swipe-wrap .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px}
 .swipe-wrap .circle-card{margin:0;transition:transform .2s;position:relative;z-index:2}
 .swipe-wrap.swiped .circle-card{transform:translateX(-96px)}
+/* swipe-to-delete for admin reports (full-width rows inside the reports pane) */
+.rep-swipe{position:relative;margin:0 0 10px;border-radius:14px;overflow:hidden}
+.rep-swipe .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px;cursor:pointer}
+.rep-swipe .friend-row{margin:0;transition:transform .2s;position:relative;z-index:2;background:var(--card)}
+.rep-swipe.swiped .friend-row{transform:translateX(-96px)}
 .circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
 .circle-card .cc.cc-photo{position:relative;padding:0;overflow:visible}
 .circle-card .cc.cc-photo img{width:100%;height:100%;object-fit:cover;border-radius:16px}
@@ -1979,6 +1990,17 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <button class="btn btn-mango" style="width:100%" onclick="anzConfirmVerdict()">Confirm</button>
       <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:8px" onclick="anzCancelVerdict()">← Back</div>
     </div>
+  </div>
+</div>
+
+<!-- Manager: secondary "supervisor" password prompt for deleting a report -->
+<div class="sheet" id="supPassSheet" onclick="if(event.target===this)closeSupPass()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3>Supervisor password</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Deleting a report is permanent. Enter the supervisor password to confirm.</p>
+    <input id="supPassInput" type="password" autocomplete="off" placeholder="Supervisor password" onkeydown="if(event.key==='Enter')confirmDeleteReport()" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px">
+    <button class="btn" style="width:100%;background:#d94b3b;color:#fff;border:none" onclick="confirmDeleteReport()">🗑️ Delete report</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeSupPass()">Cancel</div>
   </div>
 </div>
 
@@ -3504,8 +3526,9 @@ function mapTiles(type){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
   // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
-  // than raw OSM tiles, with retina support. Falls back gracefully if a tile 404s.
-  return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
+  // than raw OSM tiles. Uses CARTO's free no-key basemap tile hosts (cartodb-basemaps-*)
+  // which don't stamp an "API KEY REQUIRED" watermark on the tiles.
+  return L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
 }
 function setMapType(type){
   mapType=type;
@@ -6653,7 +6676,7 @@ function renderAdminReportsList(){
     const status=r.status||'open';
     const daysLine=r.days_incomplete!=null?('<span style="font-size:11.5px;color:'+(r.days_incomplete>=3?'#d94b3b':'var(--muted)')+';font-weight:700">⏱ '+r.days_incomplete+' day'+(r.days_incomplete===1?'':'s')+' incomplete</span>'):'';
     const verdictBadge=r.verdict?('<span style="font-size:11px;font-weight:700;color:'+(r.verdict==='validated'?'#d94b3b':'var(--muted)')+'">'+(r.verdict==='validated'?'✔ Validated':'✖ Discarded')+'</span>'):'';
-    return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px">'
+    const inner='<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px" ontouchstart="repSwipeStart(event)" ontouchend="repSwipeEnd(event,\''+r.id+'\')">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
       +'<b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b>'
       +'<span style="font-size:11px;font-weight:700;color:'+REPORT_STATUS_COLOR[status]+';white-space:nowrap">● '+REPORT_STATUS_LABEL[status]+'</span>'
@@ -6665,7 +6688,56 @@ function renderAdminReportsList(){
       +'<button class="btn" style="padding:7px 14px;font-size:12.5px;background:var(--coral);color:#fff;border:none" onclick="admOpenAnalyze(\''+r.id+'\')">🔎 Analyze</button>'
       +'</div>'
       +'</div>';
+    return '<div class="rep-swipe" id="repsw-'+r.id+'">'
+      +'<div class="del-bg" onclick="askDeleteReport(\''+r.id+'\')">Delete</div>'
+      +inner
+      +'</div>';
   }).join('');
+}
+// ---- Swipe-to-delete for reports (touch), with click fallback on desktop ----
+let repSwX=null;
+function repSwipeStart(e){repSwX=e.changedTouches[0].clientX;}
+function repSwipeEnd(e,rid){
+  const dx=e.changedTouches[0].clientX-repSwX;
+  const w=document.getElementById('repsw-'+rid);
+  if(!w)return;
+  if(dx<-40)w.classList.add('swiped');       // swipe left → reveal Delete
+  else if(dx>40)w.classList.remove('swiped'); // swipe right → hide it
+}
+// Secondary-password gate before permanently deleting a report.
+let pendingDeleteReportId=null;
+function askDeleteReport(rid){
+  pendingDeleteReportId=rid;
+  const inp=document.getElementById('supPassInput');
+  if(inp)inp.value='';
+  document.getElementById('supPassSheet').classList.add('open');
+  setTimeout(()=>{if(inp)inp.focus();},60);
+}
+function closeSupPass(){
+  document.getElementById('supPassSheet').classList.remove('open');
+  pendingDeleteReportId=null;
+}
+async function confirmDeleteReport(){
+  const inp=document.getElementById('supPassInput');
+  const pw=inp?inp.value:'';
+  if(!pw){toast('Enter the supervisor password');return;}
+  if(!pendingDeleteReportId){closeSupPass();return;}
+  const rid=pendingDeleteReportId;
+  try{
+    await api('/api/admin/reports/'+rid+'/delete','POST',{supervisorPassword:pw});
+    // Remove from local state + counts, then re-render without a full refetch.
+    const idx=adminReportsData.findIndex(x=>x.id===rid);
+    if(idx>-1){
+      const st=adminReportsData[idx].status||'open';
+      adminReportsData.splice(idx,1);
+      if(adminReportsCounts.all>0)adminReportsCounts.all--;
+      if(adminReportsCounts[st]>0)adminReportsCounts[st]--;
+    }
+    closeSupPass();
+    renderAdminReportsMetrics();
+    renderAdminReportsList();
+    toast('Report deleted');
+  }catch(e){toast(e.message);}
 }
 let admAnalyzeReport=null;
 async function admOpenAnalyze(rid){
