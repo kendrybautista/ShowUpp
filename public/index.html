@@ -188,12 +188,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   html:not(.native-app) .phone .screen>*{width:100%;max-width:720px;margin-left:auto;margin-right:auto}
   /* The bottom nav and any full-bleed overlays should still span the whole window. */
   html:not(.native-app) .phone .nav{max-width:none}
-  /* An expanded map is pinned to the app frame (position:absolute), so keep it centered
-     within the same reading column instead of letting it bleed off the right edge. */
-  html:not(.native-app) .phone .screen>#mapView.map-expanded,
-  html:not(.native-app) .phone .screen>#eventsMapView.map-expanded{
-    max-width:720px;left:50%;right:auto;transform:translateX(-50%)
-  }
 }
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
 .phone[data-theme="dark"] .screen{background:#0B0B16}
@@ -358,7 +352,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
    Fills the phone frame. position:absolute pins to the .screen (which is the app's
    full viewport), above content but below the top status bar and bottom nav. */
 #mapView.map-expanded,#eventsMapView.map-expanded{
-  position:absolute;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
+  position:fixed;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
   margin:0;border-radius:0;border:none;z-index:1200
 }
 /* When any map is expanded, hide the bottom nav so the map truly covers the screen. */
@@ -369,6 +363,84 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .round-pin .round-pin-dot{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 3px 10px rgba(40,40,90,.35);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
 .round-pin .round-pin-pulse{position:absolute;left:50%;top:50%;width:36px;height:36px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(255,111,97,.28);animation:pinpulse 2s ease-out infinite}
 @keyframes pinpulse{0%{transform:translate(-50%,-50%) scale(.5);opacity:.8}100%{transform:translate(-50%,-50%) scale(1.6);opacity:0}}
+
+/* ============ Friendship Engine — "Vibe Check" ============ */
+/* Entry card on the You page */
+.vibe-card{margin:10px 18px 4px;border-radius:20px;padding:16px 16px 15px;position:relative;overflow:hidden;cursor:pointer;
+  background:linear-gradient(135deg,#7C83FF 0%,#A78BFA 55%,#FF6F61 130%);color:#fff;box-shadow:0 10px 26px rgba(124,131,255,.35)}
+.vibe-card:active{transform:scale(.99)}
+.vibe-card .vc-spark{position:absolute;right:-18px;top:-18px;font-size:96px;opacity:.18;transform:rotate(12deg);pointer-events:none}
+.vibe-card h3{margin:0 0 3px;font-size:16.5px;font-weight:800;letter-spacing:-.2px}
+.vibe-card p{margin:0;font-size:12.8px;line-height:1.45;color:rgba(255,255,255,.92);max-width:88%}
+.vibe-card .vc-cta{margin-top:12px;display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.22);
+  border:1px solid rgba(255,255,255,.35);backdrop-filter:blur(4px);padding:8px 14px;border-radius:999px;font-size:13px;font-weight:800}
+.vibe-card .vc-progress{margin-top:12px;height:7px;border-radius:99px;background:rgba(255,255,255,.28);overflow:hidden}
+.vibe-card .vc-progress > i{display:block;height:100%;border-radius:99px;background:#fff;transition:width .5s cubic-bezier(.4,0,.2,1)}
+
+/* Quiz screen */
+.vibe-wrap{padding:0 20px 30px;max-width:640px;margin:0 auto;width:100%;box-sizing:border-box}
+.vibe-hero{text-align:center;padding:12px 8px 4px}
+.vibe-hero .vh-emoji{font-size:44px;line-height:1}
+.vibe-hero h1{font-family:'Fraunces',serif;font-size:25px;color:var(--night);font-weight:600;margin:8px 0 4px}
+.vibe-hero p{font-size:13.5px;color:var(--muted);line-height:1.5;margin:0}
+.vibe-steps{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:16px 2px 4px}
+.vibe-steps > i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--coral),var(--mango));transition:width .35s cubic-bezier(.4,0,.2,1)}
+.vibe-stepnum{text-align:center;font-size:12px;font-weight:700;color:var(--muted);margin:6px 0 2px}
+.vibe-q{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:20px 18px;box-shadow:var(--shadow);animation:vibeIn .3s ease}
+@keyframes vibeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.vibe-q h2{font-size:19px;line-height:1.35;color:var(--night);font-weight:800;margin:2px 0 4px;letter-spacing:-.3px}
+.vibe-q .vq-hint{font-size:12.5px;color:var(--muted);margin:0 0 16px}
+.vibe-opts{display:flex;flex-direction:column;gap:10px}
+.vibe-opt{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:15px;border:2px solid var(--line);background:var(--bone);
+  font-size:14.5px;font-weight:600;color:var(--ink);cursor:pointer;transition:transform .08s,border-color .15s,background .15s;-webkit-tap-highlight-color:transparent}
+.vibe-opt:active{transform:scale(.98)}
+.vibe-opt .vo-emoji{font-size:22px;line-height:1;flex:none}
+.vibe-opt .vo-check{margin-left:auto;width:22px;height:22px;border-radius:50%;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;transition:.15s}
+.vibe-opt.on{border-color:var(--coral);background:linear-gradient(135deg,rgba(124,131,255,.12),rgba(255,111,97,.12))}
+.vibe-opt.on .vo-check{background:linear-gradient(135deg,var(--coral),var(--mango));border-color:transparent}
+.vibe-nav{display:flex;gap:10px;margin-top:18px}
+.vibe-nav .btn{flex:1}
+.vibe-back{flex:0 0 auto !important;width:52px;background:var(--card);border:1.5px solid var(--line);color:var(--night);border-radius:14px;font-size:20px;cursor:pointer}
+.vibe-skip{text-align:center;color:var(--muted);font-size:13px;font-weight:600;margin-top:12px;cursor:pointer}
+
+/* Analyzing / loading */
+.vibe-analyze{text-align:center;padding:48px 20px}
+.vibe-analyze .va-ring{width:96px;height:96px;margin:0 auto 20px;border-radius:50%;
+  background:conic-gradient(var(--coral),var(--mango),var(--turq),var(--coral));animation:vibeSpin 1.1s linear infinite;
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 11px),#000 0);mask:radial-gradient(farthest-side,transparent calc(100% - 11px),#000 0)}
+@keyframes vibeSpin{to{transform:rotate(360deg)}}
+.vibe-analyze h2{font-size:18px;color:var(--night);font-weight:800;margin:0 0 6px}
+.vibe-analyze p{font-size:13.5px;color:var(--muted);margin:0}
+
+/* Result: your archetype banner */
+.vibe-archetype{border-radius:22px;padding:22px 18px;text-align:center;color:#fff;margin-bottom:16px;position:relative;overflow:hidden;
+  background:linear-gradient(135deg,#7C83FF,#A78BFA 60%,#FF6F61)}
+.vibe-archetype .va-emoji{font-size:46px;line-height:1}
+.vibe-archetype .va-label{font-family:'Fraunces',serif;font-size:23px;font-weight:600;margin:6px 0 2px}
+.vibe-archetype .va-sub{font-size:12.8px;color:rgba(255,255,255,.92);line-height:1.45}
+
+/* Match card */
+.vibe-match{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--shadow);margin-bottom:14px;animation:vibeIn .35s ease both}
+.vibe-match .vm-top{display:flex;align-items:center;gap:13px}
+.vibe-match .vm-av{width:56px;height:56px;border-radius:18px;object-fit:cover;flex:none;background:linear-gradient(135deg,#EEF0FF,#F1ECFF);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:var(--coral)}
+.vibe-match .vm-name{font-size:16px;font-weight:800;color:var(--night);line-height:1.2}
+.vibe-match .vm-meta{font-size:12.5px;color:var(--muted);margin-top:2px}
+.vibe-ring{position:relative;width:60px;height:60px;flex:none}
+.vibe-ring svg{transform:rotate(-90deg)}
+.vibe-ring .vr-num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;color:var(--night);font-size:16px;line-height:1}
+.vibe-ring .vr-num small{font-size:8px;color:var(--muted);font-weight:700;letter-spacing:.3px}
+.vibe-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.vibe-chip{background:linear-gradient(135deg,rgba(124,131,255,.13),rgba(255,111,97,.13));border:1px solid var(--line);
+  border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;color:var(--night)}
+.vibe-match .vm-actions{display:flex;gap:9px;margin-top:14px}
+.vibe-match .vm-actions .btn{flex:1;padding:10px;font-size:13.5px}
+.vibe-btn-ghost{flex:0 0 auto !important;background:var(--card);border:1.5px solid var(--line);color:var(--night);border-radius:13px;padding:10px 14px;font-size:13.5px;font-weight:700;cursor:pointer}
+.vibe-empty{text-align:center;padding:40px 24px;color:var(--muted)}
+.vibe-empty .ve-emoji{font-size:44px}
+.vibe-empty h2{font-size:17px;color:var(--night);font-weight:800;margin:12px 0 6px}
+.vibe-empty p{font-size:13.5px;line-height:1.5;margin:0 0 16px}
+.phone[data-theme="dark"] .vibe-opt{background:#20202e}
+.phone[data-theme="dark"] .vibe-match .vm-av{background:#20202e}
 .su-cluster{background:transparent}
 .su-cluster div{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;font-family:'Instrument Sans';background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 4px 14px rgba(40,40,90,.35)}
 .su-cluster.su-cluster-lg div{width:48px;height:48px;font-size:15px}
@@ -511,11 +583,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .swipe-wrap .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px}
 .swipe-wrap .circle-card{margin:0;transition:transform .2s;position:relative;z-index:2}
 .swipe-wrap.swiped .circle-card{transform:translateX(-96px)}
-/* swipe-to-delete for admin reports (full-width rows inside the reports pane) */
-.rep-swipe{position:relative;margin:0 0 10px;border-radius:14px;overflow:hidden}
-.rep-swipe .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px;cursor:pointer}
-.rep-swipe .friend-row{margin:0;transition:transform .2s;position:relative;z-index:2;background:var(--card)}
-.rep-swipe.swiped .friend-row{transform:translateX(-96px)}
 .circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
 .circle-card .cc.cc-photo{position:relative;padding:0;overflow:visible}
 .circle-card .cc.cc-photo img{width:100%;height:100%;object-fit:cover;border-radius:16px}
@@ -1270,6 +1337,14 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="onAvatarChosen(event)">
     <input type="file" id="mediaInput" accept="image/*,video/*" style="display:none" onchange="onMediaChosen(event)">
     <div class="prof-tags" id="profTags"></div>
+    <!-- Friendship Engine entry -->
+    <div class="vibe-card" id="vibeEntryCard" onclick="enterVibe()">
+      <div class="vc-spark">✨</div>
+      <h3 id="vibeCardTitle">Find your people ✨</h3>
+      <p id="vibeCardSub">Take the Vibe Check — 25 quick taps — and we'll find up to 5 people nearby who socialize like you do.</p>
+      <div class="vc-cta" id="vibeCardCta">Start the Vibe Check →</div>
+      <div class="vc-progress" id="vibeCardProgWrap" style="display:none"><i id="vibeCardProg" style="width:0%"></i></div>
+    </div>
     <div id="profMoments" style="margin:8px 18px 4px;background:linear-gradient(135deg,#EEF0FF,#F1ECFF);border:1px solid var(--line);border-radius:16px;padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px">
         <span style="font-size:13px;font-weight:700;color:var(--night)">☀️ My Daily Updates! <span style="font-weight:400;color:var(--muted);font-size:11px">· friends only · vanish in 24h</span></span>
@@ -1341,7 +1416,23 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="nav" data-nav></div>
 </div>
 
-<div class="sheet" id="editSheet" onclick="if(event.target===this)closeEdit()">
+<!-- ============ Friendship Engine — "Vibe Check" ============ -->
+<div class="screen" id="s-vibe">
+  <div class="statusbar"></div>
+  <div class="fixed-head">
+    <div style="padding:4px 22px 0;display:flex;justify-content:space-between;align-items:center">
+      <button class="back" style="position:static;background:var(--card);box-shadow:var(--shadow)" onclick="exitVibe()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div id="vibeRetake" style="display:none;font-size:13px;font-weight:700;color:var(--coral);cursor:pointer" onclick="startVibeQuiz(true)">↺ Retake</div>
+    </div>
+  </div>
+  <div class="scroll">
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="vibeGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7C83FF"/><stop offset="55%" stop-color="#A78BFA"/><stop offset="100%" stop-color="#FF6F61"/></linearGradient></defs></svg>
+    <div class="vibe-wrap" id="vibeBody"></div>
+  </div>
+  <div class="nav" data-nav></div>
+</div>
+
+
   <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
     <div class="grabber"></div>
     <h3 data-i18n="edit_profile">Edit profile</h3>
@@ -1990,17 +2081,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <button class="btn btn-mango" style="width:100%" onclick="anzConfirmVerdict()">Confirm</button>
       <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:8px" onclick="anzCancelVerdict()">← Back</div>
     </div>
-  </div>
-</div>
-
-<!-- Manager: secondary "supervisor" password prompt for deleting a report -->
-<div class="sheet" id="supPassSheet" onclick="if(event.target===this)closeSupPass()">
-  <div class="sheet-inner"><div class="grabber"></div>
-    <h3>Supervisor password</h3>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Deleting a report is permanent. Enter the supervisor password to confirm.</p>
-    <input id="supPassInput" type="password" autocomplete="off" placeholder="Supervisor password" onkeydown="if(event.key==='Enter')confirmDeleteReport()" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px">
-    <button class="btn" style="width:100%;background:#d94b3b;color:#fff;border:none" onclick="confirmDeleteReport()">🗑️ Delete report</button>
-    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeSupPass()">Cancel</div>
   </div>
 </div>
 
@@ -3526,9 +3606,8 @@ function mapTiles(type){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
   // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
-  // than raw OSM tiles. Uses CARTO's free no-key basemap tile hosts (cartodb-basemaps-*)
-  // which don't stamp an "API KEY REQUIRED" watermark on the tiles.
-  return L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
+  // than raw OSM tiles, with retina support. Falls back gracefully if a tile 404s.
+  return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
 }
 function setMapType(type){
   mapType=type;
@@ -6377,10 +6456,313 @@ function renderProfile(){
   }else{galWrap.style.display='none';}
   document.getElementById('adminEntry').style.display=me.isAdmin?'flex':'none';
   loadMyMoments();
+  refreshVibeCard();
 }
 
-// ---- Admin / Manager ----
-function openAdmin(){if(!me||!me.isAdmin){toast('Not authorized');return;}switchAdminTab('users');go('s-admin');}
+// ============================================================================
+//  FRIENDSHIP ENGINE — "Vibe Check"  (client)
+//  25 multi-select questions. Answers are stored server-side; matching (>=80%
+//  within 25mi) is computed server-side too. This file owns the questions,
+//  the quiz flow, the archetype flavor, and the reveal.
+// ============================================================================
+
+// Each question: prompt, hint, and options [emoji, label]. Multiple answers allowed.
+// The ORDER of questions here must match VIBE_BASE_WEIGHTS on the server.
+const VIBE_QUESTIONS=[
+  {q:"What does your ideal Saturday look like?",hint:"Pick everything that feels like *you*.",opts:[["🏠","Chill at home"],["☕","Coffee + conversation"],["🍻","Somewhere lively"],["🏕️","Adventure / outdoors"],["🎮","Games"],["🎨","Something creative"],["🏃","Something active"]]},
+  {q:"How's your social battery?",hint:"Be honest — there's no wrong answer.",opts:[["🔋","Endless — the more the merrier"],["⚡","Steady, then I need a recharge"],["🪫","Small doses, then I'm done"],["🎚️","Totally depends on the day"]]},
+  {q:"At a gathering, you're usually…",hint:"",opts:[["🎤","In the middle of it all"],["💬","Deep in one good conversation"],["👀","Happily people-watching"],["🧑‍🍳","Helping the host / doing a task"],["🚪","First to arrive, first to leave"]]},
+  {q:"Planner or spontaneous?",hint:"",opts:[["🗓️","Give me a plan and a time"],["🎲","Surprise me — let's just go"],["🧭","Loose plan, room to wander"],["⏰","Punctual to a fault"]]},
+  {q:"Your happy group size is…",hint:"",opts:[["👤","1-on-1"],["👥","3–4 close people"],["👨‍👩‍👧‍👦","A lively bunch"],["🎉","The bigger the better"]]},
+  {q:"You recharge by…",hint:"",opts:[["😌","Quiet alone time"],["🫂","Being around people I love"],["🌲","Getting outside"],["📚","A hobby or a project"],["😴","Sleep. Glorious sleep."]]},
+  {q:"Ideal hangout vibe?",hint:"",opts:[["🛋️","Cozy & low-key"],["🎢","High-energy & fun"],["🍜","Good food, good talk"],["🎯","Doing an activity together"],["🌌","Deep late-night chats"]]},
+  {q:"Your conversation style?",hint:"",opts:[["🤔","Big ideas & what-ifs"],["😂","Jokes & banter"],["❤️","Feelings & real talk"],["📰","News & what's happening"],["🎬","Stories & recommendations"]]},
+  {q:"Your sense of humor is…",hint:"",opts:[["🤪","Silly & goofy"],["🙃","Dry & sarcastic"],["🧠","Witty & clever"],["🫶","Wholesome"],["💀","Chaotic / meme-brained"]]},
+  {q:"Friday night, realistically…",hint:"",opts:[["🛌","In bed early, no regrets"],["🍿","Movie / show at home"],["🍸","Out with friends"],["🎨","Doing my thing / a hobby"],["🎲","Whatever comes up"]]},
+  {q:"Your travel style?",hint:"",opts:[["🗺️","Every hour planned"],["🎒","Backpack & wing it"],["🏖️","Relax & do nothing"],["🍽️","Follow the food"],["🏛️","Culture & history"],["⛰️","Nature & hikes"]]},
+  {q:"You show you care by…",hint:"",opts:[["💬","Checking in & texting"],["🎁","Little gifts / treats"],["🤝","Showing up when it matters"],["👂","Listening deeply"],["🍳","Doing things for people"]]},
+  {q:"When there's tension, you…",hint:"",opts:[["🗣️","Talk it out right away"],["⏳","Cool off, then talk"],["🕊️","Keep the peace"],["📝","Process it privately first"]]},
+  {q:"Eating-out vibe?",hint:"",opts:[["🌮","Cheap eats & holes-in-the-wall"],["🍣","Try something new every time"],["🍕","My usual comfort spot"],["🥗","Healthy & fresh"],["🍰","Dessert is the main event"]]},
+  {q:"Your music setting?",hint:"",opts:[["🎧","Solo with headphones"],["🎶","Background for hanging out"],["🎤","Concerts & live shows"],["💃","Dancing"],["🪕","Making it myself"]]},
+  {q:"Morning person or night owl?",hint:"",opts:[["🌅","Up with the sun"],["🌤️","Mid-morning is my sweet spot"],["🌆","Afternoon peak"],["🌙","Night owl all the way"]]},
+  {q:"Your texting style?",hint:"",opts:[["⚡","Instant replier"],["📖","Long thoughtful paragraphs"],["🎙️","Voice notes"],["🐢","I'll reply… eventually"],["😹","Mostly memes & gifs"]]},
+  {q:"You bond fastest over…",hint:"",opts:[["🍿","Shared taste in shows/music"],["🏔️","Doing something new together"],["😩","Complaining about the same stuff"],["🎯","A shared goal or hobby"],["🤣","Laughing until it hurts"]]},
+  {q:"Your pace on a day out?",hint:"",opts:[["🐢","Slow & meandering"],["🚶","Steady & easy"],["🏃","Packed & fast"],["🔀","Mix it up"]]},
+  {q:"Appetite for new experiences?",hint:"",opts:[["🚀","Always up for anything"],["🙂","Open, with a little notice"],["🧩","New things in familiar settings"],["🏡","I love my routines"]]},
+  {q:"How do plans usually happen for you?",hint:"",opts:[["📢","I'm the organizer"],["🙋","I say yes when invited"],["🔗","I connect people together"],["🌊","I go with the flow"]]},
+  {q:"A good friend, to you, is someone who…",hint:"",opts:[["🎯","Shows up consistently"],["🎈","Makes everything more fun"],["🛡️","Has your back, no matter what"],["🌱","Grows with you"],["🗣️","Keeps it real with you"]]},
+  {q:"Dream weekend getaway?",hint:"",opts:[["🏔️","Mountains & trails"],["🏝️","Beach & sun"],["🏙️","City & culture"],["🏕️","Camping off-grid"],["🛎️","Cozy cabin / staycation"]]},
+  {q:"After a hard day, you unwind by…",hint:"",opts:[["🚶","Moving my body"],["📺","Zoning out to a screen"],["🫂","Venting to someone"],["🛁","Quiet self-care"],["🎮","Losing myself in a hobby"]]},
+  {q:"What are you hoping to find here?",hint:"This helps us match your intentions too.",opts:[["👥","A close-knit friend group"],["🧑‍🤝‍🧑","One or two solid friends"],["🎟️","People to do activities with"],["🌍","New perspectives & fresh faces"],["🤝","A mix of everything"]]}
+];
+
+// Archetype flavor: derived from the shape of the answers so the reveal feels personal.
+const VIBE_ARCHETYPES=[
+  {key:'cozy_adventurer',emoji:'🏕️',label:'The Cozy Adventurer',sub:'Equal parts blanket-fort and mountain-trail. You crave adventure but love a soft landing.'},
+  {key:'social_spark',emoji:'🎉',label:'The Social Spark',sub:'You light up a room and bring people together. Big energy, bigger heart.'},
+  {key:'deep_diver',emoji:'🌌',label:'The Deep Diver',sub:'One real conversation beats a hundred small ones. You go straight for the good stuff.'},
+  {key:'steady_anchor',emoji:'🪷',label:'The Steady Anchor',sub:'Calm, consistent, dependable. You\'re the friend everyone can count on.'},
+  {key:'playful_wanderer',emoji:'🎈',label:'The Playful Wanderer',sub:'Spontaneous and fun-first. Wherever you go, a good time follows.'},
+  {key:'creative_soul',emoji:'🎨',label:'The Creative Soul',sub:'You find meaning in making things and sharing them with your people.'},
+  {key:'quiet_glow',emoji:'🌙',label:'The Quiet Glow',sub:'Small circles, deep roots. You give the best low-key hangs in the game.'}
+];
+
+let vibeState={step:0,answers:{},total:VIBE_QUESTIONS.length,mode:'view'};
+
+function refreshVibeCard(){
+  // Reflect saved progress on the You-page card.
+  api('/api/vibe/me').then(d=>{
+    const done=d.answeredCount||0, total=d.total||VIBE_QUESTIONS.length;
+    const title=document.getElementById('vibeCardTitle');
+    const sub=document.getElementById('vibeCardSub');
+    const cta=document.getElementById('vibeCardCta');
+    const pw=document.getElementById('vibeCardProgWrap');
+    const pg=document.getElementById('vibeCardProg');
+    if(!title)return;
+    if(done>=10){
+      title.textContent='Your matches are ready ✨';
+      sub.textContent="You've done the Vibe Check. Tap to see people nearby who socialize like you.";
+      cta.textContent='See my matches →';
+      pw.style.display='none';
+    }else if(done>0){
+      title.textContent='Finish your Vibe Check';
+      sub.textContent="You're partway there. A few more taps and we'll find your people.";
+      cta.textContent='Continue →';
+      pw.style.display='block';pg.style.width=Math.round(done/total*100)+'%';
+    }else{
+      title.textContent='Find your people ✨';
+      sub.textContent="Take the Vibe Check — 25 quick taps — and we'll find up to 5 people nearby who socialize like you do.";
+      cta.textContent='Start the Vibe Check →';
+      pw.style.display='none';
+    }
+  }).catch(()=>{});
+}
+
+async function enterVibe(){
+  go('s-vibe');
+  document.getElementById('vibeBody').innerHTML='<div class="vibe-analyze"><div class="va-ring"></div><h2>Loading…</h2></div>';
+  try{
+    const d=await api('/api/vibe/me');
+    vibeState.answers=(d.vibe&&d.vibe.answers)?normalizeAnswers(d.vibe.answers):{};
+    if((d.answeredCount||0)>=10){
+      document.getElementById('vibeRetake').style.display='block';
+      showVibeMatches();
+    }else{
+      document.getElementById('vibeRetake').style.display='none';
+      startVibeQuiz(false);
+    }
+  }catch(e){ startVibeQuiz(false); }
+}
+function exitVibe(){ document.getElementById('vibeRetake').style.display='none'; go('s-profile'); }
+
+function normalizeAnswers(a){
+  const out={};
+  for(let i=0;i<VIBE_QUESTIONS.length;i++){const v=a[i]??a[String(i)];if(Array.isArray(v))out[i]=v.slice();}
+  return out;
+}
+
+function startVibeQuiz(fromScratch){
+  document.getElementById('vibeRetake').style.display='none';
+  if(fromScratch)vibeState.answers={};
+  // resume at first unanswered question, else start at 0
+  let start=0;
+  for(let i=0;i<VIBE_QUESTIONS.length;i++){ if(!(vibeState.answers[i]&&vibeState.answers[i].length)){start=i;break;} start=i+1; }
+  vibeState.step=Math.min(start,VIBE_QUESTIONS.length-1);
+  vibeState.mode='quiz';
+  document.querySelector('#s-vibe .scroll').scrollTop=0;
+  renderVibeQuestion();
+}
+
+function renderVibeQuestion(){
+  const i=vibeState.step, Q=VIBE_QUESTIONS[i];
+  const chosen=new Set(vibeState.answers[i]||[]);
+  const total=VIBE_QUESTIONS.length;
+  const pct=Math.round((i)/total*100);
+  const optsHtml=Q.opts.map((o,oi)=>{
+    const on=chosen.has(oi)?' on':'';
+    return '<div class="vibe-opt'+on+'" onclick="toggleVibeOpt('+oi+')"><span class="vo-emoji">'+o[0]+'</span><span>'+o[1]+'</span><span class="vo-check">'+(on?'✓':'')+'</span></div>';
+  }).join('');
+  const isLast=i===total-1;
+  const hint=Q.hint||'You can pick more than one.';
+  document.getElementById('vibeBody').innerHTML=
+    '<div class="vibe-hero" style="padding-bottom:0"><div class="vibe-steps"><i style="width:'+pct+'%"></i></div>'
+    +'<div class="vibe-stepnum">Question '+(i+1)+' of '+total+'</div></div>'
+    +'<div class="vibe-q" key="'+i+'">'
+      +'<h2>'+Q.q+'</h2><p class="vq-hint">'+hint+'</p>'
+      +'<div class="vibe-opts">'+optsHtml+'</div>'
+      +'<div class="vibe-nav">'
+        +(i>0?'<button class="vibe-back" onclick="vibePrev()">‹</button>':'')
+        +'<button class="btn btn-mango" onclick="vibeNext()">'+(isLast?'See my matches ✨':'Next')+'</button>'
+      +'</div>'
+      +(!isLast?'<div class="vibe-skip" onclick="vibeNext(true)">Skip this one</div>':'')
+    +'</div>';
+}
+function toggleVibeOpt(oi){
+  const i=vibeState.step;
+  const cur=new Set(vibeState.answers[i]||[]);
+  if(cur.has(oi))cur.delete(oi);else cur.add(oi);
+  vibeState.answers[i]=[...cur];
+  renderVibeQuestion();
+}
+function vibePrev(){ if(vibeState.step>0){vibeState.step--;renderVibeQuestion();document.querySelector('#s-vibe .scroll').scrollTop=0;} }
+async function vibeNext(skip){
+  const i=vibeState.step;
+  if(!skip && !(vibeState.answers[i]&&vibeState.answers[i].length)){ toast('Pick at least one — or tap Skip'); return; }
+  await saveVibeProgress();
+  if(vibeState.step<VIBE_QUESTIONS.length-1){ vibeState.step++;renderVibeQuestion();document.querySelector('#s-vibe .scroll').scrollTop=0; }
+  else { finishVibeQuiz(); }
+}
+async function saveVibeProgress(){
+  const archetype=computeArchetype(vibeState.answers);
+  try{ await api('/api/vibe/save','POST',{answers:vibeState.answers,archetype:archetype.key}); }catch(e){}
+}
+
+// Derive an archetype from the answers (pure flavor for the reveal).
+function computeArchetype(ans){
+  const has=(q,opt)=>ans[q]&&ans[q].includes(opt);
+  const score={};VIBE_ARCHETYPES.forEach(a=>score[a.key]=0);
+  // Q0 ideal saturday
+  if(has(0,0))score.quiet_glow+=2;
+  if(has(0,3))score.cozy_adventurer+=3;
+  if(has(0,2))score.social_spark+=2;
+  if(has(0,5))score.creative_soul+=3;
+  if(has(0,6))score.playful_wanderer+=1;
+  // Q1 social battery
+  if(has(1,0))score.social_spark+=3;
+  if(has(1,2))score.quiet_glow+=3;
+  // Q2 at a gathering
+  if(has(2,0))score.social_spark+=2;
+  if(has(2,1))score.deep_diver+=2;
+  if(has(2,2))score.quiet_glow+=2;
+  // Q3 planner vs spontaneous
+  if(has(3,0))score.steady_anchor+=2;
+  if(has(3,1))score.playful_wanderer+=3;
+  // Q6 hangout vibe
+  if(has(6,0))score.quiet_glow+=2;
+  if(has(6,1))score.playful_wanderer+=2;
+  if(has(6,4))score.deep_diver+=3;
+  // Q7 conversation
+  if(has(7,0))score.deep_diver+=2;
+  if(has(7,2))score.deep_diver+=2;
+  // Q11 show you care -> steady
+  if(has(11,2))score.steady_anchor+=3;
+  if(has(11,3))score.deep_diver+=1;
+  // Q5 recharge
+  if(has(5,0))score.quiet_glow+=2;
+  if(has(5,3))score.creative_soul+=2;
+  if(has(5,2))score.cozy_adventurer+=1;
+  // creative signals
+  if(has(14,4))score.creative_soul+=2;
+  if(has(23,4))score.creative_soul+=1;
+  // adventure signals
+  if(has(22,0))score.cozy_adventurer+=1;
+  if(has(22,3))score.cozy_adventurer+=1;
+  if(has(19,0))score.playful_wanderer+=2;
+  let best=VIBE_ARCHETYPES[0],bv=-1;
+  for(const a of VIBE_ARCHETYPES){ if(score[a.key]>bv){bv=score[a.key];best=a;} }
+  return best;
+}
+
+async function finishVibeQuiz(){
+  await saveVibeProgress();
+  vibeState.mode='view';
+  // fun little analyzing beat
+  const body=document.getElementById('vibeBody');
+  const msgs=['Reading your vibe…','Finding your people…','Scoring the overlap…','Almost there…'];
+  let mi=0;
+  body.innerHTML='<div class="vibe-analyze"><div class="va-ring"></div><h2 id="vaMsg">'+msgs[0]+'</h2><p>Matching you with people nearby</p></div>';
+  const tick=setInterval(()=>{mi++;const el=document.getElementById('vaMsg');if(el&&msgs[mi])el.textContent=msgs[mi];},700);
+  // ensure location saved for accurate distance
+  try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} if(userLoc)await api('/api/me/location','POST',{lat:userLoc.lat,lng:userLoc.lng}); }catch(e){}
+  setTimeout(()=>{clearInterval(tick);showVibeMatches();},1600);
+  document.getElementById('vibeRetake').style.display='block';
+}
+
+async function showVibeMatches(){
+  vibeState.mode='view';
+  document.getElementById('vibeRetake').style.display='block';
+  const body=document.getElementById('vibeBody');
+  body.innerHTML='<div class="vibe-analyze"><div class="va-ring"></div><h2>Finding your people…</h2></div>';
+  let q='/api/vibe/matches';
+  try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} }catch(e){}
+  if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
+  let d;
+  try{ d=await api(q); }catch(e){ body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">😕</div><h2>Something went wrong</h2><p>'+esc(e.message)+'</p><button class="btn btn-mango" onclick="showVibeMatches()">Try again</button></div>'; return; }
+  if(!d.ready){
+    body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">📝</div><h2>Let\'s finish your Vibe Check</h2><p>Answer a few more questions ('+(d.answeredCount||0)+'/'+(d.total||25)+') so we can match you well.</p><button class="btn btn-mango" onclick="startVibeQuiz(false)">Continue the quiz</button></div>';
+    return;
+  }
+  const arch=VIBE_ARCHETYPES.find(a=>a.key===d.myArchetype)||computeArchetype(d.myAnswers||{});
+  let html='<div class="vibe-archetype"><div class="va-emoji">'+arch.emoji+'</div><div class="va-label">'+arch.label+'</div><div class="va-sub">'+arch.sub+'</div></div>';
+  if(!d.matches.length){
+    html+='<div class="vibe-empty"><div class="ve-emoji">🌱</div><h2>No 80%+ matches within 25 miles… yet</h2><p>Your people may not have taken the Vibe Check yet. We\'ll keep looking as more folks nearby join in. Invite a friend to grow the pool!</p>'
+      +'<button class="btn btn-mango" onclick="go(\'s-home\')">Explore Rounds meanwhile</button></div>';
+    body.innerHTML=html;
+    return;
+  }
+  html+='<div style="text-align:center;font-size:13.5px;color:var(--muted);margin:2px 2px 14px">✨ '+d.matches.length+' '+(d.matches.length===1?'person':'people')+' nearby vibe like you (80%+ match, within 25 mi)</div>';
+  html+=d.matches.map((m,idx)=>vibeMatchCardHTML(m,d.myAnswers,idx)).join('');
+  html+='<div class="vibe-skip" style="margin-top:6px" onclick="startVibeQuiz(true)">↺ Retake the Vibe Check</div>';
+  body.innerHTML=html;
+  document.querySelector('#s-vibe .scroll').scrollTop=0;
+  // animate the score rings
+  requestAnimationFrame(()=>{document.querySelectorAll('#s-vibe .vr-fg').forEach(el=>{el.style.strokeDashoffset=el.dataset.off;});});
+}
+
+function vibeMatchCardHTML(m,myAns,idx){
+  const av=m.avatar?'<img class="vm-av" src="'+esc(m.avatar)+'">':'<div class="vm-av">'+esc((m.name||'?').charAt(0).toUpperCase())+'</div>';
+  const C=2*Math.PI*26; // r=26
+  const off=C*(1-Math.min(100,m.score)/100);
+  const distTxt=(m.distance!=null)?('· '+(milesLabel(m.distance)||(Math.round(m.distance)+' mi'))+' away'):'· nearby';
+  const ring='<div class="vibe-ring"><svg width="60" height="60" viewBox="0 0 60 60">'
+    +'<circle cx="30" cy="30" r="26" fill="none" stroke="var(--line)" stroke-width="7"/>'
+    +'<circle class="vr-fg" cx="30" cy="30" r="26" fill="none" stroke="url(#vibeGrad)" stroke-width="7" stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+C.toFixed(1)+'" data-off="'+off.toFixed(1)+'" style="transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1)"/>'
+    +'</svg><div class="vr-num">'+m.score+'<small>MATCH</small></div></div>';
+  // shared-answer highlights: questions where we overlap, show one option we both picked
+  const chips=vibeSharedChips(myAns,m.answers,3);
+  const chipsHtml=chips.length?('<div class="vibe-chips">'+chips.map(c=>'<span class="vibe-chip">'+c+'</span>').join('')+'</div>'):'';
+  let actions;
+  if(m.status==='friend'){ actions='<div class="vm-actions"><button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Already friends</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
+  else if(m.status==='pending'){ actions='<div class="vm-actions"><button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
+  else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeAddFriend(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
+  else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeAddFriend(\''+m.id+'\',this)">＋ Send request</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeSkip(this)">Skip</button></div>'; }
+  const archLine=m.archetype?('<div class="vm-meta">'+ (VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.emoji||'✨') +' '+(VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.label||'')+'</div>'):'';
+  return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
+    +'<div class="vm-top">'+av
+      +'<div style="flex:1;min-width:0"><div class="vm-name">'+esc(m.name||'Someone')+(m.username?' <span style="color:var(--muted);font-weight:600;font-size:13px">@'+esc(m.username)+'</span>':'')+'</div>'
+      +'<div class="vm-meta">📍 '+esc(m.city||'nearby')+' '+distTxt+'</div>'+archLine+'</div>'
+      +ring+'</div>'
+    +chipsHtml+actions+'</div>';
+}
+
+// Build up to n "you both chose X" chips from overlapping answers.
+function vibeSharedChips(mine,theirs,n){
+  if(!mine||!theirs)return [];
+  const chips=[];
+  for(let q=0;q<VIBE_QUESTIONS.length && chips.length<n;q++){
+    const a=mine[q]||mine[String(q)], b=theirs[q]||theirs[String(q)];
+    if(!Array.isArray(a)||!Array.isArray(b))continue;
+    const shared=a.filter(x=>b.includes(x));
+    if(shared.length){ const opt=VIBE_QUESTIONS[q].opts[shared[0]]; if(opt)chips.push(opt[0]+' '+opt[1]); }
+  }
+  return chips;
+}
+
+async function vibeAddFriend(uid,btn){
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  try{
+    const r=await api('/api/friends/request','POST',{toId:uid});
+    if(btn){
+      const wrap=btn.closest('.vm-actions');
+      if(r.status==='friend'){ wrap.innerHTML='<button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Friends now 🎉</button>'; toast('You\'re friends! 🎉'); }
+      else { wrap.innerHTML='<button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button>'; toast('Friend request sent ✨'); }
+    }
+  }catch(e){ if(btn){btn.disabled=false;btn.textContent='＋ Send request';} toast(e.message); }
+}
+function vibeSkip(btn){ const card=btn.closest('.vibe-match'); if(card){card.style.transition='.25s';card.style.opacity='0';card.style.transform='translateX(30px)';setTimeout(()=>card.remove(),250);} }
+function openPublicProfile(uid){ if(typeof viewProfile==='function')viewProfile(uid); else toast('Opening profile…'); }
+
+
 function switchAdminTab(which){
   document.getElementById('adm-tab-users').classList.toggle('on',which==='users');
   document.getElementById('adm-tab-rounds').classList.toggle('on',which==='rounds');
@@ -6676,7 +7058,7 @@ function renderAdminReportsList(){
     const status=r.status||'open';
     const daysLine=r.days_incomplete!=null?('<span style="font-size:11.5px;color:'+(r.days_incomplete>=3?'#d94b3b':'var(--muted)')+';font-weight:700">⏱ '+r.days_incomplete+' day'+(r.days_incomplete===1?'':'s')+' incomplete</span>'):'';
     const verdictBadge=r.verdict?('<span style="font-size:11px;font-weight:700;color:'+(r.verdict==='validated'?'#d94b3b':'var(--muted)')+'">'+(r.verdict==='validated'?'✔ Validated':'✖ Discarded')+'</span>'):'';
-    const inner='<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px" ontouchstart="repSwipeStart(event)" ontouchend="repSwipeEnd(event,\''+r.id+'\')">'
+    return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
       +'<b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b>'
       +'<span style="font-size:11px;font-weight:700;color:'+REPORT_STATUS_COLOR[status]+';white-space:nowrap">● '+REPORT_STATUS_LABEL[status]+'</span>'
@@ -6688,56 +7070,7 @@ function renderAdminReportsList(){
       +'<button class="btn" style="padding:7px 14px;font-size:12.5px;background:var(--coral);color:#fff;border:none" onclick="admOpenAnalyze(\''+r.id+'\')">🔎 Analyze</button>'
       +'</div>'
       +'</div>';
-    return '<div class="rep-swipe" id="repsw-'+r.id+'">'
-      +'<div class="del-bg" onclick="askDeleteReport(\''+r.id+'\')">Delete</div>'
-      +inner
-      +'</div>';
   }).join('');
-}
-// ---- Swipe-to-delete for reports (touch), with click fallback on desktop ----
-let repSwX=null;
-function repSwipeStart(e){repSwX=e.changedTouches[0].clientX;}
-function repSwipeEnd(e,rid){
-  const dx=e.changedTouches[0].clientX-repSwX;
-  const w=document.getElementById('repsw-'+rid);
-  if(!w)return;
-  if(dx<-40)w.classList.add('swiped');       // swipe left → reveal Delete
-  else if(dx>40)w.classList.remove('swiped'); // swipe right → hide it
-}
-// Secondary-password gate before permanently deleting a report.
-let pendingDeleteReportId=null;
-function askDeleteReport(rid){
-  pendingDeleteReportId=rid;
-  const inp=document.getElementById('supPassInput');
-  if(inp)inp.value='';
-  document.getElementById('supPassSheet').classList.add('open');
-  setTimeout(()=>{if(inp)inp.focus();},60);
-}
-function closeSupPass(){
-  document.getElementById('supPassSheet').classList.remove('open');
-  pendingDeleteReportId=null;
-}
-async function confirmDeleteReport(){
-  const inp=document.getElementById('supPassInput');
-  const pw=inp?inp.value:'';
-  if(!pw){toast('Enter the supervisor password');return;}
-  if(!pendingDeleteReportId){closeSupPass();return;}
-  const rid=pendingDeleteReportId;
-  try{
-    await api('/api/admin/reports/'+rid+'/delete','POST',{supervisorPassword:pw});
-    // Remove from local state + counts, then re-render without a full refetch.
-    const idx=adminReportsData.findIndex(x=>x.id===rid);
-    if(idx>-1){
-      const st=adminReportsData[idx].status||'open';
-      adminReportsData.splice(idx,1);
-      if(adminReportsCounts.all>0)adminReportsCounts.all--;
-      if(adminReportsCounts[st]>0)adminReportsCounts[st]--;
-    }
-    closeSupPass();
-    renderAdminReportsMetrics();
-    renderAdminReportsList();
-    toast('Report deleted');
-  }catch(e){toast(e.message);}
 }
 let admAnalyzeReport=null;
 async function admOpenAnalyze(rid){
