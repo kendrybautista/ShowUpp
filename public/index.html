@@ -200,7 +200,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 
 .screen.active{display:flex}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.scroll{flex:1;overflow-y:auto;padding-bottom:96px}
+.scroll{flex:1;overflow-y:auto;padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
 .hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
 .topbar-3{display:flex;align-items:center;justify-content:space-between;padding:6px 18px 8px;gap:10px}
@@ -746,7 +746,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .sheet{position:absolute;inset:0;background:rgba(15,15,30,.5);z-index:80;display:none;align-items:flex-end}
 .sheet.open{display:flex;animation:fade .2s}
-.sheet-inner{background:var(--bone);width:100%;border-radius:24px 24px 0 0;padding:8px 22px 30px;animation:slideup .3s;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.sheet-inner{background:var(--bone);width:100%;border-radius:24px 24px 0 0;padding:8px 22px calc(30px + env(safe-area-inset-bottom,0px));animation:slideup .3s;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 @keyframes slideup{from{transform:translateY(100%)}to{transform:none}}
 .grabber{width:40px;height:4px;background:#d8d3c8;border-radius:2px;margin:8px auto 16px}
 .sheet-inner h3{font-family:'Fraunces',serif;font-size:19px;color:var(--night);margin-bottom:6px}
@@ -1190,7 +1190,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="circ-tab" id="ctab-direct" onclick="switchChatTab('direct')" data-i18n="Friends">Friends</div>
     </div>
   </div>
-  <div class="scroll" style="padding-bottom:96px">
+  <div class="scroll" style="padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))">
     <div id="chat-rounds-pane">
       <div style="padding:0 22px 10px"><input id="chatSearchRounds" placeholder="🔍 Search Round chats or messages…" oninput="onChatSearch('rounds',this.value)" style="width:100%;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px;box-sizing:border-box"></div>
       <div id="chatList"></div>
@@ -1368,11 +1368,17 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Provider</label>
           <select id="esProvider" onchange="esProviderChanged()" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px">
             <option value="ticketmaster">Ticketmaster</option>
+            <option value="website">Website — auto-read an events page (no API)</option>
             <option value="__manual__">Other / manual (type a name)…</option>
           </select>
           <input id="esProviderCustom" placeholder="Provider name, e.g. Downtown Events Calendar" style="display:none;width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
           <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Account label</label>
           <input id="esLabel" placeholder="e.g. Ticketmaster — main account" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:10px;box-sizing:border-box">
+          <div id="esUrlWrap" style="display:none">
+            <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Events page URL</label>
+            <input id="esUrl" type="url" placeholder="https://theirsite.com/events" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:8px;box-sizing:border-box">
+          </div>
+          <div id="esWebsiteNote" style="display:none;font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.45">Paste the organizer's main events page. ShowUpp reads it automatically once a day — no API needed. Works best on sites that publish standard event data (most do). If a page can't be read automatically, you'll see a note and can add its events by hand instead.</div>
           <div id="esApiKeyWrap">
             <label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">API key</label>
             <input id="esApiKey" type="password" placeholder="Paste the API key" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:'Instrument Sans';font-size:14px;margin-bottom:14px;box-sizing:border-box">
@@ -1405,6 +1411,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <!-- Friendship Engine entry -->
     <div class="vibe-card" id="vibeEntryCard" onclick="enterVibe()">
       <div class="vc-spark">✨</div>
+      <div id="vibeCardBadge" style="display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);color:#fff;padding:3px 10px;border-radius:999px;margin-bottom:8px">● Pending</div>
       <h3 id="vibeCardTitle">Find your people ✨</h3>
       <p id="vibeCardSub">Take the Vibe Check — 25 quick taps — and we'll find up to 5 people nearby who socialize like you do.</p>
       <div class="vc-cta" id="vibeCardCta">Start the Vibe Check →</div>
@@ -3166,6 +3173,20 @@ function updateDetailSaveBtn(){
   b.style.background=saved?'#EEF0FF':'var(--bone)';
   b.style.borderColor=saved?'var(--coral)':'var(--line)';
 }
+async function toggleSaveEvent(eid,btn){
+  if(btn){
+    const willSave=!btn.classList.contains('on');
+    btn.classList.toggle('on',willSave);
+    const ico=btn.querySelector('.save-ico');if(ico)ico.textContent=willSave?'🔖':'📑';
+  }
+  try{
+    const r=await api('/api/events/'+eid+'/save','POST',{});
+    const ev=(allEvents||[]).find(x=>x.id===eid);if(ev)ev.i_saved=r.saved;
+    if(btn){btn.classList.toggle('on',r.saved);const ico=btn.querySelector('.save-ico');if(ico)ico.textContent=r.saved?'🔖':'📑';}
+    toast(r.saved?'Saved ✓':'Removed from saved');
+    if(homeSection==='saved'&&typeof loadSavedEvents==='function')loadSavedEvents();
+  }catch(e){toast(e.message);}
+}
 
 // ---- Happening Nearby (public events) ----
 // The feed is now backed by a daily-ingested, US-wide, 30-day table server-side (see
@@ -3317,7 +3338,37 @@ async function loadSavedRounds(){
     // merge saved flags into allRounds cache so buttons stay in sync
     savedRoundsList=data.rounds.map(r=>({...r,i_saved:1}));
     renderSavedRounds();
+    loadSavedEvents();
   }catch(e){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:20px;font-size:13px">'+e.message+'</p>';}
+}
+// Saved events live under the same "Saved" section as saved Rounds, appended below them.
+async function loadSavedEvents(){
+  const box=document.getElementById('roundsList');
+  if(!box)return;
+  let q='/api/saved-events';
+  if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
+  let evs=[];
+  try{ const d=await api(q); evs=d.events||[]; }catch(e){ return; }
+  // Remove any previously-rendered saved-events block, then re-render fresh.
+  const old=document.getElementById('savedEventsBlock'); if(old)old.remove();
+  if(!evs.length && !savedRoundsList.length){
+    // Nothing saved at all — show a combined empty hint (rounds renderer already showed its own,
+    // so only add the events hint if there were also no rounds).
+    return;
+  }
+  if(!evs.length)return;
+  const cards=evs.map(e=>{
+    const when=e.starts_at?new Date(e.starts_at).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    const dist=(typeof e.distance==='number')?(' · '+milesLabel(e.distance)):'';
+    const srcBadge=e.source!=='community'?'<span style="background:#EEF;color:#5B5BEF;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px">'+esc(e.source_label||e.source)+'</span>':'';
+    const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
+    const saveBtn='<div class="card-bookmark on" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><span class="save-ico" style="font-size:17px">🔖</span></div>';
+    return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px;position:relative">'+saveBtn+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center;padding-right:34px"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
+  }).join('');
+  const block=document.createElement('div');
+  block.id='savedEventsBlock';
+  block.innerHTML='<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:8px 2px 10px">🎟️ Saved events</div>'+cards;
+  box.appendChild(block);
 }
 let savedRoundsList=[];
 function renderSavedRounds(){
@@ -3439,7 +3490,8 @@ function renderEvents(){
     const dist=(typeof e.distance==='number')?(' · '+milesLabel(e.distance)):'';
     const srcBadge=e.source!=='community'?'<span style="background:#EEF;color:#5B5BEF;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px">'+esc(e.source_label||e.source)+'</span>':'';
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
-    return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px">'+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
+    const saveBtn='<div class="card-bookmark'+(e.i_saved?' on':'')+'" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><span class="save-ico" style="font-size:17px">'+(e.i_saved?'🔖':'📑')+'</span></div>';
+    return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px;position:relative">'+saveBtn+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center;padding-right:34px"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
   }).join('');
   // The feed can span up to 30 days of nationwide events, so it's paginated server-side.
   // The button stays as a fallback/status indicator, but scrolling near the bottom
@@ -6658,7 +6710,13 @@ function refreshVibeCard(){
     const cta=document.getElementById('vibeCardCta');
     const pw=document.getElementById('vibeCardProgWrap');
     const pg=document.getElementById('vibeCardProg');
+    const badge=document.getElementById('vibeCardBadge');
     if(!title)return;
+    if(badge){
+      if(done>=10){badge.textContent='✓ Completed';badge.style.background='rgba(46,158,91,.9)';badge.style.borderColor='rgba(255,255,255,.5)';}
+      else if(done>0){badge.textContent='● In progress ('+done+'/'+total+')';badge.style.background='rgba(255,255,255,.28)';badge.style.borderColor='rgba(255,255,255,.45)';}
+      else{badge.textContent='● Pending';badge.style.background='rgba(255,255,255,.22)';badge.style.borderColor='rgba(255,255,255,.4)';}
+    }
     if(done>=10){
       title.textContent='Your matches are ready ✨';
       sub.textContent="You've done the Vibe Check. Tap to see people nearby who socialize like you.";
@@ -7196,24 +7254,30 @@ async function admDeleteRound(rid,title){
     loadAdminRounds(document.getElementById('adminRoundSearch').value);
   }catch(e){toast(e.message);}
 }
-// ---- Manager panel: event-account sources (e.g. Ticketmaster, or a manual source) ----
-const EVENT_PROVIDER_LABELS={ticketmaster:'Ticketmaster'};
+// ---- Manager panel: event-account sources (e.g. Ticketmaster, a website, or a manual source) ----
+const EVENT_PROVIDER_LABELS={ticketmaster:'Ticketmaster',website:'Website — auto-read an events page (no API)'};
 function esProviderChanged(){
-  const isManual=document.getElementById('esProvider').value==='__manual__';
+  const v=document.getElementById('esProvider').value;
+  const isManual=v==='__manual__';
+  const isWebsite=v==='website';
   document.getElementById('esProviderCustom').style.display=isManual?'block':'none';
-  document.getElementById('esApiKeyWrap').style.display=isManual?'none':'block';
+  document.getElementById('esApiKeyWrap').style.display=(isManual||isWebsite)?'none':'block';
   document.getElementById('esManualNote').style.display=isManual?'block':'none';
+  document.getElementById('esUrlWrap').style.display=isWebsite?'block':'none';
+  document.getElementById('esWebsiteNote').style.display=isWebsite?'block':'none';
 }
 async function loadAdminEventSources(){
   const box=document.getElementById('adminSourcesList');
   box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+t('Loading…')+'</p>';
   try{
     const data=await api('/api/admin/event-sources');
-    // keep the provider dropdown in sync with what the server can auto-fetch, and
-    // always keep the manual option available at the end of the list.
+    window._admSources=data.sources||[];
+    // keep the provider dropdown in sync with what the server can auto-fetch, always
+    // offer the website auto-reader, and keep the manual option available at the end.
     const sel=document.getElementById('esProvider');
     if(data.availableProviders&&data.availableProviders.length){
       sel.innerHTML=data.availableProviders.map(p=>'<option value="'+p+'">'+(EVENT_PROVIDER_LABELS[p]||p)+'</option>').join('')
+        +'<option value="website">Website — auto-read an events page (no API)</option>'
         +'<option value="__manual__">Other / manual (type a name)…</option>';
     }
     esProviderChanged();
@@ -7223,6 +7287,7 @@ async function loadAdminEventSources(){
     }
     box.innerHTML=data.sources.map(s=>{
       const providerName=EVENT_PROVIDER_LABELS[s.provider]||s.provider;
+      const subLine=s.isWebsite?(s.url?esc(s.url):'Website (no URL set)'):(providerName+(s.api_key?' · '+esc(s.api_key):''));
       // Status now reflects the *last actual fetch* — not just whether the toggle is
       // on — so a bad API key or failed request shows up as an error, not "Active".
       const hasError=!s.isManual&&s.enabled&&!!s.last_error;
@@ -7251,7 +7316,7 @@ async function loadAdminEventSources(){
       const editBtn='<span style="font-size:12.5px;font-weight:700;color:var(--night);cursor:pointer" onclick="admOpenEditSource(\''+s.id+'\')">Edit</span>';
       return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
-        +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+providerName+(s.api_key?' · '+esc(s.api_key):'')+'</div></div>'
+        +'<div><b style="font-size:14px;color:var(--night)">'+esc(s.label)+'</b><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+subLine+'</div></div>'
         +'<label class="switch"><input type="checkbox" '+(s.enabled?'checked':'')+' onchange="admToggleEventSource(\''+s.id+'\')"><span class="slider"></span></label>'
         +'</div>'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:6px">'
@@ -7269,17 +7334,21 @@ async function loadAdminEventSources(){
 async function admAddEventSource(){
   const rawProvider=document.getElementById('esProvider').value;
   const isManual=rawProvider==='__manual__';
+  const isWebsite=rawProvider==='website';
   const provider=isManual?document.getElementById('esProviderCustom').value.trim():rawProvider;
   const label=document.getElementById('esLabel').value.trim();
   const apiKey=document.getElementById('esApiKey').value.trim();
+  const url=document.getElementById('esUrl').value.trim();
   if(isManual&&!provider){toast('Type a name for this source');return;}
-  if(!isManual&&!apiKey){toast('Enter an API key');return;}
+  if(isWebsite&&!url){toast('Paste the events page URL');return;}
+  if(!isManual&&!isWebsite&&!apiKey){toast('Enter an API key');return;}
   try{
-    await api('/api/admin/event-sources','POST',{provider,label,apiKey:isManual?undefined:apiKey});
-    toast(isManual?'Manual source added — add its first event below 📝':'Account added — events will start flowing in 🎟️');
+    await api('/api/admin/event-sources','POST',{provider,label,apiKey:(isManual||isWebsite)?undefined:apiKey,url:isWebsite?url:undefined});
+    toast(isManual?'Manual source added — add its first event below 📝':(isWebsite?'Website added — reading its events now 🌐':'Account added — events will start flowing in 🎟️'));
     document.getElementById('esLabel').value='';
     document.getElementById('esApiKey').value='';
     document.getElementById('esProviderCustom').value='';
+    document.getElementById('esUrl').value='';
     loadAdminEventSources();
   }catch(e){toast(e.message);}
 }
@@ -7313,9 +7382,14 @@ function admOpenEditSource(sid){
   if(open)return;
   const card=box.closest('div[style*="box-shadow"]');
   const currentLabel=card?card.querySelector('b').textContent:'';
+  const src=(window._admSources||[]).find(x=>x.id===sid)||{};
+  const urlField=src.isWebsite
+    ?'<input id="admEditUrl-'+sid+'" placeholder="Events page URL" value="'+esc(src.url||'')+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
+    :'';
+  const keyField=(src.isWebsite||src.isManual)?'':'<input id="admEditApiKey-'+sid+'" placeholder="New API key (leave blank to keep current)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:10px;box-sizing:border-box">';
   box.innerHTML='<div style="font-weight:700;font-size:13px;color:var(--night);margin-bottom:8px">Edit account</div>'
     +'<input id="admEditLabel-'+sid+'" placeholder="Account label" value="'+esc(currentLabel)+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:8px;box-sizing:border-box">'
-    +'<input id="admEditApiKey-'+sid+'" placeholder="New API key (leave blank to keep current)" style="width:100%;padding:9px 11px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-size:13.5px;margin-bottom:10px;box-sizing:border-box">'
+    +urlField+keyField
     +'<div style="display:flex;gap:8px">'
     +'<button class="btn btn-mango" style="flex:1;padding:10px" onclick="admSaveEditSource(\''+sid+'\')">Save changes</button>'
     +'<button class="btn" style="flex:1;padding:10px;background:var(--bone);color:var(--night);border:1.5px solid var(--line)" onclick="admOpenEditSource(\''+sid+'\')">Cancel</button>'
@@ -7323,10 +7397,13 @@ function admOpenEditSource(sid){
 }
 async function admSaveEditSource(sid){
   const label=document.getElementById('admEditLabel-'+sid).value.trim();
-  const apiKey=document.getElementById('admEditApiKey-'+sid).value.trim();
+  const keyEl=document.getElementById('admEditApiKey-'+sid);
+  const urlEl=document.getElementById('admEditUrl-'+sid);
+  const apiKey=keyEl?keyEl.value.trim():'';
+  const url=urlEl?urlEl.value.trim():undefined;
   if(!label){toast('Give the account a label');return;}
   try{
-    await api('/api/admin/event-sources/'+sid+'/update','POST',{label,apiKey:apiKey||undefined});
+    await api('/api/admin/event-sources/'+sid+'/update','POST',{label,apiKey:apiKey||undefined,url});
     toast('Account updated');
     loadAdminEventSources();
   }catch(e){toast(e.message);}
