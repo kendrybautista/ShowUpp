@@ -512,7 +512,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .cp-item:hover,.cp-item:active{background:#EEF0FF}
 .cp-empty{padding:14px;text-align:center;color:var(--muted);font-size:13px}
 /* On light sheets, the picker button needs dark text */
-.sheet .cp-button{background:#fff;border-color:var(--line);color:var(--ink)}
+.sheet .cp-button,.filter-panel .cp-button{background:#fff;border-color:var(--line);color:var(--ink)}
 .btn{width:100%;padding:16px;border-radius:16px;border:none;font-family:'Instrument Sans';font-size:16px;font-weight:700;cursor:pointer;transition:.2s}
 .btn:active{transform:scale(.98)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
@@ -1011,6 +1011,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
         <div class="catpill on" id="hf-rounds" onclick="switchHomeSection('rounds')">Rounds</div>
         <div class="catpill" id="hf-events" onclick="switchHomeSection('events')">Events</div>
       </div>
+      <div class="filter-sec-label">Country</div>
+      <div class="country-picker" id="filterCountry" style="margin-bottom:6px"></div>
       <div id="onlyPartnerWrap" style="display:none;align-items:center;justify-content:space-between;padding:4px 0 2px">
         <span style="font-size:12.5px;font-weight:600;color:var(--night)">🎟️ Only partner events (Ticketmaster, etc.)</span>
         <label class="switch"><input type="checkbox" id="onlyPartnerToggle" onchange="toggleOnlyPartnerEvents(this.checked)"><span class="slider"></span></label>
@@ -2375,6 +2377,17 @@ function flagImg(code,size){
   return '<img src="https://flagcdn.com/'+code+'.svg" alt="" width="'+size+'" height="'+Math.round(size*0.72)+'" style="border-radius:3px;object-fit:cover;vertical-align:middle">';
 }
 function codeForCountry(name){const c=COUNTRIES.find(c=>c[1]===name);return c?c[0]:'xx';}
+// Best-effort guess of the current user's country from their stored "City, Country" profile field.
+function guessUserCountry(){
+  let countryGuess='Dominican Republic';
+  const city=(me&&me.city)||'';
+  COUNTRIES.forEach(c=>{
+    const suffix=', '+c[1];
+    if(city.endsWith(suffix))countryGuess=c[1];
+    else if(city===c[1])countryGuess=c[1];
+  });
+  return countryGuess;
+}
 
 // Custom searchable country dropdown. `pickerId` is the wrapper element id.
 const pickerState={}; // pickerId -> selected country name
@@ -2414,6 +2427,7 @@ function choosePicker(pickerId,name){
   const cur=document.querySelector('#'+pickerId+' .cp-current');
   if(cur)cur.innerHTML=flagImg(codeForCountry(name))+' <span>'+name+'</span>';
   document.getElementById(pickerId+'-menu').classList.remove('open');
+  if(pickerId==='filterCountry')onFilterCountryChange();
 }
 function getPickerValue(pickerId){return pickerState[pickerId]||'Dominican Republic';}
 // close pickers when clicking elsewhere
@@ -2853,6 +2867,8 @@ function refreshAvatars(){['homeAvatar','circAvatar','profAv'].forEach(idv=>appl
 function enterApp(){
   document.getElementById('homeGreet').textContent=me.name+' 👋';
   if(typeof injectHeaderLogos==='function')injectHeaderLogos();
+  initCountryPicker('filterCountry',guessUserCountry());
+  currentCountryFilter=getPickerValue('filterCountry');
   refreshAvatars();
   updateNotifBadge();
   if(window._notifPoll)clearInterval(window._notifPoll);
@@ -2999,6 +3015,15 @@ function primeLocation(){
   );
 }
 let maxDistKm=25;
+// Country filter (item 2): narrows Rounds/Events to a chosen country. Defaults to the
+// user's own country, guessed from their profile, once the filter panel's picker initializes.
+let currentCountryFilter='';
+function onFilterCountryChange(){
+  currentCountryFilter=getPickerValue('filterCountry');
+  updateFilterActiveDot();
+  renderRoundsList();
+  if(homeSection==='events'||homeSection==='both')loadEvents();
+}
 // "When" filter (item 4): narrows Rounds down to ones with an upcoming event_at that
 // falls within the chosen window. Rounds with no date set are excluded once a specific
 // window (other than "Any time") is picked, since we can't know when they meet.
@@ -3091,7 +3116,7 @@ function filteredRounds(){
 function openFilterPanel(){document.getElementById('filterOverlay').classList.add('open');}
 function closeFilterPanel(){document.getElementById('filterOverlay').classList.remove('open');}
 function updateFilterActiveDot(){
-  const active=currentFilter!=='✨ For you'||currentTimeFilter!=='any'||homeSection!=='rounds'||maxDistKm!==25||onlyPartnerEvents;
+  const active=currentFilter!=='✨ For you'||currentTimeFilter!=='any'||homeSection!=='both'||maxDistKm!==25||onlyPartnerEvents||currentCountryFilter!==guessUserCountry();
   const dot=document.getElementById('filterActiveDot');if(dot)dot.style.display=active?'block':'none';
 }
 function resetFilters(){
@@ -3104,11 +3129,12 @@ function resetFilters(){
   maxDistKm=25;
   const slider=document.getElementById('distSlider');if(slider)slider.value=distUnit==='mi'?Math.round(25*0.621371):25;
   updateDistLabel();
-  switchHomeSection('rounds');
+  // Country resets to the user's own country (item 3).
+  initCountryPicker('filterCountry',guessUserCountry());
+  currentCountryFilter=getPickerValue('filterCountry');
+  switchHomeSection('both');
   updateFilterActiveDot();
   renderRoundsList();
-  // switchHomeSection('rounds') hides Events; if it had been showing, its next open
-  // re-fetches with cleared filters, so nothing else to do here.
 }
 function updateDistLabel(){
   const val=distUnit==='mi'?Math.round(maxDistKm*0.621371):maxDistKm;
@@ -3177,12 +3203,12 @@ async function toggleSaveEvent(eid,btn){
   if(btn){
     const willSave=!btn.classList.contains('on');
     btn.classList.toggle('on',willSave);
-    const ico=btn.querySelector('.save-ico');if(ico)ico.textContent=willSave?'🔖':'📑';
+    const ico=btn.querySelector('.save-ico');if(ico)ico.setAttribute('fill',willSave?'currentColor':'none');
   }
   try{
     const r=await api('/api/events/'+eid+'/save','POST',{});
     const ev=(allEvents||[]).find(x=>x.id===eid);if(ev)ev.i_saved=r.saved;
-    if(btn){btn.classList.toggle('on',r.saved);const ico=btn.querySelector('.save-ico');if(ico)ico.textContent=r.saved?'🔖':'📑';}
+    if(btn){btn.classList.toggle('on',r.saved);const ico=btn.querySelector('.save-ico');if(ico)ico.setAttribute('fill',r.saved?'currentColor':'none');}
     toast(r.saved?'Saved ✓':'Removed from saved');
     if(homeSection==='saved'&&typeof loadSavedEvents==='function')loadSavedEvents();
   }catch(e){toast(e.message);}
@@ -3362,7 +3388,7 @@ async function loadSavedEvents(){
     const dist=(typeof e.distance==='number')?(' · '+milesLabel(e.distance)):'';
     const srcBadge=e.source!=='community'?'<span style="background:#EEF;color:#5B5BEF;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px">'+esc(e.source_label||e.source)+'</span>':'';
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
-    const saveBtn='<div class="card-bookmark on" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><span class="save-ico" style="font-size:17px">🔖</span></div>';
+    const saveBtn='<div class="card-bookmark on" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><svg class="save-ico" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></div>';
     return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px;position:relative">'+saveBtn+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center;padding-right:34px"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
   }).join('');
   const block=document.createElement('div');
@@ -3421,6 +3447,7 @@ function fetchEventsPage(page){
     const miles=maxDistKm*0.621371;
     q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
   }
+  if(currentCountryFilter)q+='&country='+encodeURIComponent(currentCountryFilter);
   return api(q);
 }
 async function loadMoreEvents(){
@@ -3490,7 +3517,7 @@ function renderEvents(){
     const dist=(typeof e.distance==='number')?(' · '+milesLabel(e.distance)):'';
     const srcBadge=e.source!=='community'?'<span style="background:#EEF;color:#5B5BEF;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px">'+esc(e.source_label||e.source)+'</span>':'';
     const photo=e.photo?'<img src="'+esc(e.photo)+'" style="width:100%;height:120px;object-fit:cover;border-radius:12px 12px 0 0">':'';
-    const saveBtn='<div class="card-bookmark'+(e.i_saved?' on':'')+'" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><span class="save-ico" style="font-size:17px">'+(e.i_saved?'🔖':'📑')+'</span></div>';
+    const saveBtn='<div class="card-bookmark'+(e.i_saved?' on':'')+'" style="top:10px;right:10px;width:34px;height:34px" onclick="event.stopPropagation();toggleSaveEvent(\''+e.id+'\',this)"><svg class="save-ico" width="18" height="18" viewBox="0 0 24 24" fill="'+(e.i_saved?'currentColor':'none')+'" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></div>';
     return '<div class="round" onclick="openEventDetail(\''+e.id+'\')" style="margin-bottom:12px;position:relative">'+saveBtn+photo+'<div class="body" style="padding:12px 14px"><div style="display:flex;align-items:center;padding-right:34px"><span style="font-size:18px;margin-right:6px">'+(e.emoji||'📣')+'</span><b style="font-size:15px;color:var(--night)">'+esc(e.title)+'</b>'+srcBadge+'</div><div class="meta" style="margin-top:4px"><span>'+esc(e.category||'Event')+'</span>'+(when?'<span class="dot"></span><span>'+when+'</span>':'')+(dist?'<span class="dot"></span><span>'+dist.replace(' · ','')+'</span>':'')+'</div>'+(e.place?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">📍 '+esc(e.place)+'</div>':'')+'</div></div>';
   }).join('');
   // The feed can span up to 30 days of nationwide events, so it's paginated server-side.
