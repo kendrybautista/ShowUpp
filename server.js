@@ -3269,14 +3269,27 @@ app.get('/api/events', requireAuth, async (req, res) => {
   // out to have no events, we transparently fall back to the full list so they're never
   // staring at an empty feed.
   const wantsInternational = req.query.international === '1' || req.query.international === 'true';
-  let userCC = String(req.query.country || '').trim().toUpperCase();
+  // Did the user *explicitly* pick a country in the filter panel, or are we just falling
+  // back to their profile's country as a sensible default? An explicit pick is treated
+  // strictly (show only that country); a derived default stays lenient so international
+  // users with a thin local catalog aren't left staring at an empty feed.
+  const explicitCountry = String(req.query.country || '').trim().toUpperCase();
+  let userCC = explicitCountry;
   if (!userCC && !wantsInternational) {
     userCC = (countryToCode(req.user && (req.user.origin || req.user.city)) || '').toUpperCase();
   }
   let countryClause = '', countryParams = [];
   if (userCC && !wantsInternational) {
-    // Include NULL-country community posts too (they're local user submissions).
-    countryClause = ' AND (country = ? OR country IS NULL OR source = \'community\')';
+    if (explicitCountry) {
+      // Strict: the user asked for THIS country. Only keep events actually in it. Local
+      // community submissions (which frequently have no country stamped) are kept, since
+      // they're posted by users in-region; external provider events with no country are not.
+      countryClause = ' AND (country = ? OR (country IS NULL AND source = \'community\'))';
+    } else {
+      // Lenient default (derived from the profile): also keep NULL-country events so a
+      // sparse local catalog doesn't hide everything.
+      countryClause = ' AND (country = ? OR country IS NULL OR source = \'community\')';
+    }
     countryParams = [userCC];
   }
 
@@ -3336,7 +3349,9 @@ app.get('/api/events', requireAuth, async (req, res) => {
   let rows = await runQuery(!!countryClause);
   // Empty-country fallback: if country filtering returned nothing on the first page,
   // retry once without it so international users with a thin local catalog still see events.
-  if (countryClause && rows.length === 0 && page === 0) {
+  // Only applies to the DERIVED default — when the user *explicitly* picks a country we
+  // respect that choice and return an empty feed rather than silently showing other countries.
+  if (countryClause && !explicitCountry && rows.length === 0 && page === 0) {
     rows = await runQuery(false);
   }
 
