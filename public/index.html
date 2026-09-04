@@ -188,6 +188,10 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   html:not(.native-app) .phone .screen>*{width:100%;max-width:720px;margin-left:auto;margin-right:auto}
   /* The bottom nav and any full-bleed overlays should still span the whole window. */
   html:not(.native-app) .phone .nav{max-width:none}
+  html:not(.native-app) .phone .screen>#mapView.map-expanded,
+  html:not(.native-app) .phone .screen>#eventsMapView.map-expanded{
+    max-width:720px;left:50%;right:auto;transform:translateX(-50%)
+  }
 }
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
 .phone[data-theme="dark"] .screen{background:#0B0B16}
@@ -352,7 +356,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
    Fills the phone frame. position:absolute pins to the .screen (which is the app's
    full viewport), above content but below the top status bar and bottom nav. */
 #mapView.map-expanded,#eventsMapView.map-expanded{
-  position:fixed;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
+  position:absolute;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
   margin:0;border-radius:0;border:none;z-index:1200
 }
 /* When any map is expanded, hide the bottom nav so the map truly covers the screen. */
@@ -441,6 +445,31 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .vibe-empty p{font-size:13.5px;line-height:1.5;margin:0 0 16px}
 .phone[data-theme="dark"] .vibe-opt{background:#20202e}
 .phone[data-theme="dark"] .vibe-match .vm-av{background:#20202e}
+
+/* Build a Crew */
+.crew-banner{display:flex;align-items:center;gap:13px;border-radius:20px;padding:16px;cursor:pointer;color:#fff;
+  background:linear-gradient(135deg,#12B886 0%,#0CA678 50%,#7C83FF 150%);box-shadow:0 10px 26px rgba(12,166,120,.32)}
+.crew-banner:active{transform:scale(.99)}
+.crew-banner .cb-emoji{font-size:34px;flex:none;line-height:1}
+.crew-banner .cb-title{font-size:17px;font-weight:800;letter-spacing:-.2px}
+.crew-banner .cb-sub{font-size:12.5px;color:rgba(255,255,255,.92);line-height:1.4;margin-top:2px}
+.crew-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.crew-tile{display:flex;align-items:center;gap:10px;padding:15px 14px;border-radius:16px;border:2px solid var(--line);background:var(--card);
+  font-size:15px;font-weight:700;color:var(--night);cursor:pointer;transition:transform .08s,border-color .15s,background .15s;-webkit-tap-highlight-color:transparent}
+.crew-tile:active{transform:scale(.97)}
+.crew-tile .ct-emoji{font-size:24px;flex:none}
+.crew-tile.on{border-color:var(--turq);background:linear-gradient(135deg,rgba(18,184,134,.13),rgba(124,131,255,.12))}
+.crew-size{display:flex;flex-direction:column;gap:10px}
+.crew-size .cs-opt{display:flex;align-items:center;gap:12px;padding:15px 16px;border-radius:15px;border:2px solid var(--line);background:var(--card);font-weight:700;color:var(--night);cursor:pointer;font-size:15px}
+.crew-size .cs-opt.on{border-color:var(--turq);background:linear-gradient(135deg,rgba(18,184,134,.13),rgba(124,131,255,.12))}
+.crew-size .cs-opt .cs-emoji{font-size:22px}
+.crew-person{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--line)}
+.crew-person .cp-av{width:46px;height:46px;border-radius:14px;object-fit:cover;flex:none;background:linear-gradient(135deg,#EEF0FF,#F1ECFF);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;color:var(--coral)}
+.crew-person .cp-name{font-size:14.5px;font-weight:700;color:var(--night)}
+.crew-person .cp-meta{font-size:12px;color:var(--muted);margin-top:1px}
+.crew-person .cp-pick{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;cursor:pointer;transition:.15s}
+.crew-person.on .cp-pick{background:linear-gradient(135deg,var(--turq),#7C83FF);border-color:transparent}
+.crew-place{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow);margin-top:14px}
 .su-cluster{background:transparent}
 .su-cluster div{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;font-family:'Instrument Sans';background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 4px 14px rgba(40,40,90,.35)}
 .su-cluster.su-cluster-lg div{width:48px;height:48px;font-size:15px}
@@ -583,6 +612,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .swipe-wrap .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px}
 .swipe-wrap .circle-card{margin:0;transition:transform .2s;position:relative;z-index:2}
 .swipe-wrap.swiped .circle-card{transform:translateX(-96px)}
+/* swipe-to-delete for admin reports */
+.rep-swipe{position:relative;margin:0 0 10px;border-radius:14px;overflow:hidden}
+.rep-swipe .del-bg{position:absolute;inset:0;background:#d94b3b;display:flex;align-items:center;justify-content:flex-end;padding-right:24px;color:#fff;font-weight:700;font-size:14px;cursor:pointer}
+.rep-swipe .friend-row{margin:0;transition:transform .2s;position:relative;z-index:2;background:var(--card)}
+.rep-swipe.swiped .friend-row{transform:translateX(-96px)}
 .circle-card .cc{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)}
 .circle-card .cc.cc-photo{position:relative;padding:0;overflow:visible}
 .circle-card .cc.cc-photo img{width:100%;height:100%;object-fit:cover;border-radius:16px}
@@ -1078,11 +1112,16 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       </div>
       <div style="display:flex;gap:6px;padding:0 22px 12px;flex-wrap:wrap">
         <div class="fsub on" id="fsub-friends" onclick="switchFriendSub('friends')">Friends</div>
+        <div class="fsub" id="fsub-suggested" onclick="switchFriendSub('suggested')">✨ Suggested <span id="sugBadge" style="display:none;background:var(--coral);color:#fff;border-radius:10px;padding:0 6px;font-size:10px;margin-left:2px"></span></div>
         <div class="fsub" id="fsub-updates" onclick="switchFriendSub('updates')" data-i18n="Daily Updates">Daily Updates</div>
         <div class="fsub" id="fsub-requests" onclick="switchFriendSub('requests')">Requests <span id="reqBadge" style="display:none;background:var(--coral);color:#fff;border-radius:10px;padding:0 6px;font-size:10px;margin-left:2px"></span></div>
         <div class="fsub" id="fsub-blocked" onclick="switchFriendSub('blocked')">Blocked</div>
       </div>
       <div id="fsub-friends-pane"><div id="friendsList" style="padding:0 22px"></div></div>
+      <div id="fsub-suggested-pane" style="display:none">
+        <p style="padding:0 22px 8px;font-size:13.5px;color:var(--muted);line-height:1.5">Potential friends from your <b style="color:var(--night)">Vibe Check</b> — people nearby who socialize like you. This refills as new people join or take the quiz.</p>
+        <div id="suggestedList" style="padding:0 22px"></div>
+      </div>
       <div id="fsub-updates-pane" style="display:none"><div id="updatesList" style="padding:0 22px"></div></div>
       <div id="fsub-requests-pane" style="display:none">
         <div style="padding:0 22px">
@@ -1235,6 +1274,14 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="statusbar"></div>
   <div class="scroll">
     <div style="padding:4px 22px 0"><button class="back" style="position:static;background:#fff;box-shadow:var(--shadow)" onclick="go('s-home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button></div>
+    <div style="padding:10px 22px 0">
+      <div class="crew-banner" onclick="enterCrew()">
+        <div class="cb-emoji">👥</div>
+        <div style="flex:1;min-width:0"><div class="cb-title">Build a Crew</div><div class="cb-sub">Pick an activity — we'll find the people and the place. No group-chat wrangling.</div></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" style="flex:none;opacity:.9"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div style="text-align:center;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 2px">or host it yourself</div>
+    </div>
     <div class="create">
       <h1>Host a Round</h1>
       <p class="sub">Start something small. A few people, a few meetups.</p>
@@ -1271,6 +1318,21 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <button class="btn btn-mango" onclick="createRound()">Create Round</button>
     </div>
   </div>
+</div>
+
+<!-- ============ BUILD A CREW ============ -->
+<div class="screen" id="s-crew">
+  <div class="statusbar"></div>
+  <div class="fixed-head">
+    <div style="padding:4px 22px 0;display:flex;justify-content:space-between;align-items:center">
+      <button class="back" style="position:static;background:var(--card);box-shadow:var(--shadow)" onclick="crewBack()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div id="crewStepLabel" style="font-size:13px;font-weight:700;color:var(--muted)"></div>
+    </div>
+  </div>
+  <div class="scroll">
+    <div class="vibe-wrap" id="crewBody"></div>
+  </div>
+  <div class="nav" data-nav></div>
 </div>
 
 <!-- PROFILE -->
@@ -2081,6 +2143,29 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <button class="btn btn-mango" style="width:100%" onclick="anzConfirmVerdict()">Confirm</button>
       <div class="report-opt" style="text-align:center;color:var(--muted);margin-top:8px" onclick="anzCancelVerdict()">← Back</div>
     </div>
+  </div>
+</div>
+
+<!-- Manager: secondary supervisor password prompt for deleting a report -->
+<div class="sheet" id="supPassSheet" onclick="if(event.target===this)closeSupPass()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3>Supervisor password</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Deleting a report is permanent. Enter the supervisor password to confirm.</p>
+    <input id="supPassInput" type="password" autocomplete="off" placeholder="Supervisor password" onkeydown="if(event.key==='Enter')confirmDeleteReport()" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px">
+    <button class="btn" style="width:100%;background:#d94b3b;color:#fff;border:none" onclick="confirmDeleteReport()">🗑️ Delete report</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeSupPass()">Cancel</div>
+  </div>
+</div>
+
+<!-- Vibe Check: intro-message composer so a match isn't a cold request -->
+<div class="sheet" id="vibeReqSheet" onclick="if(event.target===this)closeVibeReq()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3 id="vibeReqName">Connect</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Add a friendly note so they know why you're reaching out. You can edit it.</p>
+    <textarea id="vibeReqMsg" rows="4" maxlength="280" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;box-sizing:border-box;resize:none"></textarea>
+    <div style="text-align:right;margin:6px 2px 12px"><span style="font-size:12px;color:var(--muted);cursor:pointer" onclick="shuffleVibeMsg()">🔀 Suggest another</span></div>
+    <button class="btn btn-mango" style="width:100%" onclick="sendVibeRequest()">Send request ✨</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeVibeReq()">Cancel</div>
   </div>
 </div>
 
@@ -3606,8 +3691,9 @@ function mapTiles(type){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
   // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
-  // than raw OSM tiles, with retina support. Falls back gracefully if a tile 404s.
-  return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
+  // than raw OSM tiles. Uses CARTO's free no-key basemap tile hosts (cartodb-basemaps-*)
+  // which don't stamp an "API KEY REQUIRED" watermark on the tiles.
+  return L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
 }
 function setMapType(type){
   mapType=type;
@@ -4216,13 +4302,14 @@ async function requestFriend(uid,btn){
   }catch(e){toast(e.message);}
 }
 function switchFriendSub(which){
-  ['friends','updates','requests','blocked'].forEach(t=>{
+  ['friends','suggested','updates','requests','blocked'].forEach(t=>{
     document.getElementById('fsub-'+t).classList.toggle('on',t===which);
     document.getElementById('fsub-'+t+'-pane').style.display=(t===which)?'block':'none';
   });
   if(which==='blocked')loadBlockedTab();
   if(which==='updates')loadFriendsUpdates();
   if(which==='requests')loadSentRequests();
+  if(which==='suggested')loadSuggested();
 }
 // Filters the Requests tab to show Received only, Sent only, or both
 function setReqFilter(which){
@@ -4264,7 +4351,13 @@ async function loadFriends(){
     const badge=document.getElementById('reqBadge');
     if(rq.requests.length){
       badge.style.display='inline-block';badge.textContent=rq.requests.length;
-      list.innerHTML=rq.requests.map(u=>'<div class="friend-row">'+friendAvatar(u)+'<div class="fi" style="cursor:pointer" onclick="viewProfile(\''+u.id+'\')"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+'</span></div><div style="display:flex;gap:6px"><button class="friend-btn add" onclick="acceptFriend(\''+u.id+'\')">Accept</button><button class="friend-btn remove" onclick="declineFriend(\''+u.id+'\')">Decline</button></div></div>').join('');
+      list.innerHTML=rq.requests.map(u=>{
+        const note=u.message?'<div style="margin:8px 0 0;background:linear-gradient(135deg,rgba(124,131,255,.1),rgba(255,111,97,.1));border:1px solid var(--line);border-radius:12px;padding:9px 11px;font-size:12.5px;color:var(--ink);line-height:1.45">💬 '+esc(u.message)+'</div>':'';
+        return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:0">'
+          +'<div style="display:flex;align-items:center;gap:12px">'+friendAvatar(u)+'<div class="fi" style="cursor:pointer;flex:1" onclick="viewProfile(\''+u.id+'\')"><b>'+esc(u.name)+'</b><span>@'+esc(u.username)+'</span></div>'
+          +'<div style="display:flex;gap:6px"><button class="friend-btn add" onclick="acceptFriend(\''+u.id+'\')">Accept</button><button class="friend-btn remove" onclick="declineFriend(\''+u.id+'\')">Decline</button></div></div>'
+          +note+'</div>';
+      }).join('');
     }else{badge.style.display='none';list.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">No pending friend requests.</p>';}
   }catch(e){}
   // friends
@@ -5657,6 +5750,7 @@ function handleNotifClick(link){
   if(!link)return;
   if(link.startsWith('birthday:')){viewProfile(link.slice('birthday:'.length));return;}
   if(link.startsWith('dm:')){openDm(link.slice(3));}
+  else if(link.startsWith('round:')){const rid=link.slice('round:'.length);if(typeof openDetail==='function')openDetail(rid);}
   else if(link==='friends:requests'){go('s-circles');switchCircTab('friends');setTimeout(()=>switchFriendSub('requests'),50);}
   else if(link.startsWith('friends:')){go('s-circles');switchCircTab('friends');}
   else if(link==='admin:reports'){openAdmin();setTimeout(()=>switchAdminTab('reports'),50);}
@@ -6721,11 +6815,12 @@ function vibeMatchCardHTML(m,myAns,idx){
   // shared-answer highlights: questions where we overlap, show one option we both picked
   const chips=vibeSharedChips(myAns,m.answers,3);
   const chipsHtml=chips.length?('<div class="vibe-chips">'+chips.map(c=>'<span class="vibe-chip">'+c+'</span>').join('')+'</div>'):'';
+  const nm=(m.name||'Someone').replace(/'/g,"\\'");
   let actions;
   if(m.status==='friend'){ actions='<div class="vm-actions"><button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Already friends</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
   else if(m.status==='pending'){ actions='<div class="vm-actions"><button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
-  else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeAddFriend(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
-  else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeAddFriend(\''+m.id+'\',this)">＋ Send request</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeSkip(this)">Skip</button></div>'; }
+  else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
+  else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'; }
   const archLine=m.archetype?('<div class="vm-meta">'+ (VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.emoji||'✨') +' '+(VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.label||'')+'</div>'):'';
   return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
     +'<div class="vm-top">'+av
@@ -6748,19 +6843,244 @@ function vibeSharedChips(mine,theirs,n){
   return chips;
 }
 
-async function vibeAddFriend(uid,btn){
-  if(btn){btn.disabled=true;btn.textContent='…';}
-  try{
-    const r=await api('/api/friends/request','POST',{toId:uid});
-    if(btn){
-      const wrap=btn.closest('.vm-actions');
-      if(r.status==='friend'){ wrap.innerHTML='<button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Friends now 🎉</button>'; toast('You\'re friends! 🎉'); }
-      else { wrap.innerHTML='<button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button>'; toast('Friend request sent ✨'); }
-    }
-  }catch(e){ if(btn){btn.disabled=false;btn.textContent='＋ Send request';} toast(e.message); }
+// ---- Cool intro message so a match isn't a cold, random request ----
+const VIBE_MSG_TEMPLATES=[
+  "Hey {name}! ShowUpp says we're a {score}% vibe match ✨ Figured I'd say hi — always up for meeting people on the same wavelength.",
+  "Hi {name}! We matched {score}% on the Vibe Check 🙌 Seems like we'd get along — want to be friends?",
+  "{name}! The Vibe Check paired us at {score}% 😄 That's rare — thought I'd reach out before the algorithm takes all the credit.",
+  "Hey {name}, {score}% match here ✨ I'm looking to meet like-minded people nearby — you seemed like a great one to start with!"
+];
+let vibeReqTarget=null;
+function pickVibeMsg(name,score){
+  const tpl=VIBE_MSG_TEMPLATES[Math.floor(Math.random()*VIBE_MSG_TEMPLATES.length)];
+  return tpl.replace('{name}',name||'there').replace('{score}',score||'high');
 }
-function vibeSkip(btn){ const card=btn.closest('.vibe-match'); if(card){card.style.transition='.25s';card.style.opacity='0';card.style.transform='translateX(30px)';setTimeout(()=>card.remove(),250);} }
+function openVibeRequest(uid,name,score,btn){
+  vibeReqTarget={uid,btn};
+  const ta=document.getElementById('vibeReqMsg');
+  if(ta)ta.value=pickVibeMsg(name,score);
+  const h=document.getElementById('vibeReqName'); if(h)h.textContent='Connect with '+(name||'this person');
+  document.getElementById('vibeReqSheet').classList.add('open');
+}
+function closeVibeReq(){document.getElementById('vibeReqSheet').classList.remove('open');vibeReqTarget=null;}
+function shuffleVibeMsg(){const ta=document.getElementById('vibeReqMsg');const h=document.getElementById('vibeReqName');const nm=h?h.textContent.replace('Connect with ',''):'there';if(ta)ta.value=pickVibeMsg(nm,'');}
+async function sendVibeRequest(){
+  if(!vibeReqTarget){closeVibeReq();return;}
+  const {uid,btn}=vibeReqTarget;
+  const msg=(document.getElementById('vibeReqMsg')||{}).value||'';
+  try{
+    const r=await api('/api/friends/request','POST',{toId:uid,message:msg});
+    closeVibeReq();
+    markCardSent(btn,r.status);
+    toast(r.status==='friend'?"You're friends! 🎉":'Request sent with your note ✨');
+  }catch(e){ toast(e.message); }
+}
+function markCardSent(btn,status){
+  const wrap=btn&&btn.closest('.vm-actions'); if(!wrap)return;
+  if(status==='friend')wrap.innerHTML='<button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Friends now 🎉</button>';
+  else wrap.innerHTML='<button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button>';
+}
+async function vibeQuickAccept(uid,btn){
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  try{ const r=await api('/api/friends/request','POST',{toId:uid}); markCardSent(btn,r.status==='friend'?'friend':'pending'); toast('You\'re friends! 🎉'); }
+  catch(e){ if(btn){btn.disabled=false;btn.textContent='Accept request 🎉';} toast(e.message); }
+}
+async function vibeIgnore(uid,btn){
+  try{ await api('/api/vibe/ignore','POST',{userId:uid}); }catch(e){}
+  const card=btn.closest('.vibe-match')||btn.closest('.sug-row');
+  if(card){card.style.transition='.25s';card.style.opacity='0';card.style.transform='translateX(30px)';setTimeout(()=>card.remove(),250);}
+  toast('Got it — we won\'t suggest them again');
+}
+
+// ---- Suggested potential friends (Circles → Friends → Suggested) ----
+async function loadSuggested(){
+  const box=document.getElementById('suggestedList');
+  box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">'+t('Loading…')+'</p>';
+  let q='/api/vibe/suggested';
+  try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} }catch(e){}
+  if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
+  let d;
+  try{ d=await api(q); }catch(e){ box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:10px 2px">'+esc(e.message)+'</p>'; return; }
+  if(!d.ready){
+    box.innerHTML='<div style="text-align:center;padding:28px 20px;color:var(--muted)"><div style="font-size:38px">✨</div>'
+      +'<p style="font-size:14px;margin:10px 0 14px;line-height:1.5">Take the <b style="color:var(--night)">Vibe Check</b> and we\'ll keep this tab full of people nearby who match how you socialize.</p>'
+      +'<button class="btn btn-mango" onclick="enterVibe()">Take the Vibe Check</button></div>';
+    return;
+  }
+  const sugBadge=document.getElementById('sugBadge');
+  if(d.people.length){sugBadge.style.display='inline-block';sugBadge.textContent=d.people.length;}else{sugBadge.style.display='none';}
+  if(!d.people.length){
+    box.innerHTML='<div style="text-align:center;padding:28px 20px;color:var(--muted)"><div style="font-size:38px">🌱</div>'
+      +'<p style="font-size:14px;margin:10px 0 0;line-height:1.5">No new matches right now. As more people nearby join ShowUpp or take the Vibe Check, they\'ll show up here automatically.</p></div>';
+    return;
+  }
+  box.innerHTML=d.people.map((m,i)=>suggestedRowHTML(m,d.myAnswers,i)).join('');
+}
+function suggestedRowHTML(m,myAns,idx){
+  const av=m.avatar?'<img class="vm-av" src="'+esc(m.avatar)+'" style="width:48px;height:48px;border-radius:14px">':'<div class="vm-av" style="width:48px;height:48px;border-radius:14px;font-size:20px">'+esc((m.name||'?').charAt(0).toUpperCase())+'</div>';
+  const chips=vibeSharedChips(myAns,m.answers,2);
+  const chipsHtml=chips.length?('<div class="vibe-chips" style="margin-top:8px">'+chips.map(c=>'<span class="vibe-chip">'+c+'</span>').join('')+'</div>'):'';
+  const nm=(m.name||'Someone').replace(/'/g,"\\'");
+  const distTxt=(m.distance!=null)?(' · '+(milesLabel(m.distance)||'')+' away'):'';
+  return '<div class="vibe-match sug-row" style="padding:14px;animation-delay:'+(idx*50)+'ms">'
+    +'<div class="vm-top" style="gap:11px">'+av
+      +'<div style="flex:1;min-width:0"><div class="vm-name" style="font-size:15px">'+esc(m.name||'Someone')+'</div>'
+      +'<div class="vm-meta">✨ '+m.score+'% match'+distTxt+'</div></div>'
+      +'<div style="flex:none;text-align:center"><div style="font-size:19px;font-weight:800;color:var(--coral);line-height:1">'+m.score+'%</div></div>'
+    +'</div>'+chipsHtml
+    +'<div class="vm-actions" style="margin-top:12px"><button class="btn btn-mango" style="flex:1;padding:9px;font-size:13px" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button>'
+    +'<button class="vibe-btn-ghost" style="padding:9px 13px;font-size:13px" onclick="openPublicProfile(\''+m.id+'\')">View</button>'
+    +'<button class="vibe-btn-ghost" style="padding:9px 13px;font-size:13px" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'
+  +'</div>';
+}
 function openPublicProfile(uid){ if(typeof viewProfile==='function')viewProfile(uid); else toast('Opening profile…'); }
+
+// ============================================================================
+//  BUILD A CREW (client)
+//  Idea -> the app assembles the crew. activity -> size -> when/where -> people+place.
+// ============================================================================
+const CREW_ACTIVITIES=[
+  ['bowling','🎳','Bowling'],['food','🍔','Food'],['hiking','🏕️','Hiking'],['gaming','🎮','Gaming'],
+  ['movies','🎬','Movies'],['coffee','☕','Coffee'],['cars','🚗','Cars'],['fitness','🏋️','Fitness'],
+  ['art','🎨','Art'],['music','🎵','Music'],['drinks','🍸','Drinks'],['sports','⚽','Watch sports'],
+  ['outdoors','🌳','Outdoors'],['books','📚','Books']
+];
+let crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null};
+
+function enterCrew(){ crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null}; go('s-crew'); renderCrewStep(); }
+function crewBack(){
+  if(crewState.step>1 && crewState.step<4){ crewState.step--; renderCrewStep(); }
+  else if(crewState.step===4){ crewState.step=3; renderCrewStep(); }
+  else { go('s-create'); }
+}
+function renderCrewStep(){
+  document.querySelector('#s-crew .scroll').scrollTop=0;
+  const lbl=document.getElementById('crewStepLabel');
+  const s=crewState.step;
+  if(lbl)lbl.textContent=(s<4?('Step '+s+' of 3'):'');
+  if(s===1)renderCrewActivity();
+  else if(s===2)renderCrewSize();
+  else if(s===3)renderCrewWhen();
+  else if(s===4)renderCrewResults();
+}
+function renderCrewActivity(){
+  const tiles=CREW_ACTIVITIES.map(a=>{
+    const on=crewState.activity===a[0]?' on':'';
+    return '<div class="crew-tile'+on+'" onclick="crewPickActivity(\''+a[0]+'\')"><span class="ct-emoji">'+a[1]+'</span><span>'+a[2]+'</span></div>';
+  }).join('');
+  document.getElementById('crewBody').innerHTML=
+    '<div class="vibe-hero"><div class="vh-emoji">👥</div><h1>What do you want to do?</h1><p>Pick one — we\'ll build the crew around it.</p></div>'
+    +'<div class="crew-grid" style="margin-top:16px">'+tiles+'</div>';
+}
+function crewPickActivity(key){ crewState.activity=key; renderCrewActivity(); setTimeout(()=>{crewState.step=2;renderCrewStep();},180); }
+function renderCrewSize(){
+  const opt=(v,emoji,label,sub)=>'<div class="cs-opt'+(crewState.size===v?' on':'')+'" onclick="crewPickSize(\''+v+'\')"><span class="cs-emoji">'+emoji+'</span><div style="flex:1"><div>'+label+'</div><div style="font-size:12px;font-weight:500;color:var(--muted)">'+sub+'</div></div></div>';
+  document.getElementById('crewBody').innerHTML=
+    '<div class="vibe-hero"><div class="vh-emoji">'+crewEmoji()+'</div><h1>How many people?</h1><p>Including you. We\'ll invite a few extra in case some can\'t make it.</p></div>'
+    +'<div class="crew-size" style="margin-top:16px">'
+      +opt('3-4','👥','3–4','Intimate — easy to plan')
+      +opt('5-6','👨‍👩‍👧','5–6','A proper little crew')
+      +opt('7-10','🎉','7–10','A whole scene')
+    +'</div>'
+    +'<div class="vibe-nav"><button class="vibe-back" onclick="crewBack()">‹</button><button class="btn btn-mango" onclick="crewState.step=3;renderCrewStep()">Next</button></div>';
+}
+function crewPickSize(v){ crewState.size=v; renderCrewSize(); }
+function renderCrewWhen(){
+  document.getElementById('crewBody').innerHTML=
+    '<div class="vibe-hero"><div class="vh-emoji">🗓️</div><h1>When and where?</h1><p>Optional — you can lock this in later. We\'ll suggest spots either way.</p></div>'
+    +'<div class="vibe-q" style="box-shadow:none;padding:4px 0 0;border:none;background:none">'
+      +'<div class="field" style="margin-bottom:14px"><label style="font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px">When</label>'
+        +'<input type="datetime-local" id="crewWhen" value="'+esc(crewState.when)+'" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:inherit;font-size:15px;box-sizing:border-box"></div>'
+      +'<div class="field"><label style="font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px">Area or place <span style="font-weight:400">(optional)</span></label>'
+        +'<input type="text" id="crewPlace" value="'+esc(crewState.place)+'" placeholder="e.g. Downtown, or a spot you like" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:inherit;font-size:15px;box-sizing:border-box"></div>'
+    +'</div>'
+    +'<div class="vibe-nav"><button class="vibe-back" onclick="crewBack()">‹</button><button class="btn btn-mango" onclick="crewFindPeople()">✨ Build my crew</button></div>';
+}
+function crewEmoji(){ const a=CREW_ACTIVITIES.find(x=>x[0]===crewState.activity); return a?a[1]:'👥'; }
+function crewLabel(){ const a=CREW_ACTIVITIES.find(x=>x[0]===crewState.activity); return a?a[2]:'Crew'; }
+
+async function crewFindPeople(){
+  const w=document.getElementById('crewWhen'); if(w)crewState.when=w.value||'';
+  const p=document.getElementById('crewPlace'); if(p)crewState.place=p.value||'';
+  crewState.step=4;
+  const body=document.getElementById('crewBody');
+  body.innerHTML='<div class="vibe-analyze"><div class="va-ring"></div><h2 id="crewMsg">Finding your crew…</h2><p>Matching people by interest, distance & vibe</p></div>';
+  const msgs=['Scanning nearby people…','Checking who\'s into '+crewLabel().toLowerCase()+'…','Reading the vibe…','Picking the best fits…'];
+  let mi=0;const tick=setInterval(()=>{mi++;const el=document.getElementById('crewMsg');if(el&&msgs[mi])el.textContent=msgs[mi];},650);
+  try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} if(userLoc)await api('/api/me/location','POST',{lat:userLoc.lat,lng:userLoc.lng}); }catch(e){}
+  let q='/api/crew/build?activity='+encodeURIComponent(crewState.activity)+'&size='+encodeURIComponent(crewState.size);
+  if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;
+  let d;
+  try{ d=await api(q); }catch(e){ clearInterval(tick); body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">😕</div><h2>Couldn\'t build the crew</h2><p>'+esc(e.message)+'</p><button class="btn btn-mango" onclick="crewState.step=3;renderCrewStep()">Back</button></div>'; return; }
+  setTimeout(()=>{clearInterval(tick);crewShowResults(d);},1200);
+}
+function crewShowResults(d){
+  crewState.people=d.people||[];
+  crewState.placeSug=d.place||null;
+  // pre-select the top N (wanted-1, since the user is one of the crew)
+  crewState.picked=new Set(crewState.people.slice(0,Math.max(0,(d.wanted||4)-1)).map(p=>p.id));
+  renderCrewResults();
+}
+function renderCrewResults(){
+  const body=document.getElementById('crewBody');
+  const lbl=document.getElementById('crewStepLabel'); if(lbl)lbl.textContent='';
+  if(!crewState.people.length){
+    body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">🌱</div><h2>No one nearby fits just yet</h2>'
+      +'<p>We couldn\'t find people for a '+esc(crewLabel().toLowerCase())+' crew in range right now. Try a wider activity, or invite friends to ShowUpp so the pool grows.</p>'
+      +'<button class="btn btn-mango" onclick="crewState.step=1;renderCrewStep()">Try another activity</button></div>';
+    return;
+  }
+  const place=crewState.placeSug;
+  const placeHtml=place?('<div class="crew-place"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Suggested places</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div style="font-size:14.5px;font-weight:700;color:var(--night)">'+crewEmoji()+' '+esc(place.label)+' near you</div>'
+    +'<a href="'+esc(place.mapsUrl)+'" target="_blank" rel="noopener" class="vibe-btn-ghost" style="text-decoration:none;display:inline-block">Open map ↗</a></div></div>'):'';
+  const rows=crewState.people.map(p=>crewPersonRow(p)).join('');
+  body.innerHTML=
+    '<div class="vibe-archetype" style="background:linear-gradient(135deg,#12B886,#0CA678 60%,#7C83FF)"><div class="va-emoji">'+crewEmoji()+'</div><div class="va-label">Your '+esc(crewLabel())+' crew</div><div class="va-sub">We found '+crewState.people.length+' great '+(crewState.people.length===1?'fit':'fits')+' nearby. Tap to add or remove anyone.</div></div>'
+    +placeHtml
+    +'<div style="margin:16px 2px 4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Who\'s in <span id="crewCount" style="color:var(--turq)"></span></div>'
+    +'<div id="crewPeople">'+rows+'</div>'
+    +'<div class="field" style="margin:14px 0 0"><label style="font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px">Name your crew</label>'
+      +'<input type="text" id="crewName" value="'+esc(crewLabel())+' crew" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:inherit;font-size:15px;box-sizing:border-box"></div>'
+    +'<button class="btn btn-mango" style="width:100%;margin-top:14px" onclick="crewCreate()">🎉 Create crew & invite everyone</button>'
+    +'<div class="vibe-skip" onclick="crewState.step=1;renderCrewStep()">↺ Start over</div>';
+  updateCrewCount();
+}
+function crewPersonRow(p){
+  const on=crewState.picked.has(p.id)?' on':'';
+  const av=p.avatar?'<img class="cp-av" src="'+esc(p.avatar)+'">':'<div class="cp-av">'+esc((p.name||'?').charAt(0).toUpperCase())+'</div>';
+  const bits=[];
+  if(p.isFriend)bits.push('🤝 friend');
+  if(p.vibe!=null)bits.push('✨ '+p.vibe+'% vibe');
+  if(p.interestHits)bits.push('🎯 into '+crewLabel().toLowerCase());
+  if(p.distance!=null)bits.push(milesLabel(p.distance)+' away');
+  return '<div class="crew-person'+on+'" id="crewp-'+p.id+'">'+av
+    +'<div style="flex:1;min-width:0"><div class="cp-name">'+esc(p.name||'Someone')+'</div><div class="cp-meta">'+bits.join(' · ')+'</div></div>'
+    +'<div class="cp-pick" onclick="crewToggle(\''+p.id+'\')">'+(on?'✓':'')+'</div></div>';
+}
+function crewToggle(id){
+  if(crewState.picked.has(id))crewState.picked.delete(id);else crewState.picked.add(id);
+  const row=document.getElementById('crewp-'+id);
+  if(row){const on=crewState.picked.has(id);row.classList.toggle('on',on);row.querySelector('.cp-pick').textContent=on?'✓':'';}
+  updateCrewCount();
+}
+function updateCrewCount(){ const el=document.getElementById('crewCount'); if(el)el.textContent='· '+(crewState.picked.size+1)+' total (with you)'; }
+async function crewCreate(){
+  if(!crewState.picked.size){ toast('Pick at least one person for your crew'); return; }
+  const title=(document.getElementById('crewName')||{}).value||(crewLabel()+' crew');
+  const payload={activity:crewState.activity,title:title,memberIds:[...crewState.picked],place:crewState.place||null};
+  if(crewState.when){ const ts=Date.parse(crewState.when); if(!isNaN(ts))payload.event_at=ts; }
+  if(userLoc){payload.lat=userLoc.lat;payload.lng=userLoc.lng;}
+  const btn=event&&event.target; if(btn){btn.disabled=true;btn.textContent='Creating…';}
+  try{
+    const r=await api('/api/crew/create','POST',payload);
+    toast('Crew created — '+r.invited+' invite'+(r.invited===1?'':'s')+' sent! 🎉');
+    // jump into the new Round's detail page if available, else Circles
+    if(r.round&&r.round.id&&typeof openDetail==='function'){ openDetail(r.round.id); }
+    else { go('s-circles'); switchCircTab('rounds'); if(typeof loadCircles==='function')loadCircles(); }
+  }catch(e){ if(btn){btn.disabled=false;btn.textContent='🎉 Create crew & invite everyone';} toast(e.message); }
+}
+
 
 
 function switchAdminTab(which){
@@ -7058,7 +7378,7 @@ function renderAdminReportsList(){
     const status=r.status||'open';
     const daysLine=r.days_incomplete!=null?('<span style="font-size:11.5px;color:'+(r.days_incomplete>=3?'#d94b3b':'var(--muted)')+';font-weight:700">⏱ '+r.days_incomplete+' day'+(r.days_incomplete===1?'':'s')+' incomplete</span>'):'';
     const verdictBadge=r.verdict?('<span style="font-size:11px;font-weight:700;color:'+(r.verdict==='validated'?'#d94b3b':'var(--muted)')+'">'+(r.verdict==='validated'?'✔ Validated':'✖ Discarded')+'</span>'):'';
-    return '<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px">'
+    const inner='<div class="friend-row" style="flex-direction:column;align-items:stretch;gap:6px" ontouchstart="repSwipeStart(event)" ontouchend="repSwipeEnd(event,\''+r.id+'\')">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
       +'<b style="font-size:13.5px;color:var(--night)">'+esc(r.reason||'Report')+'</b>'
       +'<span style="font-size:11px;font-weight:700;color:'+REPORT_STATUS_COLOR[status]+';white-space:nowrap">● '+REPORT_STATUS_LABEL[status]+'</span>'
@@ -7070,7 +7390,46 @@ function renderAdminReportsList(){
       +'<button class="btn" style="padding:7px 14px;font-size:12.5px;background:var(--coral);color:#fff;border:none" onclick="admOpenAnalyze(\''+r.id+'\')">🔎 Analyze</button>'
       +'</div>'
       +'</div>';
+    return '<div class="rep-swipe" id="repsw-'+r.id+'">'
+      +'<div class="del-bg" onclick="askDeleteReport(\''+r.id+'\')">Delete</div>'
+      +inner
+      +'</div>';
   }).join('');
+}
+// ---- Swipe-to-delete for reports (touch), click fallback on desktop ----
+let repSwX=null;
+function repSwipeStart(e){repSwX=e.changedTouches[0].clientX;}
+function repSwipeEnd(e,rid){
+  const dx=e.changedTouches[0].clientX-repSwX;
+  const w=document.getElementById('repsw-'+rid);
+  if(!w)return;
+  if(dx<-40)w.classList.add('swiped');
+  else if(dx>40)w.classList.remove('swiped');
+}
+let pendingDeleteReportId=null;
+function askDeleteReport(rid){
+  pendingDeleteReportId=rid;
+  const inp=document.getElementById('supPassInput');if(inp)inp.value='';
+  document.getElementById('supPassSheet').classList.add('open');
+  setTimeout(()=>{if(inp)inp.focus();},60);
+}
+function closeSupPass(){document.getElementById('supPassSheet').classList.remove('open');pendingDeleteReportId=null;}
+async function confirmDeleteReport(){
+  const inp=document.getElementById('supPassInput');const pw=inp?inp.value:'';
+  if(!pw){toast('Enter the supervisor password');return;}
+  if(!pendingDeleteReportId){closeSupPass();return;}
+  const rid=pendingDeleteReportId;
+  try{
+    await api('/api/admin/reports/'+rid+'/delete','POST',{supervisorPassword:pw});
+    const idx=adminReportsData.findIndex(x=>x.id===rid);
+    if(idx>-1){
+      const st=adminReportsData[idx].status||'open';
+      adminReportsData.splice(idx,1);
+      if(adminReportsCounts.all>0)adminReportsCounts.all--;
+      if(adminReportsCounts[st]>0)adminReportsCounts[st]--;
+    }
+    closeSupPass();renderAdminReportsMetrics();renderAdminReportsList();toast('Report deleted');
+  }catch(e){toast(e.message);}
 }
 let admAnalyzeReport=null;
 async function admOpenAnalyze(rid){
