@@ -766,7 +766,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   <div class="lt-rings"><span></span><span></span><span></span></div>
   <div class="lt-sparks"></div>
   <div class="lt-logo-wrap">
-    <img src="/icons/showupp-logo-clean.png" alt="ShowUpp" class="lt-logo">
+    <img src="/icons/showupp-logo-clean.png" alt="ShowUpp" class="lt-logo" onerror="this.onerror=null;this.src=SHOWUPP_LOGO">
     <div class="lt-glow"></div>
   </div>
   <div class="lt-tagline">MEET PEOPLE. <span>MAKE MEMORIES.</span></div>
@@ -793,16 +793,19 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   opacity:0;animation:ltFadeUp .7s ease .55s forwards}
 .lt-tagline span{color:var(--mango)}
 @keyframes ltFadeUp{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}
-.lt-rings{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:1}
+.lt-rings{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;pointer-events:none}
 .lt-rings span{position:absolute;width:200px;height:200px;border-radius:50%;
-  border:1.5px solid rgba(120,140,255,.5);animation:ltRing 2.4s ease-out infinite}
+  border:1.5px solid rgba(120,140,255,.5);animation:ltRing 2.4s ease-out infinite;
+  will-change:transform,opacity;transform:translateZ(0);backface-visibility:hidden}
 .lt-rings span:nth-child(2){animation-delay:.8s;border-color:rgba(139,92,246,.5)}
 .lt-rings span:nth-child(3){animation-delay:1.6s;border-color:rgba(180,150,255,.45)}
-@keyframes ltRing{0%{transform:scale(.5);opacity:.9}100%{transform:scale(2.6);opacity:0}}
-.lt-sparks{position:absolute;width:320px;height:320px;z-index:1;animation:ltSpin 6s linear infinite}
-.lt-sparks::before,.lt-sparks::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%}
-.lt-sparks::before{top:6px;left:50%;background:#8B9BFF;box-shadow:0 0 14px #8B9BFF}
-.lt-sparks::after{bottom:10px;left:30%;background:#8B5CF6;box-shadow:0 0 14px #8B5CF6}
+/* Cap the scale so rings fade out well before reaching the screen edges — a ring
+   crossing the viewport border was producing thin red/green sub-pixel fringe flashes. */
+@keyframes ltRing{0%{transform:translateZ(0) scale(.5);opacity:.85}80%{opacity:0}100%{transform:translateZ(0) scale(1.9);opacity:0}}
+.lt-sparks{position:absolute;width:300px;height:300px;z-index:1;animation:ltSpin 6s linear infinite;pointer-events:none;will-change:transform}
+.lt-sparks::before,.lt-sparks::after{content:"";position:absolute;width:10px;height:10px;border-radius:50%;filter:blur(.5px)}
+.lt-sparks::before{top:10px;left:50%;background:#8B9BFF;box-shadow:0 0 12px #8B9BFF}
+.lt-sparks::after{bottom:16px;left:34%;background:#A78BFA;box-shadow:0 0 12px #A78BFA}
 @keyframes ltSpin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
 .lt-fadeout{animation:ltFadeOut .5s ease forwards}
 @keyframes ltFadeOut{0%{opacity:1}100%{opacity:0}}
@@ -2169,6 +2172,18 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<!-- Vibe Check nudge — shown to new users and re-shown monthly until taken -->
+<div class="sheet" id="vibeNudgeSheet" onclick="if(event.target===this)closeVibeNudge()">
+  <div class="sheet-inner" style="text-align:center">
+    <div class="grabber"></div>
+    <div style="font-size:46px;line-height:1;margin:6px 0 4px">✨</div>
+    <h3 id="vibeNudgeTitle" style="font-size:20px">Find your people faster</h3>
+    <p id="vibeNudgeBody" style="font-size:14px;color:var(--muted);line-height:1.55;margin:6px 4px 18px">Take the 60-second Vibe Check and we'll match you with people nearby who actually click with how you socialize. It seriously boosts your chances of finding your crew.</p>
+    <button class="btn btn-mango" style="width:100%" onclick="closeVibeNudge();enterVibe();">Take the Vibe Check ✨</button>
+    <div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:10px" onclick="closeVibeNudge()">Maybe later</div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 </div>
 
@@ -2441,6 +2456,9 @@ async function api(path,method,body){
 
 // ---- Nav ----
 function go(id){
+  // Close any stray overlays (open country-picker menus, etc.) so they can't
+  // linger visually on top of the next screen.
+  document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('.scroll').forEach(s=>s.scrollTop=0);
@@ -2834,6 +2852,8 @@ function enterApp(){
   window._notifPoll=setInterval(updateNotifBadge,30000);
   go('s-home');
   handleDeepLink();
+  // Gently nudge people who haven't taken the Vibe Check (new users once, then monthly).
+  setTimeout(()=>{try{maybePromptVibe();}catch(e){}},2600);
 }
 // ---- Profile picture upload ----
 function pickAvatar(){document.getElementById('avatarInput').click();}
@@ -6550,7 +6570,7 @@ function renderProfile(){
   }else{galWrap.style.display='none';}
   document.getElementById('adminEntry').style.display=me.isAdmin?'flex':'none';
   loadMyMoments();
-  refreshVibeCard();
+  try{refreshVibeCard();}catch(e){}
 }
 
 // ============================================================================
@@ -6602,6 +6622,32 @@ const VIBE_ARCHETYPES=[
 ];
 
 let vibeState={step:0,answers:{},total:VIBE_QUESTIONS.length,mode:'view'};
+
+// ---- Optional Vibe Check nudge: new users once, then monthly until taken ----
+const VIBE_NUDGE_MSGS=[
+  {t:"Find your people faster",b:"Take the 60-second Vibe Check and we'll match you with people nearby who actually click with how you socialize. It seriously boosts your chances of finding your crew."},
+  {t:"Your crew is out there ✨",b:"A quick Vibe Check helps us line you up with like-minded people close by. People who take it are way more likely to find their people."},
+  {t:"60 seconds → better matches",b:"Tell us how you like to hang out and we'll do the matchmaking. It's optional, but it's the single best way to find your crew on ShowUpp."}
+];
+function vibeNudgeKey(){ return 'su_vibe_nudge_'+(me&&me.id?me.id:'anon'); }
+async function maybePromptVibe(){
+  if(!me)return;
+  // Already completed? Never nudge.
+  let done=0;
+  try{ const d=await api('/api/vibe/me'); done=d.answeredCount||0; }catch(e){ return; }
+  if(done>=10)return;
+  // Cadence: show if never shown (new user) or if >=30 days since last shown.
+  let last=0;
+  try{ last=parseInt(localStorage.getItem(vibeNudgeKey())||'0',10)||0; }catch(e){}
+  const THIRTY_DAYS=30*24*60*60*1000;
+  if(last && (Date.now()-last)<THIRTY_DAYS)return;
+  const msg=VIBE_NUDGE_MSGS[Math.floor(Math.random()*VIBE_NUDGE_MSGS.length)];
+  const tt=document.getElementById('vibeNudgeTitle'); if(tt)tt.textContent=msg.t;
+  const bb=document.getElementById('vibeNudgeBody'); if(bb)bb.textContent=msg.b;
+  document.getElementById('vibeNudgeSheet').classList.add('open');
+  try{ localStorage.setItem(vibeNudgeKey(),String(Date.now())); }catch(e){}
+}
+function closeVibeNudge(){ const s=document.getElementById('vibeNudgeSheet'); if(s)s.classList.remove('open'); }
 
 function refreshVibeCard(){
   // Reflect saved progress on the You-page card.
@@ -7083,6 +7129,8 @@ async function crewCreate(){
 
 
 
+// ---- Admin / Manager ----
+function openAdmin(){if(!me||!me.isAdmin){toast('Not authorized');return;}switchAdminTab('users');go('s-admin');}
 function switchAdminTab(which){
   document.getElementById('adm-tab-users').classList.toggle('on',which==='users');
   document.getElementById('adm-tab-rounds').classList.toggle('on',which==='rounds');
@@ -7603,7 +7651,7 @@ function openEdit(){
   renderLangPickers();
   document.getElementById('editSheet').classList.add('open');
 }
-function closeEdit(){document.getElementById('editSheet').classList.remove('open');}
+function closeEdit(){document.getElementById('editSheet').classList.remove('open');document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));}
 
 // ---- Public profile editor ----
 function openPublic(){
