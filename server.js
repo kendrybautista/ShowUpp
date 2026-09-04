@@ -204,6 +204,16 @@ await db.exec(`
   -- Friendship Engine ("Vibe Check"): stores the user's questionnaire answers as JSON.
   -- Shape: {"answers":{"0":[1,3],"1":[0],...},"archetype":"...","updated_at":1234567890}
   ALTER TABLE users ADD COLUMN IF NOT EXISTS vibe_answers TEXT;
+  -- Optional note attached to a friend request (Vibe Check matches include a message
+  -- so the recipient sees WHY this person is reaching out).
+  ALTER TABLE friend_requests ADD COLUMN IF NOT EXISTS message TEXT;
+  -- People a user has chosen to ignore as potential Vibe matches.
+  CREATE TABLE IF NOT EXISTS vibe_ignores (
+    user_id    TEXT NOT NULL,
+    ignored_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, ignored_id)
+  );
 
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT;
@@ -1417,30 +1427,39 @@ async function computeVibeMatches(userId, opts) {
 }
 
 app.get('/api/vibe/matches', requireAuth, async (req, res) => {
-  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
-  const opts = {};
-  if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
-  const r = await computeVibeMatches(req.user.id, opts);
-  if (!r.ready) return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
-  res.json({
-    ready: true, threshold: VIBE_MATCH_THRESHOLD, radius: VIBE_RADIUS_MI,
-    myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '',
-    poolSize: r.poolSize, matches: r.matches.slice(0, VIBE_MAX_RESULTS)
-  });
+  try {
+    const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+    const opts = {};
+    if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
+    const r = await computeVibeMatches(req.user.id, opts);
+    if (!r.ready) return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
+    res.json({
+      ready: true, threshold: VIBE_MATCH_THRESHOLD, radius: VIBE_RADIUS_MI,
+      myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '',
+      poolSize: r.poolSize, matches: r.matches.slice(0, VIBE_MAX_RESULTS)
+    });
+  } catch (e) {
+    console.error('vibe/matches error:', e);
+    res.status(500).json({ error: 'Could not load matches right now.' });
+  }
 });
 
 // Suggested potential friends feed (Circles → Friends → Suggested). Broader than
 // the top-5 reveal: everyone >=80% nearby who isn't already a friend, freshest first,
 // so the list keeps refilling as new people join or take the Vibe Check.
 app.get('/api/vibe/suggested', requireAuth, async (req, res) => {
-  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
-  const opts = { excludeFriends: true };
-  if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
-  const r = await computeVibeMatches(req.user.id, opts);
-  if (!r.ready) return res.json({ ready: false, answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
-  // newest joiners first among the strong matches, so "new people who match" surface up top
-  const list = r.matches.slice().sort((a, b) => (b.joined || 0) - (a.joined || 0) || b.score - a.score).slice(0, 30);
-  res.json({ ready: true, myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '', people: list });
+  try {
+    const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+    const opts = { excludeFriends: true };
+    if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
+    const r = await computeVibeMatches(req.user.id, opts);
+    if (!r.ready) return res.json({ ready: false, answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
+    const list = r.matches.slice().sort((a, b) => (b.joined || 0) - (a.joined || 0) || b.score - a.score).slice(0, 30);
+    res.json({ ready: true, myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '', people: list });
+  } catch (e) {
+    console.error('vibe/suggested error:', e);
+    res.status(500).json({ error: 'Could not load suggestions right now.' });
+  }
 });
 
 // Ignore a potential match — stops them surfacing in matches & suggested.
@@ -1494,6 +1513,7 @@ function crewMapsLink(term, lat, lng, city) {
 
 // Find people who fit an activity + distance, ranked by vibe + interest overlap.
 app.get('/api/crew/build', requireAuth, async (req, res) => {
+ try {
   const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const act = CREW_ACTIVITIES[(req.query.activity || '').toLowerCase()];
   if (!act) return res.status(400).json({ error: 'Pick an activity.' });
@@ -1525,7 +1545,9 @@ app.get('/api/crew/build', requireAuth, async (req, res) => {
       const a = (me.city || '').toLowerCase().trim(), b = (u.city || '').toLowerCase().trim();
       if (!a || !b || a !== b) continue;
     }
-    const theirInterests = u.interests ? JSON.parse(u.interests) : [];
+    let theirInterests = [];
+    try { theirInterests = u.interests ? JSON.parse(u.interests) : []; } catch (e) { theirInterests = []; }
+    if (!Array.isArray(theirInterests)) theirInterests = [];
     const interestHits = theirInterests.filter(x => wantSet.has(x)).length;
     // vibe overlap (0..100) if both have taken it
     let vibe = null;
@@ -1553,6 +1575,10 @@ app.get('/api/crew/build', requireAuth, async (req, res) => {
     place: { label: act.place.label, mapsUrl: crewMapsLink(act.place.term, myLat, myLng, me.city) },
     people: suggested
   });
+ } catch (e) {
+  console.error('crew/build error:', e);
+  res.status(500).json({ error: 'Could not build the crew right now.' });
+ }
 });
 
 // Create the crew: makes a Round and invites the chosen people with a note.
