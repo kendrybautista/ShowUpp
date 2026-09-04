@@ -1507,6 +1507,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 </div>
 
 
+  <div class="sheet" id="editSheet" onclick="if(event.target===this)closeEdit()">
   <div class="sheet-inner" style="max-height:88%;overflow-y:auto">
     <div class="grabber"></div>
     <h3 data-i18n="edit_profile">Edit profile</h3>
@@ -2378,15 +2379,21 @@ function flagImg(code,size){
 }
 function codeForCountry(name){const c=COUNTRIES.find(c=>c[1]===name);return c?c[0]:'xx';}
 // Best-effort guess of the current user's country from their stored "City, Country" profile field.
-function guessUserCountry(){
-  let countryGuess='Dominican Republic';
-  const city=(me&&me.city)||'';
+// Shared helper: pull the country name back out of a "City, State, Country" (or
+// just "Country") style string, the way profiles store location. Falls back to
+// the given default when nothing matches (e.g. the string is empty/unrecognized).
+function countryFromCityString(city,fallback){
+  let countryGuess=fallback!==undefined?fallback:'';
+  city=city||'';
   COUNTRIES.forEach(c=>{
     const suffix=', '+c[1];
     if(city.endsWith(suffix))countryGuess=c[1];
     else if(city===c[1])countryGuess=c[1];
   });
   return countryGuess;
+}
+function guessUserCountry(){
+  return countryFromCityString((me&&me.city)||'','Dominican Republic');
 }
 
 // Custom searchable country dropdown. `pickerId` is the wrapper element id.
@@ -3015,6 +3022,9 @@ function primeLocation(){
   );
 }
 let maxDistKm=25;
+// The filter panel's distance always resets to "25" in whatever unit the user has
+// chosen (25 mi for mi users, 25 km for km users), not 25 km for everyone.
+function defaultDistKm(){return distUnit==='mi'?25*1.60934:25;}
 // Country filter (item 2): narrows Rounds/Events to a chosen country. Defaults to the
 // user's own country, guessed from their profile, once the filter panel's picker initializes.
 let currentCountryFilter='';
@@ -3090,6 +3100,15 @@ function matchesTimeFilter(r){
 }
 function filteredRounds(){
   let list=allRounds.slice();
+  // Country filter (matches the filter panel's country picker, item 3): only show
+  // Rounds hosted by someone in the selected country. Rounds with no resolvable
+  // host country are left in rather than silently disappearing.
+  if(currentCountryFilter){
+    list=list.filter(r=>{
+      const rc=countryFromCityString(r.host_city||'','');
+      return !rc||rc===currentCountryFilter;
+    });
+  }
   if(currentFilter==='📍 Near me'){
     list=list.filter(r=>r.lat!=null&&r.lng!=null);
     if(userLoc){
@@ -3116,7 +3135,7 @@ function filteredRounds(){
 function openFilterPanel(){document.getElementById('filterOverlay').classList.add('open');}
 function closeFilterPanel(){document.getElementById('filterOverlay').classList.remove('open');}
 function updateFilterActiveDot(){
-  const active=currentFilter!=='✨ For you'||currentTimeFilter!=='any'||homeSection!=='both'||maxDistKm!==25||onlyPartnerEvents||currentCountryFilter!==guessUserCountry();
+  const active=currentFilter!=='✨ For you'||currentTimeFilter!=='any'||homeSection!=='both'||Math.round(maxDistKm)!==Math.round(defaultDistKm())||onlyPartnerEvents||currentCountryFilter!==guessUserCountry();
   const dot=document.getElementById('filterActiveDot');if(dot)dot.style.display=active?'block':'none';
 }
 function resetFilters(){
@@ -3126,8 +3145,8 @@ function resetFilters(){
   ['any','today','week','month','date'].forEach(f=>{const el=document.getElementById('tf-'+f);if(el)el.classList.toggle('on',f==='any');});
   dateFilterFrom='';dateFilterTo='';
   {const df=document.getElementById('tfDateFrom');if(df)df.value='';const dt=document.getElementById('tfDateTo');if(dt)dt.value='';const dr=document.getElementById('dateFilterRow');if(dr)dr.style.display='none';}
-  maxDistKm=25;
-  const slider=document.getElementById('distSlider');if(slider)slider.value=distUnit==='mi'?Math.round(25*0.621371):25;
+  maxDistKm=defaultDistKm();
+  const slider=document.getElementById('distSlider');if(slider)slider.value=25;
   updateDistLabel();
   // Country resets to the user's own country (item 3).
   initCountryPicker('filterCountry',guessUserCountry());
@@ -3447,7 +3466,9 @@ function fetchEventsPage(page){
     const miles=maxDistKm*0.621371;
     q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
   }
-  if(currentCountryFilter)q+='&country='+encodeURIComponent(currentCountryFilter);
+  // Server expects an ISO-2 country code here (it compares against events.country),
+  // not the full country name shown in the picker.
+  if(currentCountryFilter)q+='&country='+encodeURIComponent(codeForCountry(currentCountryFilter));
   return api(q);
 }
 async function loadMoreEvents(){
