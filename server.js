@@ -34,6 +34,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@showupp.app';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
+// Secondary "supervisor" password required to permanently delete a report.
+// This is a placeholder gate until deletion is scoped to real supervisor accounts.
+const SUPERVISOR_PASSWORD = process.env.SUPERVISOR_PASSWORD || 'supervisor123';
 
 // --- Database setup (Neon Postgres) ---
 // All data lives in Neon, separate from the app host, so it survives restarts/deploys.
@@ -2098,6 +2101,20 @@ app.post('/api/admin/reports/:id/close', requireAuth, requireAdmin, async (req, 
   const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Report not found.' });
   await db.prepare('UPDATE reports SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', now(), r.id);
+  res.json({ ok: true });
+});
+
+// Permanently delete a report (admin only) — gated by a secondary "supervisor" password.
+// Eventually this action will be restricted to supervisor accounts; for now any admin
+// may perform it, but only after re-entering the separate supervisor password.
+app.post('/api/admin/reports/:id/delete', requireAuth, requireAdmin, async (req, res) => {
+  const { supervisorPassword } = req.body || {};
+  if (!supervisorPassword || String(supervisorPassword) !== SUPERVISOR_PASSWORD) {
+    return res.status(403).json({ error: 'Incorrect supervisor password.' });
+  }
+  const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  await db.prepare('DELETE FROM reports WHERE id = ?').run(r.id);
   res.json({ ok: true });
 });
 
