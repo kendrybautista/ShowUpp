@@ -34,6 +34,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@showupp.app';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const ADMIN_NAME = process.env.ADMIN_NAME || 'ShowUpp Admin';
+// Secondary "supervisor" password required to permanently delete a report.
+// Placeholder gate until deletion is scoped to real supervisor accounts.
+const SUPERVISOR_PASSWORD = process.env.SUPERVISOR_PASSWORD || 'supervisor123';
 
 // --- Database setup (Neon Postgres) ---
 // All data lives in Neon, separate from the app host, so it survives restarts/deploys.
@@ -1361,63 +1364,227 @@ app.get('/api/vibe/me', requireAuth, async (req, res) => {
 });
 
 // The matcher: up to 5 people >= 80% within 25 miles.
-app.get('/api/vibe/matches', requireAuth, async (req, res) => {
-  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+// Shared matcher used by /matches (top 5 >=80%) and /suggested (broader feed).
+// Returns { ready, matches:[...], poolSize, weights } sorted by score desc.
+async function computeVibeMatches(userId, opts) {
+  opts = opts || {};
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   const myVibe = parseVibe(me.vibe_answers);
-  if (!myVibe || answeredCount(myVibe) < 10) {
-    return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(myVibe), total: VIBE_QUESTION_COUNT });
+  if (!myVibe || answeredCount(myVibe) < 10) return { ready: false, me, myVibe, matches: [], poolSize: 0 };
+  const myLat = (typeof opts.lat === 'number') ? opts.lat : me.lat;
+  const myLng = (typeof opts.lng === 'number') ? opts.lng : me.lng;
+  const haveLoc = typeof myLat === 'number' && typeof myLng === 'number';
+  const radius = opts.radius || VIBE_RADIUS_MI;
+  const threshold = (opts.threshold != null) ? opts.threshold : VIBE_MATCH_THRESHOLD;
+
+  const ignoredRows = await db.prepare('SELECT ignored_id FROM vibe_ignores WHERE user_id = ?').all(userId);
+  const ignored = new Set(ignoredRows.map(r => r.ignored_id));
+
+  const others = await db.prepare('SELECT * FROM users WHERE id != ? AND vibe_answers IS NOT NULL AND suspended = 0').all(userId);
+  const pool = [];
+  for (const u of others) {
+    if (ignored.has(u.id)) continue;
+    const v = parseVibe(u.vibe_answers);
+    if (!v || answeredCount(v) < 10) continue;
+    if (await isBlocked(userId, u.id)) continue;
+    let dist = null;
+    if (haveLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
+      dist = distanceMiles(myLat, myLng, u.lat, u.lng);
+      if (dist > radius) continue;
+    } else {
+      const a = (me.city || '').toLowerCase().trim();
+      const b = (u.city || '').toLowerCase().trim();
+      if (!a || !b || a !== b) continue;
+    }
+    pool.push({ u, answers: v.answers, dist, archetype: v.archetype || '', joined: u.created_at || 0 });
   }
+  const weights = adaptiveWeights(pool.concat([{ answers: myVibe.answers }]));
+  const scored = [];
+  for (const c of pool) {
+    const { score, sharedQ } = vibeScore(myVibe.answers, c.answers, weights);
+    if (score < threshold) continue;
+    const rel = await friendStatus(userId, c.u.id);
+    if (opts.excludeFriends && rel === 'friend') continue;
+    scored.push({
+      id: c.u.id, name: c.u.name, username: c.u.username || '', avatar: c.u.avatar || '',
+      city: c.u.city || '', bio: c.u.bio || '', archetype: c.archetype,
+      distance: c.dist, score, sharedQuestions: sharedQ, status: rel,
+      joined: c.joined, answers: c.answers
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  return { ready: true, me, myVibe, matches: scored, poolSize: pool.length };
+}
+
+app.get('/api/vibe/matches', requireAuth, async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const opts = {};
+  if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
+  const r = await computeVibeMatches(req.user.id, opts);
+  if (!r.ready) return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
+  res.json({
+    ready: true, threshold: VIBE_MATCH_THRESHOLD, radius: VIBE_RADIUS_MI,
+    myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '',
+    poolSize: r.poolSize, matches: r.matches.slice(0, VIBE_MAX_RESULTS)
+  });
+});
+
+// Suggested potential friends feed (Circles → Friends → Suggested). Broader than
+// the top-5 reveal: everyone >=80% nearby who isn't already a friend, freshest first,
+// so the list keeps refilling as new people join or take the Vibe Check.
+app.get('/api/vibe/suggested', requireAuth, async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const opts = { excludeFriends: true };
+  if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
+  const r = await computeVibeMatches(req.user.id, opts);
+  if (!r.ready) return res.json({ ready: false, answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
+  // newest joiners first among the strong matches, so "new people who match" surface up top
+  const list = r.matches.slice().sort((a, b) => (b.joined || 0) - (a.joined || 0) || b.score - a.score).slice(0, 30);
+  res.json({ ready: true, myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '', people: list });
+});
+
+// Ignore a potential match — stops them surfacing in matches & suggested.
+app.post('/api/vibe/ignore', requireAuth, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId || userId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  await db.prepare('INSERT INTO vibe_ignores (user_id,ignored_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, userId, now());
+  res.json({ ok: true });
+});
+// Un-ignore (in case they change their mind).
+app.post('/api/vibe/unignore', requireAuth, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'Invalid user.' });
+  await db.prepare('DELETE FROM vibe_ignores WHERE user_id = ? AND ignored_id = ?').run(req.user.id, userId);
+  res.json({ ok: true });
+});
+
+// ============================================================================
+//  BUILD A CREW
+//  Idea -> the app assembles the crew. Finds people who fit by (a) matching the
+//  chosen activity to their interests, (b) distance, and (c) Vibe Check overlap
+//  when available; then suggests places to actually do the thing.
+// ============================================================================
+
+// Map each crew activity to: the interest tags that signal a fit, and the kind
+// of place to suggest (label + a maps search term).
+const CREW_ACTIVITIES = {
+  bowling:  { emoji:'🎳', label:'Bowling',  interests:['Games & Trivia','Sports','Gaming'], place:{term:'bowling alley', label:'Bowling alleys'} },
+  food:     { emoji:'🍔', label:'Food',     interests:['Food','Cooking','Coffee'], place:{term:'popular restaurants', label:'Restaurants'} },
+  hiking:   { emoji:'🏕️', label:'Hiking',   interests:['Outdoors','Fitness','Camping','Travel'], place:{term:'hiking trails', label:'Trailheads & parks'} },
+  gaming:   { emoji:'🎮', label:'Gaming',   interests:['Gaming','Games & Trivia','Tech'], place:{term:'game bar arcade', label:'Arcades & game bars'} },
+  movies:   { emoji:'🎬', label:'Movies',   interests:['Movies','Theater'], place:{term:'movie theater', label:'Cinemas'} },
+  coffee:   { emoji:'☕', label:'Coffee',   interests:['Coffee','Book Reviews','Book Club'], place:{term:'coffee shops', label:'Coffee shops'} },
+  cars:     { emoji:'🚗', label:'Cars',     interests:['Cars','Motorcycles'], place:{term:'cars and coffee meetup', label:'Meetup spots'} },
+  fitness:  { emoji:'🏋️', label:'Fitness',  interests:['Fitness','Sports','Outdoors','Wellness'], place:{term:'gym fitness studio', label:'Gyms & studios'} },
+  art:      { emoji:'🎨', label:'Art',      interests:['Art','Crafts & DIY','Photography'], place:{term:'art gallery studio', label:'Galleries & studios'} },
+  music:    { emoji:'🎵', label:'Music',    interests:['Music','Instruments','Dance'], place:{term:'live music venue', label:'Live music venues'} },
+  drinks:   { emoji:'🍸', label:'Drinks',   interests:['Food','Music','Dance'], place:{term:'cocktail bar', label:'Bars & lounges'} },
+  sports:   { emoji:'⚽', label:'Watch sports', interests:['Sports','Basketball','Football','Baseball','Soccer'], place:{term:'sports bar', label:'Sports bars'} },
+  outdoors: { emoji:'🌳', label:'Outdoors', interests:['Outdoors','Camping','Fitness','Pets'], place:{term:'park', label:'Parks & green spaces'} },
+  books:    { emoji:'📚', label:'Books',    interests:['Book Club','Book Reviews','Writing'], place:{term:'bookstore cafe', label:'Bookstores & cafés'} }
+};
+
+function crewMapsLink(term, lat, lng, city) {
+  const q = encodeURIComponent(term + (city ? (' in ' + city) : ''));
+  if (typeof lat === 'number' && typeof lng === 'number') {
+    return 'https://www.google.com/maps/search/' + q + '/@' + lat + ',' + lng + ',13z';
+  }
+  return 'https://www.google.com/maps/search/' + q;
+}
+
+// Find people who fit an activity + distance, ranked by vibe + interest overlap.
+app.get('/api/crew/build', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const act = CREW_ACTIVITIES[(req.query.activity || '').toLowerCase()];
+  if (!act) return res.status(400).json({ error: 'Pick an activity.' });
+  const size = String(req.query.size || '3-4');
+  const wanted = size === '7-10' ? 10 : (size === '5-6' ? 6 : 4);
+  const radiusMi = Math.min(parseFloat(req.query.radius) || VIBE_RADIUS_MI, 100);
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const hasLoc = !isNaN(lat) && !isNaN(lng);
   const myLat = hasLoc ? lat : me.lat, myLng = hasLoc ? lng : me.lng;
   const haveLoc = typeof myLat === 'number' && typeof myLng === 'number';
 
-  const others = await db.prepare('SELECT * FROM users WHERE id != ? AND vibe_answers IS NOT NULL AND suspended = 0').all(req.user.id);
+  const myVibe = parseVibe(me.vibe_answers);
+  const ignoredRows = await db.prepare('SELECT ignored_id FROM vibe_ignores WHERE user_id = ?').all(req.user.id);
+  const ignored = new Set(ignoredRows.map(r => r.ignored_id));
+  const wantSet = new Set(act.interests);
 
-  // Build the candidate pool (in range, not blocked, has enough answers) first —
-  // the adaptive weights are learned from this pool.
+  const others = await db.prepare('SELECT * FROM users WHERE id != ? AND suspended = 0').all(req.user.id);
   const pool = [];
   for (const u of others) {
-    const v = parseVibe(u.vibe_answers);
-    if (!v || answeredCount(v) < 10) continue;
+    if (ignored.has(u.id)) continue;
     if (await isBlocked(req.user.id, u.id)) continue;
     let dist = null;
     if (haveLoc && typeof u.lat === 'number' && typeof u.lng === 'number') {
       dist = distanceMiles(myLat, myLng, u.lat, u.lng);
-      if (dist > VIBE_RADIUS_MI) continue;
+      if (dist > radiusMi) continue;
+    } else if (haveLoc) {
+      continue; // I have a location but they don't — can't confirm they're nearby
     } else {
-      // No coordinates for one side — fall back to same-city so we still respect "nearby".
-      const a = (me.city || '').toLowerCase().trim();
-      const b = (u.city || '').toLowerCase().trim();
+      const a = (me.city || '').toLowerCase().trim(), b = (u.city || '').toLowerCase().trim();
       if (!a || !b || a !== b) continue;
     }
-    pool.push({ u, answers: v.answers, dist, archetype: v.archetype || '' });
-  }
-
-  const weights = adaptiveWeights(pool.concat([{ answers: myVibe.answers }]));
-  const scored = [];
-  for (const c of pool) {
-    const { score, sharedQ } = vibeScore(myVibe.answers, c.answers, weights);
-    if (score < VIBE_MATCH_THRESHOLD) continue;
-    const rel = await friendStatus(req.user.id, c.u.id); // 'friend' | 'pending' | 'incoming' | 'none'
-    scored.push({
-      id: c.u.id, name: c.u.name, username: c.u.username || '', avatar: c.u.avatar || '',
-      city: c.u.city || '', bio: c.u.bio || '', archetype: c.archetype,
-      distance: c.dist, score, sharedQuestions: sharedQ,
-      status: rel,
-      answers: c.answers // sent so the client can show "you both chose…" highlights
+    const theirInterests = u.interests ? JSON.parse(u.interests) : [];
+    const interestHits = theirInterests.filter(x => wantSet.has(x)).length;
+    // vibe overlap (0..100) if both have taken it
+    let vibe = null;
+    const uv = parseVibe(u.vibe_answers);
+    if (myVibe && uv && answeredCount(myVibe) >= 10 && answeredCount(uv) >= 10) {
+      vibe = vibeScore(myVibe.answers, uv.answers, VIBE_BASE_WEIGHTS).score;
+    }
+    // fit score: category match dominates, vibe boosts, closer is better
+    const fit = interestHits * 22 + (vibe != null ? vibe * 0.5 : 0) + (dist != null ? Math.max(0, 20 - dist) : 0);
+    if (interestHits === 0 && vibe == null) continue; // no signal at all → skip
+    const rel = await friendStatus(req.user.id, u.id);
+    pool.push({
+      id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '',
+      city: u.city || '', distance: dist, interestHits, vibe, fit, status: rel,
+      isFriend: rel === 'friend'
     });
   }
-  scored.sort((a, b) => b.score - a.score || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  // Friends first (easiest to convince!), then best fit
+  pool.sort((a, b) => (b.isFriend - a.isFriend) || b.fit - a.fit || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  const suggested = pool.slice(0, Math.max(wanted + 4, 8)); // a few extra so the user can swap people out
+
   res.json({
-    ready: true,
-    threshold: VIBE_MATCH_THRESHOLD,
-    radius: VIBE_RADIUS_MI,
-    myAnswers: myVibe.answers,
-    myArchetype: myVibe.archetype || '',
-    poolSize: pool.length,
-    matches: scored.slice(0, VIBE_MAX_RESULTS)
+    activity: { key:(req.query.activity||'').toLowerCase(), ...act },
+    size, wanted,
+    place: { label: act.place.label, mapsUrl: crewMapsLink(act.place.term, myLat, myLng, me.city) },
+    people: suggested
   });
+});
+
+// Create the crew: makes a Round and invites the chosen people with a note.
+app.post('/api/crew/create', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const { activity, title, memberIds, place, lat, lng, event_at } = req.body || {};
+  const act = CREW_ACTIVITIES[(activity || '').toLowerCase()];
+  if (!act) return res.status(400).json({ error: 'Pick an activity.' });
+  const ids = Array.isArray(memberIds) ? memberIds.filter(x => typeof x === 'string').slice(0, 20) : [];
+  const round = {
+    id: id(), title: String(title || (act.label + ' crew')).trim().slice(0, 80),
+    emoji: act.emoji, category: act.label, blurb: 'A crew put together with Build a Crew ✨',
+    host_id: req.user.id, created_at: now(),
+    lat: (typeof lat === 'number') ? lat : (typeof me.lat === 'number' ? me.lat : null),
+    lng: (typeof lng === 'number') ? lng : (typeof me.lng === 'number' ? me.lng : null),
+    place: (place && typeof place === 'string') ? place.slice(0, 200) : null,
+    photo: null, link: null,
+    event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
+  };
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at)`).run(round);
+  await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(round.id, req.user.id, now());
+  // invite each person via a notification linking to the Round
+  let invited = 0;
+  for (const uid of ids) {
+    if (uid === req.user.id) continue;
+    if (await isBlocked(req.user.id, uid)) continue;
+    await pushNotif(uid, 'crew_invite', (me.name || 'Someone') + ' started a ' + act.label + ' crew ' + act.emoji,
+      'You\'re a great fit for “' + round.title + '”. Tap to join!', 'round:' + round.id);
+    invited++;
+  }
+  res.json({ ok: true, round, invited });
 });
 
 
@@ -1538,12 +1705,13 @@ app.get('/api/users/search', requireAuth, async (req, res) => {
 
 // Send a friend request
 app.post('/api/friends/request', requireAuth, async (req, res) => {
-  const { toId } = req.body || {};
+  const { toId, message } = req.body || {};
   if (!toId || toId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
   if (await isBlocked(req.user.id, toId)) return res.status(403).json({ error: 'Unavailable.' });
   const exists = await db.prepare('SELECT id FROM users WHERE id = ?').get(toId);
   if (!exists) return res.status(404).json({ error: 'User not found.' });
   if (await areFriends(req.user.id, toId)) return res.json({ ok: true, status: 'friend' });
+  const msg = (typeof message === 'string') ? message.slice(0, 280) : null;
   // If they already sent YOU a request, accept it instead
   const incoming = await db.prepare('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?').get(toId, req.user.id);
   if (incoming) {
@@ -1552,15 +1720,16 @@ app.post('/api/friends/request', requireAuth, async (req, res) => {
     await db.prepare('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?').run(toId, req.user.id);
     return res.json({ ok: true, status: 'friend' });
   }
-  await db.prepare('INSERT INTO friend_requests (from_id,to_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, toId, now());
-  await pushNotif(toId, 'friend_request', 'New friend request', (req.user.name || 'Someone') + ' wants to be friends', 'friends:requests');
+  await db.prepare('INSERT INTO friend_requests (from_id,to_id,created_at,message) VALUES (?,?,?,?) ON CONFLICT (from_id,to_id) DO UPDATE SET message = excluded.message').run(req.user.id, toId, now(), msg);
+  const preview = msg ? ('“' + msg.slice(0, 60) + (msg.length > 60 ? '…' : '') + '”') : ((req.user.name || 'Someone') + ' wants to be friends');
+  await pushNotif(toId, 'friend_request', 'New friend request', preview, 'friends:requests');
   res.json({ ok: true, status: 'pending' });
 });
 
 // Incoming friend requests (people who want to add me)
 app.get('/api/friends/requests', requireAuth, async (req, res) => {
   const rows = await db.prepare(`
-    SELECT u.id, u.name, u.username, u.avatar, u.city
+    SELECT u.id, u.name, u.username, u.avatar, u.city, fr.message
     FROM friend_requests fr JOIN users u ON u.id = fr.from_id
     WHERE fr.to_id = ? ORDER BY fr.created_at DESC
   `).all(req.user.id);
@@ -2305,6 +2474,18 @@ app.post('/api/admin/reports/:id/close', requireAuth, requireAdmin, async (req, 
   const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Report not found.' });
   await db.prepare('UPDATE reports SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', now(), r.id);
+  res.json({ ok: true });
+});
+
+// Permanently delete a report (admin only) — gated by a secondary supervisor password.
+app.post('/api/admin/reports/:id/delete', requireAuth, requireAdmin, async (req, res) => {
+  const { supervisorPassword } = req.body || {};
+  if (!supervisorPassword || String(supervisorPassword) !== SUPERVISOR_PASSWORD) {
+    return res.status(403).json({ error: 'Incorrect supervisor password.' });
+  }
+  const r = await db.prepare('SELECT id FROM reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Report not found.' });
+  await db.prepare('DELETE FROM reports WHERE id = ?').run(r.id);
   res.json({ ok: true });
 });
 
