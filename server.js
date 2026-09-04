@@ -250,6 +250,10 @@ await db.exec(`
     round_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at BIGINT,
     PRIMARY KEY (round_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS saved_events (
+    event_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at BIGINT,
+    PRIMARY KEY (event_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS moments (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -315,6 +319,8 @@ await db.exec(`
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_ingest_at BIGINT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
+  -- For the "website" provider: the events-page URL to auto-read (no API).
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS url TEXT;
   -- Country the event takes place in (ISO 3166-1 alpha-2, e.g. 'US', 'DO'). Lets the
   -- feed serve users their own country's events instead of a US-only catalog (item 6).
   ALTER TABLE events ADD COLUMN IF NOT EXISTS country TEXT;
@@ -2606,6 +2612,31 @@ app.get('/api/saved-rounds', requireAuth, async (req, res) => {
   res.json({ rounds });
 });
 
+// Toggle save/bookmark on an event (mirrors the Round save behavior).
+app.post('/api/events/:id/save', requireAuth, async (req, res) => {
+  const ev = await db.prepare('SELECT id FROM events WHERE id = ?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Event not found.' });
+  const existing = await db.prepare('SELECT 1 FROM saved_events WHERE event_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (existing) await db.prepare('DELETE FROM saved_events WHERE event_id=? AND user_id=?').run(req.params.id, req.user.id);
+  else await db.prepare('INSERT INTO saved_events (event_id,user_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.params.id, req.user.id, now());
+  res.json({ ok: true, saved: !existing });
+});
+
+// List events the user has saved.
+app.get('/api/saved-events', requireAuth, async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const rows = await db.prepare(`
+    SELECT e.* FROM events e JOIN saved_events se ON se.event_id = e.id
+    WHERE se.user_id = ? ORDER BY se.created_at DESC
+  `).all(req.user.id);
+  const events = rows.map(e => {
+    let dist = (hasLoc && typeof e.lat === 'number' && typeof e.lng === 'number') ? distanceMiles(lat, lng, e.lat, e.lng) : null;
+    return { ...e, source_label: e.source === 'community' ? 'Community' : (e.source_label || e.source), distance: dist, i_saved: true };
+  });
+  res.json({ events });
+});
+
 // Toggle a like/love reaction on a Round
 app.post('/api/rounds/:id/react', requireAuth, async (req, res) => {
   const { type } = req.body || {};
@@ -2973,10 +3004,133 @@ async function fetchTicketmaster(apiKey, label, countries) {
 // Back-compat alias — older callers referenced fetchTicketmasterUS.
 async function fetchTicketmasterUS(apiKey, label) { return fetchTicketmaster(apiKey, label); }
 const EVENT_PROVIDERS = {
-  ticketmaster: async (apiKey, label) => fetchTicketmaster(apiKey, label)
-  // Add more providers here later the same way, e.g.:
-  //   eventbrite: async (apiKey, label) => { ...page through their API, return normalized events... }
+  ticketmaster: async (s) => fetchTicketmaster(s.api_key, s.label)
+  // Add more API providers here later the same way, e.g.:
+  //   eventbrite: async (s) => { ...page through their API, return normalized events... }
 };
+// Providers that read a plain website (no API). Kept separate because they take a URL
+// instead of an API key and share one scraping implementation.
+const WEBSITE_PROVIDER = 'website';
+
+// ---- Website auto-reader (no API) ----------------------------------------
+// Fetches an organizer/promoter's public events page and extracts events WITHOUT
+// any API. Strategy, most-reliable first:
+//   1) schema.org "Event" JSON-LD (<script type="application/ld+json">) — the
+//      structured data most event sites already embed for Google. This is by far
+//      the most accurate, so we use it whenever present.
+//   2) A light fallback that scans for time tags / date-ish text near headings.
+// Anything we can't confidently parse is skipped rather than guessed.
+function stripTags(html) { return String(html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); }
+function decodeEntities(s) {
+  return String(s || '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
+}
+function absolutizeUrl(href, base) {
+  if (!href) return null;
+  try { return new URL(href, base).href; } catch (e) { return null; }
+}
+function collectJsonLdEvents(node, out) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) { node.forEach(n => collectJsonLdEvents(n, out)); return; }
+  const t = node['@type'];
+  const types = Array.isArray(t) ? t : [t];
+  if (types.some(x => typeof x === 'string' && /Event$/i.test(x))) out.push(node);
+  // Common containers: @graph, itemListElement, subEvent
+  if (node['@graph']) collectJsonLdEvents(node['@graph'], out);
+  if (node.itemListElement) collectJsonLdEvents(node.itemListElement, out);
+  if (node.subEvent) collectJsonLdEvents(node.subEvent, out);
+  if (node.item) collectJsonLdEvents(node.item, out);
+}
+function normalizeWebsiteEvent(ev, s, pageUrl) {
+  const name = decodeEntities(ev.name || ev.headline || '');
+  if (!name) return null;
+  let starts = null;
+  const sd = ev.startDate || (ev.subEvent && ev.subEvent.startDate) || null;
+  if (sd) { const ms = Date.parse(sd); if (!isNaN(ms)) starts = ms; }
+  const loc = ev.location || {};
+  let place = '';
+  if (typeof loc === 'string') place = loc;
+  else if (loc.name) place = loc.name;
+  else if (loc.address) place = (typeof loc.address === 'string') ? loc.address : (loc.address.streetAddress || loc.address.addressLocality || '');
+  const geo = (loc && loc.geo) || {};
+  const lat = geo.latitude != null ? parseFloat(geo.latitude) : null;
+  const lng = geo.longitude != null ? parseFloat(geo.longitude) : null;
+  let photo = null;
+  if (ev.image) photo = Array.isArray(ev.image) ? (ev.image[0] && (ev.image[0].url || ev.image[0])) : (ev.image.url || ev.image);
+  let link = ev.url || ev.mainEntityOfPage || null;
+  link = absolutizeUrl(typeof link === 'object' ? (link['@id'] || link.url) : link, pageUrl) || pageUrl;
+  // Stable id from source + link/name so re-reads upsert instead of duplicating.
+  const key = (link || '') + '|' + name + '|' + (sd || '');
+  const hash = require('crypto').createHash('md5').update(key).digest('hex').slice(0, 16);
+  const { category, emoji } = classifyByText(name + ' ' + decodeEntities(ev.description || ''));
+  return {
+    id: 'web_' + s.id + '_' + hash,
+    source: WEBSITE_PROVIDER + ':' + s.id,
+    source_id: hash,
+    title: name.slice(0, 200),
+    description: decodeEntities(stripTags(ev.description || '')).slice(0, 1000),
+    category, emoji,
+    photo: (typeof photo === 'string' ? absolutizeUrl(photo, pageUrl) : null),
+    link,
+    place: String(place || '').slice(0, 200),
+    lat: (typeof lat === 'number' && !isNaN(lat)) ? lat : null,
+    lng: (typeof lng === 'number' && !isNaN(lng)) ? lng : null,
+    starts_at: starts, ends_at: (ev.endDate ? (Date.parse(ev.endDate) || null) : null),
+    source_label: s.label || 'Website',
+    country: null
+  };
+}
+// Very light keyword classifier for website events (Ticketmaster has its own richer one).
+function classifyByText(text) {
+  const t = (text || '').toLowerCase();
+  const map = [
+    [/\b(concert|music|band|dj|live music|festival|tour)\b/, 'Music', '🎵'],
+    [/\b(comedy|stand-?up)\b/, 'Comedy', '🎤'],
+    [/\b(theat|play|musical|opera|ballet)\b/, 'Theater', '🎭'],
+    [/\b(art|gallery|exhibit|museum)\b/, 'Art', '🎨'],
+    [/\b(food|taste|dining|dinner|brunch|wine|beer|culinary)\b/, 'Food', '🍽️'],
+    [/\b(run|marathon|yoga|fitness|workout|game|match|tournament|sports?)\b/, 'Sports', '🏃'],
+    [/\b(dance|salsa|bachata|dancing)\b/, 'Dance', '💃'],
+    [/\b(book|author|reading|poetry)\b/, 'Book Club', '📚'],
+    [/\b(tech|startup|hackathon|coding|developer)\b/, 'Tech', '💻'],
+    [/\b(market|fair|festival|fest)\b/, 'Culture', '🎪']
+  ];
+  for (const [re, category, emoji] of map) if (re.test(t)) return { category, emoji };
+  return { category: 'Event', emoji: '🎟️' };
+}
+async function fetchWebsiteEvents(s) {
+  const pageUrl = (s.url || '').trim();
+  if (!pageUrl) return { events: [], error: 'No website URL configured for this source.' };
+  let html;
+  try {
+    const r = await fetch(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ShowUppBot/1.0; +https://showupp.app)', 'Accept': 'text/html' } });
+    if (!r.ok) return { events: [], error: `Website returned HTTP ${r.status} ${r.statusText}` };
+    html = await r.text();
+  } catch (err) { return { events: [], error: 'Could not reach the website: ' + err.message }; }
+
+  const out = [];
+  // 1) JSON-LD structured data
+  const ldRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = ldRe.exec(html)) !== null) {
+    let json;
+    try { json = JSON.parse(m[1].trim()); } catch (e) { continue; }
+    const events = [];
+    collectJsonLdEvents(json, events);
+    for (const ev of events) { const n = normalizeWebsiteEvent(ev, s, pageUrl); if (n) out.push(n); }
+  }
+  // Deduplicate by id (some sites repeat the same JSON-LD block).
+  const seen = new Set();
+  const deduped = out.filter(e => { if (seen.has(e.id)) return false; seen.add(e.id); return true; });
+
+  if (!deduped.length) {
+    return { events: [], error: "Couldn't find machine-readable events on that page. Sites that publish schema.org Event data (most do, for Google) work automatically; otherwise add this source's events by hand." };
+  }
+  return { events: deduped, error: null };
+}
+
 
 // ---- Daily ingest job ----
 // Runs once at boot and then every 24h (see bottom of file). Pulls each enabled
@@ -3010,11 +3164,14 @@ async function upsertExternalEvent(e) {
 // so a manual refresh behaves identically to the nightly one instead of being a
 // second, subtly-different code path.
 async function ingestOneSource(s) {
-  const fn = EVENT_PROVIDERS[s.provider];
+  const isWebsite = (s.provider === WEBSITE_PROVIDER);
+  const fn = isWebsite ? fetchWebsiteEvents : EVENT_PROVIDERS[s.provider];
   if (!fn) return { ok: false, error: 'This source has no automatic provider — add its events manually instead.' };
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   try {
-    const result = await fn(s.api_key, s.label);
+    // Website provider reads s.url; registered API providers read s.api_key. Both now
+    // receive the whole source row so each can pull what it needs.
+    const result = await fn(s);
     const evs = result.events || [];
     let kept = 0;
     for (const e of evs) {
@@ -3025,11 +3182,11 @@ async function ingestOneSource(s) {
     console.log(`[events] ingested ${kept}/${evs.length} from ${s.provider} (${s.label})${result.error ? ' — error: ' + result.error : ''}`);
     await db.prepare('UPDATE event_sources SET last_ingest_at=?, last_error=?, last_fetched_count=? WHERE id=?')
       .run(now(), result.error || null, kept, s.id);
-    // Also trim this source's own events that are now in the past or outside the
-    // display window, so a manual refresh cleans up immediately rather than waiting
-    // for the next scheduled run.
+    // Trim this source's own past/out-of-window events. Website events are namespaced
+    // per source ('website:<id>'); API providers use the provider key as the source.
+    const srcKey = isWebsite ? (WEBSITE_PROVIDER + ':' + s.id) : s.provider;
     await db.prepare(`DELETE FROM events WHERE source = ? AND starts_at IS NOT NULL AND (starts_at < ? OR starts_at > ?)`)
-      .run(s.provider, now() - 6 * 3600 * 1000, cutoff);
+      .run(srcKey, now() - 6 * 3600 * 1000, cutoff);
     return { ok: true, kept, total: evs.length, error: result.error || null };
   } catch (err) {
     console.log('[events] ingest failed for', s.provider, err.message);
@@ -3046,7 +3203,8 @@ async function ingestExternalEvents() {
   try {
     const sources = await db.prepare('SELECT * FROM event_sources WHERE enabled = 1').all();
     for (const s of sources) {
-      if (!EVENT_PROVIDERS[s.provider]) continue; // manual/unregistered provider — nothing to auto-fetch
+      const auto = EVENT_PROVIDERS[s.provider] || s.provider === WEBSITE_PROVIDER;
+      if (!auto) continue; // manual/unregistered provider — nothing to auto-fetch
       await ingestOneSource(s);
     }
     // env-var fallback key, for deployments that set it instead of using the Manager panel
@@ -3196,6 +3354,18 @@ app.get('/api/events', requireAuth, async (req, res) => {
     all = all.filter(e => !e.starts_at || new Date(e.starts_at).toDateString() === todayStr);
   }
 
+  // Mark which of these events the user has saved (bookmarked), so the card can show it.
+  let savedSet = new Set();
+  try {
+    const ids = all.map(e => e.id);
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      const savedRows = await db.prepare(`SELECT event_id FROM saved_events WHERE user_id = ? AND event_id IN (${ph})`).all(req.user.id, ...ids);
+      savedSet = new Set(savedRows.map(r => r.event_id));
+    }
+  } catch (e) {}
+  all = all.map(e => ({ ...e, i_saved: savedSet.has(e.id) }));
+
   res.json({ events: all, page, pageSize, hasMore: rows.length === pageSize, country: userCC || null, providers: { ticketmaster: !!process.env.TICKETMASTER_API_KEY } });
 });
 
@@ -3249,24 +3419,23 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 // EVENT_PROVIDERS (see "Other / manual" in the form) is flagged isManual: true — it's
 // never auto-fetched, and the panel offers an "add event" form for it instead.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const rows = await db.prepare('SELECT id, provider, label, api_key, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
+  const rows = await db.prepare('SELECT id, provider, label, api_key, url, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
   const masked = [];
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   for (const r of rows) {
-    const isManual = !EVENT_PROVIDERS[r.provider];
-    // "Live" here means "currently shows up in Discover" — i.e. approved and inside
-    // the same date window /api/events filters by — not just any row ever ingested
-    // for this provider. Counting unfiltered rows made this number badly overstate
-    // what a user could actually browse to (e.g. including already-past events that
-    // haven't been trimmed yet), so match the exact same WHERE clause as the feed.
+    const isWebsite = (r.provider === WEBSITE_PROVIDER);
+    const isManual = !EVENT_PROVIDERS[r.provider] && !isWebsite;
+    // Website events are namespaced per source ('website:<id>'); API providers use the
+    // provider key as the event source. Count against the right key.
+    const srcKey = isWebsite ? (WEBSITE_PROVIDER + ':' + r.id) : r.provider;
     const evRow = await db.prepare(`
       SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events
       WHERE source = ? AND approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
-    `).get(r.provider, now() - 6 * 3600 * 1000, cutoff);
+    `).get(srcKey, now() - 6 * 3600 * 1000, cutoff);
     masked.push({
       ...r,
       api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
-      isManual,
+      isManual, isWebsite,
       live_events: evRow ? Number(evRow.n) || 0 : 0,
       last_event_added: evRow && evRow.latest ? Number(evRow.latest) : null
     });
@@ -3278,24 +3447,32 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
 // "ticketmaster", needs an API key) OR any free-typed label for a manual source —
 // one whose events the admin will add by hand from the panel instead of an API pull.
 app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const { provider, label, apiKey } = req.body || {};
+  const { provider, label, apiKey, url } = req.body || {};
   if (!provider || !String(provider).trim()) return res.status(400).json({ error: 'Give the source a provider name.' });
   const providerKey = String(provider).trim().slice(0, 60);
+  const isWebsite = (providerKey === WEBSITE_PROVIDER);
   const isRegistered = !!EVENT_PROVIDERS[providerKey];
   if (isRegistered && (!apiKey || !String(apiKey).trim())) {
     return res.status(400).json({ error: 'An API key is required for this provider.' });
   }
+  let cleanUrl = null;
+  if (isWebsite) {
+    cleanUrl = String(url || '').trim();
+    if (!/^https?:\/\/.+/i.test(cleanUrl)) return res.status(400).json({ error: 'Enter the full events-page URL (starting with https://).' });
+    cleanUrl = cleanUrl.slice(0, 500);
+  }
   const row = {
     id: id(), provider: providerKey, label: String(label || '').slice(0, 80) || providerKey,
     api_key: (apiKey && String(apiKey).trim()) ? String(apiKey).trim() : null,
+    url: cleanUrl,
     enabled: 1, created_by: req.user.id, created_at: now()
   };
-  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,enabled,created_by,created_at)
-    VALUES (@id,@provider,@label,@api_key,@enabled,@created_by,@created_at)`).run(row);
-  // Kick off an immediate ingest for a freshly-added auto provider so the owner
-  // doesn't have to wait up to 24h to see it start working.
-  if (isRegistered) ingestExternalEvents().catch(() => {});
-  res.json({ ok: true, id: row.id, isManual: !isRegistered });
+  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,url,enabled,created_by,created_at)
+    VALUES (@id,@provider,@label,@api_key,@url,@enabled,@created_by,@created_at)`).run(row);
+  // Kick off an immediate ingest for a freshly-added auto source (API or website) so the
+  // owner doesn't have to wait up to 24h to see it start working.
+  if (isRegistered || isWebsite) ingestExternalEvents().catch(() => {});
+  res.json({ ok: true, id: row.id, isManual: !isRegistered && !isWebsite });
 });
 
 // Edit an existing account's label and/or API key. The label can be cleared to fall
@@ -3305,12 +3482,18 @@ app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res)
 app.post('/api/admin/event-sources/:id/update', requireAuth, requireAdmin, async (req, res) => {
   const src = await db.prepare('SELECT id, provider, label FROM event_sources WHERE id = ?').get(req.params.id);
   if (!src) return res.status(404).json({ error: 'Not found.' });
-  const { label, apiKey } = req.body || {};
+  const { label, apiKey, url } = req.body || {};
   const newLabel = (label !== undefined) ? (String(label).slice(0, 80) || src.provider) : src.label;
   if (apiKey && String(apiKey).trim()) {
     await db.prepare('UPDATE event_sources SET label = ?, api_key = ? WHERE id = ?').run(newLabel, String(apiKey).trim(), req.params.id);
   } else {
     await db.prepare('UPDATE event_sources SET label = ? WHERE id = ?').run(newLabel, req.params.id);
+  }
+  // Website sources can update their events-page URL.
+  if (src.provider === WEBSITE_PROVIDER && url !== undefined) {
+    const cleanUrl = String(url || '').trim();
+    if (cleanUrl && !/^https?:\/\/.+/i.test(cleanUrl)) return res.status(400).json({ error: 'Enter a full URL starting with https://.' });
+    await db.prepare('UPDATE event_sources SET url = ? WHERE id = ?').run(cleanUrl.slice(0, 500) || null, req.params.id);
   }
   res.json({ ok: true });
 });
@@ -3338,9 +3521,14 @@ app.post('/api/admin/event-sources/:id/toggle', requireAuth, requireAdmin, async
 // own via the daily trim (or the admin can remove them directly) rather than being
 // deleted here, since a manual source's hand-entered events shouldn't vanish by accident.
 app.post('/api/admin/event-sources/:id/delete', requireAuth, requireAdmin, async (req, res) => {
-  const src = await db.prepare('SELECT id FROM event_sources WHERE id = ?').get(req.params.id);
+  const src = await db.prepare('SELECT id, provider FROM event_sources WHERE id = ?').get(req.params.id);
   if (!src) return res.status(404).json({ error: 'Not found.' });
   await db.prepare('DELETE FROM event_sources WHERE id = ?').run(req.params.id);
+  // A website source's events are auto-read (not hand-entered), so remove them when the
+  // source is deleted rather than leaving orphaned rows in Discover.
+  if (src.provider === WEBSITE_PROVIDER) {
+    await db.prepare('DELETE FROM events WHERE source = ?').run(WEBSITE_PROVIDER + ':' + src.id).catch(() => {});
+  }
   res.json({ ok: true });
 });
 
