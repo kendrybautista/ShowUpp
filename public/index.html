@@ -19,6 +19,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <!-- Google Identity Services — powers "Sign in with Google" (item 3). Loads async; the
      app only initializes it once /api/config confirms a client ID is configured. -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -919,6 +920,35 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<!-- SUSPENDED ACCOUNT LOCK SCREEN (items 8, 10, 11) — the ONLY screen a suspended
+     account can reach. No nav bar, no links into the rest of the app on purpose. -->
+<div class="screen" id="s-suspended">
+  <div class="statusbar"></div>
+  <div class="scroll" style="padding:28px 22px 40px">
+    <div style="text-align:center;margin:18px 0 22px">
+      <div style="font-size:52px;line-height:1;margin-bottom:10px">🚫</div>
+      <h1 style="font-family:'Fraunces',serif;font-size:24px;color:var(--night);font-weight:600;margin:0">Your account is suspended</h1>
+    </div>
+    <div style="background:#FDECEA;border:1.5px solid #f6c6bf;border-radius:16px;padding:16px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:800;color:#d94b3b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Reason</div>
+      <div id="suspReasonText" style="font-size:14.5px;line-height:1.5;color:var(--ink)">—</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:var(--shadow)">
+      <div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Time remaining until reactivation</div>
+      <div id="suspCountdown" style="font-family:'Fraunces',serif;font-size:30px;font-weight:700;color:var(--night);letter-spacing:.5px">—</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:6px">Suspended since <span id="suspSince">—</span> · reactivates automatically on <span id="suspUntilText">—</span></div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:var(--shadow)">
+      <div style="font-size:14px;font-weight:700;color:var(--night);margin-bottom:4px">💬 Think this is a mistake?</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Send a message straight to an admin. This is the only thing you can do while suspended.</div>
+      <textarea id="suspContactMsg" rows="4" placeholder="Explain your side here…" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical;margin-bottom:10px"></textarea>
+      <button class="btn btn-mango" style="width:100%" onclick="sendSuspensionMessage()">Send message to admin</button>
+      <div id="suspContactStatus" style="font-size:12.5px;margin-top:8px;text-align:center"></div>
+    </div>
+    <div style="text-align:center;margin-top:6px"><a onclick="suspendedLogout()" style="color:var(--muted);font-size:13px;text-decoration:underline;cursor:pointer">Log out</a></div>
+  </div>
+</div>
+
 <!-- HOME -->
 <div class="screen" id="s-home">
   <div class="statusbar"></div>
@@ -1404,6 +1434,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="circ-tab" id="adm-tab-rounds" onclick="switchAdminTab('rounds')">Rounds</div>
       <div class="circ-tab" id="adm-tab-sources" onclick="switchAdminTab('sources')">Event sources</div>
       <div class="circ-tab" id="adm-tab-reports" onclick="switchAdminTab('reports')">Reports</div>
+      <div class="circ-tab" id="adm-tab-metrics" onclick="switchAdminTab('metrics')">📊 Metrics</div>
     </div>
     <div id="adm-users-pane">
       <div style="padding:0 22px 8px"><input id="adminSearch" placeholder="🔍 Search users…" oninput="loadAdminUsers(this.value)" style="width:100%;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:14px"></div>
@@ -1446,6 +1477,38 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div id="adm-reports-pane" style="display:none">
       <div id="adminReportsMetrics" style="display:flex;gap:8px;overflow-x:auto;padding:0 22px 12px;-webkit-overflow-scrolling:touch"></div>
       <div id="adminReportsList" style="padding:0 22px"></div>
+    </div>
+    <div id="adm-metrics-pane" style="display:none">
+      <div style="padding:0 22px 10px">
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow)">
+          <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;-webkit-overflow-scrolling:touch" id="metRangePresets">
+            <div class="circ-tab on" data-range="30" onclick="metSetRangePreset(30,this)">30d</div>
+            <div class="circ-tab" data-range="90" onclick="metSetRangePreset(90,this)">90d</div>
+            <div class="circ-tab" data-range="365" onclick="metSetRangePreset(365,this)">12mo</div>
+            <div class="circ-tab" data-range="0" onclick="metSetRangePreset(0,this)">All time</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">From</label><input id="metFrom" type="date" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px;box-sizing:border-box"></div>
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">To</label><input id="metTo" type="date" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px;box-sizing:border-box"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">📍 Location</label><select id="metCity" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px"><option value="">All cities</option></select></div>
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">⚧ Gender</label><select id="metGender" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px"><option value="">All genders</option></select></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">🎂 Min age</label><input id="metAgeMin" type="number" min="0" max="120" placeholder="Any" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px;box-sizing:border-box"></div>
+            <div><label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px">🎂 Max age</label><input id="metAgeMax" type="number" min="0" max="120" placeholder="Any" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13px;box-sizing:border-box"></div>
+          </div>
+          <button class="btn btn-mango" style="width:100%" onclick="loadAdminMetrics()">🔎 Apply filters</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 22px 14px" id="metricsTiles"></div>
+      <div style="padding:0 22px 16px">
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow)">
+          <div style="font-weight:700;font-size:14px;color:var(--night);margin-bottom:10px">Accounts over time</div>
+          <div style="position:relative;height:240px"><canvas id="metricsChart"></canvas></div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="nav" data-nav></div>
@@ -2221,6 +2284,14 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<!-- Manager: suspend / lift-suspension sheet (items 8-9) -->
+<div class="sheet" id="suspendSheet" onclick="if(event.target===this)closeSuspendSheet()">
+  <div class="sheet-inner"><div class="grabber"></div>
+    <h3 id="suspendSheetTitle">Suspend account</h3>
+    <div id="suspendSheetBody"></div>
+  </div>
+</div>
+
 <!-- Vibe Check: intro-message composer so a match isn't a cold request -->
 <div class="sheet" id="vibeReqSheet" onclick="if(event.target===this)closeVibeReq()">
   <div class="sheet-inner"><div class="grabber"></div>
@@ -2700,7 +2771,7 @@ async function doSignup(){
     const data=await api('/api/signup','POST',{name,email,phone,password,city,origin:'',interests:signupInterests,lang:LANG,dob,gender});
     token=data.token;saveToken(token,true);me=data.user;
     showLoginTransition();const _sAt=Date.now();
-    connectWS();enterApp();
+    postAuthEnter();
     runLoginTransition(_sAt,1700);
   }catch(e){showErr('finalErr',e.message);}
 }
@@ -2739,7 +2810,7 @@ async function doLogin(){
       if(remember)localStorage.setItem('su_email',email);
       else localStorage.removeItem('su_email');
     }catch(e){}
-    connectWS();enterApp();
+    postAuthEnter();
     runLoginTransition(startedAt,1700);
   }catch(e){hideLoginTransition();showErr('loginErr',e.message);}
 }
@@ -2797,7 +2868,7 @@ async function onGoogleCredential(response){
     const data=await api('/api/auth/google','POST',{credential:response.credential});
     token=data.token;saveToken(token,true);me=data.user;
     if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();applyTranslations();}
-    connectWS();enterApp();
+    postAuthEnter();
     runLoginTransition(startedAt,1700);
   }catch(e){hideLoginTransition();
     // Surface the error on whichever auth step is visible.
@@ -2894,7 +2965,7 @@ async function submitReset(){
     closeReset();
     // clean the ?reset= param from the URL
     try{history.replaceState({},'',location.pathname);}catch(e){}
-    connectWS();enterApp();
+    postAuthEnter();
     toast('Password updated ✓');
   }catch(e){msg.textContent=e.message;}
 }
@@ -2935,6 +3006,66 @@ function applyAvatar(el){
   }
 }
 function refreshAvatars(){['homeAvatar','circAvatar','profAv'].forEach(idv=>applyAvatar(document.getElementById(idv)));}
+// ---- Suspension lock screen (items 8, 10, 11) ----
+// Called instead of connectWS()+enterApp() at every login/signup/restore path so a
+// suspended account never reaches the real app — just a screen explaining why, a
+// live countdown to automatic reactivation, and a way to message an admin.
+function postAuthEnter(){
+  if(me&&me.suspended){showSuspendedScreen();return;}
+  connectWS();enterApp();
+}
+let suspendCountdownTimer=null;
+function showSuspendedScreen(){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s-suspended').classList.add('active');
+  document.getElementById('suspReasonText').textContent=me.suspendedReason||'No reason was given.';
+  document.getElementById('suspSince').textContent=me.suspendedAt?new Date(me.suspendedAt).toLocaleString():'—';
+  document.getElementById('suspContactMsg').value='';
+  document.getElementById('suspContactStatus').textContent='';
+  tickSuspendCountdown();
+  if(suspendCountdownTimer)clearInterval(suspendCountdownTimer);
+  suspendCountdownTimer=setInterval(tickSuspendCountdown,1000);
+}
+function tickSuspendCountdown(){
+  const el=document.getElementById('suspCountdown');
+  const untilEl=document.getElementById('suspUntilText');
+  if(!me||!me.suspendedUntil){if(el)el.textContent='—';return;}
+  const remaining=Number(me.suspendedUntil)-Date.now();
+  if(untilEl)untilEl.textContent=new Date(Number(me.suspendedUntil)).toLocaleString();
+  if(remaining<=0){
+    if(el)el.textContent='Reactivating…';
+    clearInterval(suspendCountdownTimer);
+    // The window has passed — re-check with the server, which auto-reactivates on any request.
+    api('/api/me').then(data=>{
+      me=data.user;
+      if(!me.suspended){toast('Your account has been reactivated ✓');postAuthEnter();}
+    }).catch(()=>{});
+    return;
+  }
+  const d=Math.floor(remaining/86400000);
+  const h=Math.floor((remaining%86400000)/3600000);
+  const m=Math.floor((remaining%3600000)/60000);
+  const s=Math.floor((remaining%60000)/1000);
+  let out='';
+  if(d>0)out+=d+'d ';
+  out+=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  if(el)el.textContent=out;
+}
+async function sendSuspensionMessage(){
+  const msg=document.getElementById('suspContactMsg').value.trim();
+  const status=document.getElementById('suspContactStatus');
+  if(!msg){status.style.color='#d94b3b';status.textContent='Write a message first.';return;}
+  try{
+    await api('/api/suspension/contact-admin','POST',{message:msg});
+    document.getElementById('suspContactMsg').value='';
+    status.style.color='#2e9e5b';
+    status.textContent='Sent — an admin will get back to you.';
+  }catch(e){status.style.color='#d94b3b';status.textContent=e.message;}
+}
+function suspendedLogout(){
+  if(suspendCountdownTimer)clearInterval(suspendCountdownTimer);
+  logout();
+}
 function enterApp(){
   document.getElementById('homeGreet').textContent=me.name+' 👋';
   if(typeof injectHeaderLogos==='function')injectHeaderLogos();
@@ -7601,14 +7732,17 @@ function switchAdminTab(which){
   document.getElementById('adm-tab-rounds').classList.toggle('on',which==='rounds');
   document.getElementById('adm-tab-sources').classList.toggle('on',which==='sources');
   document.getElementById('adm-tab-reports').classList.toggle('on',which==='reports');
+  document.getElementById('adm-tab-metrics').classList.toggle('on',which==='metrics');
   document.getElementById('adm-users-pane').style.display=which==='users'?'block':'none';
   document.getElementById('adm-rounds-pane').style.display=which==='rounds'?'block':'none';
   document.getElementById('adm-sources-pane').style.display=which==='sources'?'block':'none';
   document.getElementById('adm-reports-pane').style.display=which==='reports'?'block':'none';
+  document.getElementById('adm-metrics-pane').style.display=which==='metrics'?'block':'none';
   if(which==='users')loadAdminUsers('');
   else if(which==='rounds')loadAdminRounds('');
   else if(which==='sources')loadAdminEventSources();
-  else loadAdminReports();
+  else if(which==='reports')loadAdminReports();
+  else initAdminMetrics();
 }
 let admSearchTimer;
 function loadAdminUsers(q){
@@ -7620,22 +7754,162 @@ function loadAdminUsers(q){
       if(!data.users.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No users found.</p>';return;}
       box.innerHTML=data.users.map(u=>{
         const badge=u.is_admin?'<span style="font-size:10px;background:#F1ECFF;color:#5B4FCF;padding:2px 6px;border-radius:6px;font-weight:700">ADMIN</span>':(u.suspended?'<span style="font-size:10px;background:#FDECEA;color:#d94b3b;padding:2px 6px;border-radius:6px;font-weight:700">SUSPENDED</span>':'');
+        const nameSafe=esc(u.name).replace(/'/g,"");
         const actions=u.is_admin?'<span style="font-size:11px;color:var(--muted)">protected</span>':
-          '<button class="friend-btn remove" onclick="admSuspend(\''+u.id+'\','+(u.suspended?0:1)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
-          '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="admDelete(\''+u.id+'\',\''+esc(u.name).replace(/'/g,"")+'\')">Delete</button>';
-        return '<div class="friend-row"><div class="fi"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px">'+actions+'</div></div>';
+          '<button class="friend-btn remove" onclick="admOpenSuspend(\''+u.id+'\',\''+nameSafe+'\','+(u.suspended?1:0)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
+          '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="admDelete(\''+u.id+'\',\''+nameSafe+'\')">Delete</button>';
+        const suspendInfo=(u.suspended&&u.suspended_until)?'<div style="font-size:11px;color:#d94b3b;margin-top:2px">🚫 '+esc(u.suspended_reason||'No reason given')+' · until '+new Date(Number(u.suspended_until)).toLocaleString()+'</div>':'';
+        return '<div class="friend-row" style="flex-direction:column;align-items:stretch"><div style="display:flex;justify-content:space-between;align-items:center;width:100%"><div class="fi"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px">'+actions+'</div></div>'+suspendInfo+'</div>';
       }).join('');
     }catch(e){toast(e.message);}
   },250);
 }
-async function admSuspend(uid,suspend){
-  try{await api('/api/admin/suspend','POST',{userId:uid,suspend});toast(suspend?'User suspended':'User unsuspended');loadAdminUsers(document.getElementById('adminSearch').value);}
-  catch(e){toast(e.message);}
+// Suspend/unsuspend flow (items 8-9): suspending asks for a reason + duration;
+// lifting a suspension early is gated by the supervisor password.
+let pendingSuspendUser=null;
+function admOpenSuspend(uid,name,isSuspended){
+  pendingSuspendUser={id:uid,name:name,suspended:!!isSuspended};
+  const title=document.getElementById('suspendSheetTitle');
+  const body=document.getElementById('suspendSheetBody');
+  if(isSuspended){
+    title.textContent='Lift suspension early';
+    body.innerHTML=
+      '<p style="font-size:13px;color:var(--muted);margin:0 0 12px">Reinstating '+esc(name)+' before their suspension ends requires the supervisor password.</p>'+
+      '<input id="suspendSupPass" type="password" autocomplete="off" placeholder="Supervisor password" onkeydown="if(event.key===\'Enter\')admConfirmSuspend()" style="width:100%;padding:12px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bone);font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px">'+
+      '<button class="btn" style="width:100%;background:#2e9e5b;color:#fff;border:none" onclick="admConfirmSuspend()">✅ Lift suspension now</button>'+
+      '<div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeSuspendSheet()">Cancel</div>';
+  }else{
+    title.textContent='Suspend account';
+    body.innerHTML=
+      '<p style="font-size:13px;color:var(--muted);margin:0 0 12px">Suspending '+esc(name)+' locks them out of everything except a screen explaining why. They can still send you a message from there.</p>'+
+      '<label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Reason (shown to the user)</label>'+
+      '<textarea id="suspendReason" rows="3" placeholder="e.g. Repeated harassment reports" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:13.5px;margin-bottom:10px;box-sizing:border-box;resize:vertical"></textarea>'+
+      '<label style="font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Suspend for</label>'+
+      '<select id="suspendDuration" onchange="document.getElementById(\'suspendCustomHours\').style.display=this.value===\'custom\'?\'block\':\'none\'" style="width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:14px;margin-bottom:10px">'+
+        '<option value="24">1 day</option><option value="72">3 days</option><option value="168" selected>7 days</option><option value="336">14 days</option><option value="720">30 days</option><option value="custom">Custom…</option>'+
+      '</select>'+
+      '<input id="suspendCustomHours" type="number" min="1" placeholder="Hours" style="display:none;width:100%;padding:11px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bone);font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box">'+
+      '<button class="btn" style="width:100%;background:#d94b3b;color:#fff;border:none" onclick="admConfirmSuspend()">🚫 Suspend account</button>'+
+      '<div class="report-opt" style="text-align:center;color:var(--muted);background:none;border:none;margin-top:8px" onclick="closeSuspendSheet()">Cancel</div>';
+  }
+  document.getElementById('suspendSheet').classList.add('open');
+}
+function closeSuspendSheet(){document.getElementById('suspendSheet').classList.remove('open');pendingSuspendUser=null;}
+async function admConfirmSuspend(){
+  if(!pendingSuspendUser)return;
+  const uid=pendingSuspendUser.id, suspended=pendingSuspendUser.suspended;
+  try{
+    if(suspended){
+      const pw=(document.getElementById('suspendSupPass')||{}).value||'';
+      if(!pw){toast('Enter the supervisor password');return;}
+      await api('/api/admin/suspend','POST',{userId:uid,suspend:false,supervisorPassword:pw});
+      toast('Suspension lifted');
+    }else{
+      const reason=((document.getElementById('suspendReason')||{}).value||'').trim();
+      if(!reason){toast('Enter a reason');return;}
+      const sel=document.getElementById('suspendDuration');
+      let hours=parseFloat(sel.value);
+      if(sel.value==='custom')hours=parseFloat((document.getElementById('suspendCustomHours')||{}).value);
+      if(!hours||hours<=0){toast('Enter how long to suspend for');return;}
+      await api('/api/admin/suspend','POST',{userId:uid,suspend:true,reason,durationHours:hours});
+      toast('User suspended');
+    }
+    closeSuspendSheet();
+    loadAdminUsers(document.getElementById('adminSearch').value);
+  }catch(e){toast(e.message);}
 }
 async function admDelete(uid,name){
   if(!confirm('Permanently delete '+name+'\'s account and all their data? This cannot be undone.'))return;
   try{await api('/api/admin/delete','POST',{userId:uid});toast('Account deleted');loadAdminUsers(document.getElementById('adminSearch').value);}
   catch(e){toast(e.message);}
+}
+// ---- Manager metrics dashboard (item 12) ----
+let metState={rangeDays:30,city:'',gender:'',ageMin:'',ageMax:''};
+let metricsChartInstance=null;
+let metricsInited=false;
+function metDateStr(ts){const d=new Date(ts);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function metSetRangePreset(days,el){
+  document.querySelectorAll('#metRangePresets .circ-tab').forEach(t=>t.classList.remove('on'));
+  if(el)el.classList.add('on');
+  metState.rangeDays=days;
+  const to=Date.now();
+  const from=days>0?(to-days*86400000):0;
+  document.getElementById('metFrom').value=from>0?metDateStr(from):'';
+  document.getElementById('metTo').value=metDateStr(to);
+  loadAdminMetrics();
+}
+async function initAdminMetrics(){
+  if(!metricsInited){
+    metricsInited=true;
+    metSetRangePreset(30,document.querySelector('#metRangePresets .circ-tab[data-range="30"]'));
+  }else{
+    loadAdminMetrics();
+  }
+}
+function metricsTile(label,value,color){
+  return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow)">'+
+    '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">'+esc(label)+'</div>'+
+    '<div style="font-size:24px;font-weight:800;color:'+(color||'var(--night)')+'">'+value+'</div></div>';
+}
+async function loadAdminMetrics(){
+  try{
+    const fromV=document.getElementById('metFrom').value;
+    const toV=document.getElementById('metTo').value;
+    const params=new URLSearchParams();
+    if(fromV)params.set('from',new Date(fromV+'T00:00:00').getTime());
+    if(toV)params.set('to',new Date(toV+'T23:59:59').getTime());
+    const city=document.getElementById('metCity').value;
+    const gender=document.getElementById('metGender').value;
+    const ageMin=document.getElementById('metAgeMin').value;
+    const ageMax=document.getElementById('metAgeMax').value;
+    if(city)params.set('city',city);
+    if(gender)params.set('gender',gender);
+    if(ageMin)params.set('ageMin',ageMin);
+    if(ageMax)params.set('ageMax',ageMax);
+    const data=await api('/api/admin/metrics?'+params.toString());
+    // populate filter dropdowns once with the stable, all-time option lists
+    const citySel=document.getElementById('metCity'), genderSel=document.getElementById('metGender');
+    if(citySel.options.length<=1){
+      (data.filters.cities||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;citySel.appendChild(o);});
+    }
+    if(genderSel.options.length<=1){
+      (data.filters.genders||[]).forEach(g=>{const o=document.createElement('option');o.value=g;o.textContent=g;genderSel.appendChild(o);});
+    }
+    const s=data.summary;
+    document.getElementById('metricsTiles').innerHTML=
+      metricsTile('Total created',s.totalCreated)+
+      metricsTile('Active',s.active,'#2e9e5b')+
+      metricsTile('Suspended',s.suspended,'#d94b3b')+
+      metricsTile('Deleted by user',s.deletedByUser,'#8B5CF6')+
+      metricsTile('Deleted by admin',s.deletedByAdmin,'#d94b3b')+
+      metricsTile('Reactivated automatically',s.reactivatedAuto,'#2e9e5b');
+    renderMetricsChart(data.series,data.bucketGranularity);
+  }catch(e){toast(e.message);}
+}
+function renderMetricsChart(series,granularity){
+  const ctx=document.getElementById('metricsChart');
+  if(!ctx||typeof Chart==='undefined')return;
+  const labels=series.map(r=>r.bucket);
+  const ds=(key,label,color)=>({label,data:series.map(r=>r[key]||0),borderColor:color,backgroundColor:color+'33',tension:.35,fill:true,pointRadius:2});
+  if(metricsChartInstance)metricsChartInstance.destroy();
+  metricsChartInstance=new Chart(ctx,{
+    type:'line',
+    data:{labels,datasets:[
+      ds('created','Created','#5B5FEF'),
+      ds('suspended','Suspended','#d94b3b'),
+      ds('deleted_by_user','Deleted (user)','#8B5CF6'),
+      ds('deleted_by_admin','Deleted (admin)','#F59E0B')
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},
+      scales:{
+        x:{ticks:{font:{size:10},maxRotation:0,autoSkip:true}},
+        y:{beginAtZero:true,ticks:{precision:0,font:{size:10}}}
+      }
+    }
+  });
 }
 let admRoundSearchTimer;
 function loadAdminRounds(q){
@@ -8707,7 +8981,7 @@ async function loginWithBiometric(){
     const startedAt=Date.now();
     token=saved;saveToken(token,true);
     const data=await api('/api/me');me=data.user;
-    connectWS();enterApp();
+    postAuthEnter();
     runLoginTransition(startedAt,1700);
   }catch(e){
     hideLoginTransition();
@@ -8801,7 +9075,7 @@ async function boot(){
       showLoginTransition();const _bootAt=Date.now();
       document.getElementById('loading').style.display='none';
       const data=await api('/api/me');me=data.user;if(me.lang){LANG=me.lang;try{localStorage.setItem('su_lang',LANG);}catch(e){}applyDirection();renderLangPickers();}
-      connectWS();enterApp();checkResetLink();
+      postAuthEnter();checkResetLink();
       runLoginTransition(_bootAt,1700);
       return;
     }
