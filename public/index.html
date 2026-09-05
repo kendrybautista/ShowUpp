@@ -84,6 +84,11 @@
 /* The "these Rounds have no location" note used a fixed light background with a
    theme-driven (light) text colour — light-on-light in dark mode. Give it a dark card. */
 .phone[data-theme="dark"] #mapNoCoordsNote{background:#241a12!important;border-color:#5a4326!important;color:#F3D6C7!important}
+/* Suspended-account reason box: fixed light-pink background with theme-driven (light)
+   text = unreadable in dark mode. Give it a deep-red card so the admin's reason and the
+   "Reason" label both stay legible. (Item 1) */
+.phone[data-theme="dark"] #suspReasonText{color:#FCE8E4!important}
+.phone[data-theme="dark"] #s-suspended [style*="#FDECEA"]{background:#2a1618!important;border-color:#5c2b2b!important}
 /* Generic safety net: any element that pins near-black text via inline style stays
    readable on dark cards. Scoped to common content wrappers to avoid over-reach. */
 .phone[data-theme="dark"] .rc-title,.phone[data-theme="dark"] .rc-sub{color:#EDEEF7}
@@ -236,26 +241,15 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 #rpConfirmBtn:disabled{opacity:.45;cursor:not-allowed}
 @keyframes rouletteIconSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .roulette-icon-spin{display:inline-block;animation:rouletteIconSpin .55s linear infinite}
-/* ---- Social Roulette casino spin (item 9) ----
-   A full-screen overlay with three slot reels whose NUMBERS spin (not the wheel itself),
-   like a casino machine, for ~15s before the group is built. */
+/* ---- Social Roulette spin (item 2) ----
+   A full-screen overlay showing the branded spin GIF for ~10s before the group is
+   built (or the no-matches message shows). */
 #rouletteSpinOverlay{position:absolute;inset:0;z-index:130;display:none;flex-direction:column;align-items:center;justify-content:center;
   background:radial-gradient(circle at 50% 35%,#2a2350,#14112e 70%,#0b0918);color:#fff;padding:24px;text-align:center;overflow:hidden}
 #rouletteSpinOverlay.open{display:flex}
-.rsp-emoji{font-size:64px;line-height:1;filter:drop-shadow(0 6px 18px rgba(124,131,255,.6))}
-.rsp-title{font-size:22px;font-weight:800;margin-top:10px;letter-spacing:-.3px}
+.rsp-gif{width:min(78vw,300px);height:auto;border-radius:20px;box-shadow:0 16px 50px rgba(0,0,0,.55);position:relative;z-index:1}
+.rsp-title{font-size:22px;font-weight:800;margin-top:18px;letter-spacing:-.3px}
 .rsp-sub{font-size:13.5px;opacity:.8;margin-top:6px;max-width:280px;line-height:1.5}
-.rsp-reels{display:flex;gap:12px;margin:26px 0 8px}
-.rsp-reel{width:66px;height:92px;border-radius:16px;background:linear-gradient(#fff,#e9e9f5);
-  box-shadow:0 10px 30px rgba(0,0,0,.5),inset 0 -8px 16px rgba(0,0,0,.12),inset 0 8px 16px rgba(255,255,255,.7);
-  overflow:hidden;position:relative;border:3px solid rgba(255,255,255,.25)}
-.rsp-reel::before,.rsp-reel::after{content:"";position:absolute;left:0;right:0;height:26px;z-index:2;pointer-events:none}
-.rsp-reel::before{top:0;background:linear-gradient(rgba(255,255,255,.9),rgba(255,255,255,0))}
-.rsp-reel::after{bottom:0;background:linear-gradient(rgba(255,255,255,0),rgba(255,255,255,.9))}
-.rsp-strip{display:flex;flex-direction:column;align-items:center;will-change:transform}
-.rsp-strip>span{height:92px;line-height:92px;font-size:44px;font-weight:800;color:#2a2350;font-family:'Fraunces',serif}
-.rsp-reel.spinning .rsp-strip{animation:rspSpin .18s linear infinite}
-@keyframes rspSpin{from{transform:translateY(0)}to{transform:translateY(-460px)}}
 .rsp-progress{width:220px;height:6px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;margin-top:22px}
 .rsp-progress>i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#7C83FF,#A78BFA)}
 .rsp-glow{position:absolute;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(124,131,255,.35),transparent 70%);animation:rspPulse 2.4s ease-in-out infinite;pointer-events:none}
@@ -2362,14 +2356,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- Social Roulette casino spin overlay (item 9) -->
 <div id="rouletteSpinOverlay">
   <div class="rsp-glow"></div>
-  <div class="rsp-emoji">🎰</div>
+  <img id="rspGif" src="ShowUpp_centered_spin.gif" alt="Spinning…" class="rsp-gif">
   <div class="rsp-title">Finding your group…</div>
   <div class="rsp-sub">Matching you with compatible people nearby. Hold tight!</div>
-  <div class="rsp-reels">
-    <div class="rsp-reel" id="rspReel0"><div class="rsp-strip"></div></div>
-    <div class="rsp-reel" id="rspReel1"><div class="rsp-strip"></div></div>
-    <div class="rsp-reel" id="rspReel2"><div class="rsp-strip"></div></div>
-  </div>
   <div class="rsp-progress"><i id="rspProgress"></i></div>
 </div>
 
@@ -4612,40 +4601,22 @@ function rpToggle(cb){const b=document.getElementById('rpConfirmBtn');if(b)b.dis
 // Plays a spinning-wheel animation in #rouletteSpinOverlay, then resolves. Purely
 // visual — gives "spin me in" an actual spin instead of just a network request.
 // Item 9: a casino slot-machine spin. The NUMBERS on three reels spin (not a wheel),
-// the machine fills the screen, and it runs for a full 15 seconds before the group is
-// built — reels stop one by one for that satisfying "clunk-clunk-clunk" finish.
-const ROULETTE_SPIN_MS=15000;
+// the branded spin GIF plays full-screen for 10 seconds, then the group is built
+// (or the no-matches message shows).
+const ROULETTE_SPIN_MS=10000;
 function playRouletteSpin(){
   return new Promise(resolve=>{
     const ov=document.getElementById('rouletteSpinOverlay');
     if(!ov){resolve();return;}
-    const reels=[0,1,2].map(i=>document.getElementById('rspReel'+i)).filter(Boolean);
-    // Fill each reel strip with a tall column of random digits so the vertical scroll
-    // animation always has numbers streaming past the window.
-    reels.forEach(r=>{
-      const strip=r.querySelector('.rsp-strip');
-      let cells='';
-      for(let n=0;n<40;n++)cells+='<span>'+Math.floor(Math.random()*10)+'</span>';
-      strip.innerHTML=cells;
-      r.classList.add('spinning');
-    });
+    // Restart the GIF from its first frame each time by re-setting the src.
+    const gif=document.getElementById('rspGif');
+    if(gif){const base=gif.getAttribute('src').split('?')[0];gif.src=base+'?t='+Date.now();}
     ov.classList.add('open');
     ov.style.display='flex';
-    // Progress bar fills over the full 15s.
+    // Progress bar fills over the full 10s.
     const prog=document.getElementById('rspProgress');
     if(prog){prog.style.transition='none';prog.style.width='0';void prog.offsetWidth;
       prog.style.transition='width '+ROULETTE_SPIN_MS+'ms linear';prog.style.width='100%';}
-    // Stagger the reels stopping across the last few seconds for a casino feel.
-    const stops=[ROULETTE_SPIN_MS-2600,ROULETTE_SPIN_MS-1500,ROULETTE_SPIN_MS-400];
-    reels.forEach((r,i)=>{
-      setTimeout(()=>{
-        r.classList.remove('spinning');
-        // Land on a crisp random digit.
-        const strip=r.querySelector('.rsp-strip');
-        strip.style.transition='transform .28s cubic-bezier(.2,1.2,.3,1)';
-        strip.style.transform='translateY(-'+(92*(2+Math.floor(Math.random()*6)))+'px)';
-      },Math.max(600,stops[i]));
-    });
     setTimeout(resolve,ROULETTE_SPIN_MS);
   });
 }
@@ -4664,9 +4635,18 @@ async function confirmRouletteOptin(){
     if(loc){body.lat=loc.lat;body.lng=loc.lng;}
     const [,optinRes]=await Promise.all([spin, api('/api/roulette/optin','POST',body)]);
     hideRouletteSpin();
-    if(optinRes&&optinRes.status==='matched')toast('🎉 Your group is ready! Say hello.');
-    else toast('You\u2019re in! 🎰 We\u2019ll ping you when your group is ready.');
-    loadRoulette();
+    // After the 10s spin: either a group was built, or there weren't enough
+    // compatible people this cycle — say which, clearly. (Item 2)
+    if(optinRes&&optinRes.status==='matched'){
+      toast('🎉 Your group is ready! Say hello.');
+      loadRoulette();
+    }else{
+      loadRoulette();
+      // A distinct, unmissable "no matches yet" popup rather than a quiet status line.
+      setTimeout(()=>{
+        alert('🎰 No matches available right now.\n\nThere aren\u2019t enough compatible people opted in nearby yet this week. You\u2019re in the pool — we\u2019ll match you and notify you the moment enough people join. Inviting a friend speeds things up!');
+      },250);
+    }
   }catch(e){
     hideRouletteSpin();
     toast(e.message||'Couldn\u2019t opt in.');
