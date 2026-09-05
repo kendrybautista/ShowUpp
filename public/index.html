@@ -473,6 +473,13 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .crew-person .cp-pick{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;cursor:pointer;transition:.15s}
 .crew-person.on .cp-pick{background:linear-gradient(135deg,var(--turq),#7C83FF);border-color:transparent}
 .crew-place{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow);margin-top:14px}
+.crew-place-opt{display:flex;align-items:flex-start;gap:12px;padding:12px 13px;border-radius:14px;border:2px solid var(--line);background:var(--card);cursor:pointer;margin-bottom:9px;transition:.15s}
+.crew-place-opt.on{border-color:var(--turq);background:linear-gradient(135deg,rgba(18,184,134,.1),rgba(124,131,255,.09))}
+.crew-place-opt .cpo-radio{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);flex:none;margin-top:2px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+.crew-place-opt.on .cpo-radio{background:linear-gradient(135deg,var(--turq),#7C83FF);border-color:transparent}
+.crew-place-opt .cpo-name{font-size:14.5px;font-weight:700;color:var(--night)}
+.crew-place-opt .cpo-meta{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
+.crew-place-opt .cpo-rating{font-size:12.5px;font-weight:700;color:#C77700;white-space:nowrap}
 .su-cluster{background:transparent}
 .su-cluster div{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;font-family:'Instrument Sans';background:linear-gradient(135deg,var(--coral),var(--mango));border:3px solid #fff;box-shadow:0 4px 14px rgba(40,40,90,.35)}
 .su-cluster.su-cluster-lg div{width:48px;height:48px;font-size:15px}
@@ -1201,6 +1208,22 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <button id="rpConfirmBtn" disabled onclick="confirmRouletteOptin()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer;opacity:1">I agree — spin me in 🎰</button>
       <button onclick="closeRoulettePledge()" style="width:100%;background:none;color:var(--muted);border:none;padding:12px;font-size:14px;cursor:pointer;margin-top:4px">Cancel</button>
     </div>
+  </div>
+
+  <!-- Social Roulette spin animation — plays right after the pledge is confirmed -->
+  <div id="rouletteSpinOverlay" style="position:absolute;inset:0;z-index:95;display:none;background:rgba(20,16,40,.6);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);align-items:center;justify-content:center;flex-direction:column">
+    <div style="position:relative;width:200px;height:200px">
+      <div style="position:absolute;top:-13px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-top:17px solid #fff;filter:drop-shadow(0 2px 4px rgba(0,0,0,.3));z-index:2"></div>
+      <div id="rouletteWheelDial" style="width:200px;height:200px;border-radius:50%;border:6px solid #fff;box-shadow:0 12px 44px rgba(0,0,0,.4);
+        background:conic-gradient(#7C83FF 0deg 30deg,#FF6F61 30deg 60deg,#FFB648 60deg 90deg,#12B886 90deg 120deg,
+                                   #A78BFA 120deg 150deg,#FF6F61 150deg 180deg,#7C83FF 180deg 210deg,#FFB648 210deg 240deg,
+                                   #12B886 240deg 270deg,#A78BFA 270deg 300deg,#FF6F61 300deg 330deg,#FFB648 330deg 360deg);
+        display:flex;align-items:center;justify-content:center">
+        <div style="width:58px;height:58px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 2px 10px rgba(0,0,0,.25)">🎰</div>
+      </div>
+    </div>
+    <div id="rouletteSpinLabel" style="color:#fff;font-weight:800;font-size:16px;margin-top:24px;letter-spacing:.2px">Spinning you in…</div>
+    <div style="color:rgba(255,255,255,.72);font-size:12.5px;margin-top:5px">Finding your people 🎲</div>
   </div>
 </div>
 
@@ -4350,21 +4373,48 @@ function openRoulettePledge(){
 }
 function closeRoulettePledge(){const ov=document.getElementById('roulettePledgeOverlay');if(ov)ov.classList.remove('open');}
 function rpToggle(cb){const b=document.getElementById('rpConfirmBtn');if(b)b.disabled=!cb.checked;}
+
+// Plays a spinning-wheel animation in #rouletteSpinOverlay, then resolves. Purely
+// visual — gives "spin me in" an actual spin instead of just a network request.
+function playRouletteSpin(){
+  return new Promise(resolve=>{
+    const ov=document.getElementById('rouletteSpinOverlay');
+    const wheel=document.getElementById('rouletteWheelDial');
+    if(!ov||!wheel){resolve();return;}
+    wheel.style.transition='none';
+    wheel.style.transform='rotate(0deg)';
+    void wheel.offsetWidth; // force reflow so the next transform actually animates
+    ov.style.display='flex';
+    const spins=6+Math.floor(Math.random()*3); // 6-8 full turns
+    const finalAngle=spins*360+Math.floor(Math.random()*360);
+    requestAnimationFrame(()=>{
+      wheel.style.transition='transform 3.1s cubic-bezier(.14,.68,.1,1)';
+      wheel.style.transform='rotate('+finalAngle+'deg)';
+    });
+    setTimeout(resolve,3200);
+  });
+}
+function hideRouletteSpin(){const ov=document.getElementById('rouletteSpinOverlay');if(ov)ov.style.display='none';}
+
 async function confirmRouletteOptin(){
   const btn=document.getElementById('rpConfirmBtn');
   if(btn){btn.disabled=true;btn.textContent='Spinning you in…';}
   // Best-effort location so matching can use distance; opt-in still works without it.
   let loc=userLoc;
   if(!loc){try{loc=await requestLocation();}catch(e){loc=null;}}
+  closeRoulettePledge();
+  const spin=playRouletteSpin();
   try{
     const body={pledge:true};
     if(loc){body.lat=loc.lat;body.lng=loc.lng;}
-    await api('/api/roulette/optin','POST',body);
-    closeRoulettePledge();
+    await Promise.all([spin, api('/api/roulette/optin','POST',body)]);
+    hideRouletteSpin();
     toast('You\u2019re in! 🎰 We\u2019ll ping you when your group is ready.');
     loadRoulette();
   }catch(e){
+    hideRouletteSpin();
     toast(e.message||'Couldn\u2019t opt in.');
+  }finally{
     if(btn){btn.disabled=false;btn.textContent='I agree — spin me in 🎰';}
   }
 }
@@ -5451,7 +5501,7 @@ async function viewProfile(userId){
     const act=document.getElementById('vpActions');
     if(p.status==='friend')act.innerHTML='<button class="btn" style="background:var(--bone);color:var(--night)" onclick="startDmWith(\''+p.id+'\')">💬 '+t('Message')+'</button>';
     else if(p.status==='pending')act.innerHTML='<button class="btn" style="background:#FDECEC;color:#d94b3b" onclick="rescindFromProfile(\''+p.id+'\')">↩️ '+t('Cancel request')+'</button>';
-    else if(p.status==='incoming')act.innerHTML='<button class="btn btn-mango" onclick="acceptFromProfile(\''+p.id+'\')">'+t('Accept friend request')+'</button>';
+    else if(p.status==='incoming')act.innerHTML='<div style="display:flex;gap:8px"><button class="btn btn-mango" style="flex:1" onclick="acceptFromProfile(\''+p.id+'\')">'+t('Accept friend request')+'</button><button class="btn" style="flex:0 0 auto;background:var(--bone);color:var(--night);padding:0 16px" onclick="declineFromProfile(\''+p.id+'\')">'+t('Decline')+'</button></div>';
     else act.innerHTML='<button class="btn btn-mango" onclick="addFriendFromProfile(\''+p.id+'\')">'+t('Add friend')+'</button>';
     document.getElementById('viewProfileSheet').classList.add('open');
   }catch(e){toast(e.message);}
@@ -5461,6 +5511,9 @@ function vpOpenAvatar(){if(viewingProfile&&viewingProfile.avatar)openAvatarViewe
 async function addFriendFromProfile(uid){try{await api('/api/friends/request','POST',{toId:uid});toast('Request sent ✓');closeViewProfile();}catch(e){toast(e.message);}}
 async function rescindFromProfile(uid){try{await api('/api/friends/rescind','POST',{toId:uid});toast('Request cancelled');closeViewProfile();}catch(e){toast(e.message);}}
 async function acceptFromProfile(uid){try{await api('/api/friends/accept','POST',{fromId:uid});toast('Friend added 🎉');closeViewProfile();if(typeof loadFriends==='function')loadFriends();}catch(e){toast(e.message);}}
+// Declines a request right from the requester's profile, so it doesn't just
+// linger there — instead of clicking through to the Requests tab to get rid of it.
+async function declineFromProfile(uid){try{await api('/api/friends/decline','POST',{fromId:uid});toast('Request declined');closeViewProfile();if(typeof loadFriends==='function')loadFriends();}catch(e){toast(e.message);}}
 async function startDmWith(uid){try{const r=await api('/api/conversations/open','POST',{friendId:uid});closeViewProfile();openDm(r.conversationId);}catch(e){toast(e.message);}}
 
 function profileLink(){
@@ -7208,7 +7261,7 @@ function vibeMatchCardHTML(m,myAns,idx){
   let actions;
   if(m.status==='friend'){ actions='<div class="vm-actions"><button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Already friends</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
   else if(m.status==='pending'){ actions='<div class="vm-actions"><button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
-  else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
+  else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="vibeDeclineRequest(\''+m.id+'\',this)">Decline</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
   else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'; }
   const archLine=m.archetype?('<div class="vm-meta">'+ (VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.emoji||'✨') +' '+(VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.label||'')+'</div>'):'';
   return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
@@ -7274,6 +7327,20 @@ async function vibeQuickAccept(uid,btn){
   try{ const r=await api('/api/friends/request','POST',{toId:uid}); markCardSent(btn,r.status==='friend'?'friend':'pending'); toast('You\'re friends! 🎉'); }
   catch(e){ if(btn){btn.disabled=false;btn.textContent='Accept request 🎉';} toast(e.message); }
 }
+// Decline an incoming request straight from a Vibe Engine card, so it doesn't
+// just sit there — removes the card with a little slide-out rather than leaving
+// it lingering on the requester's or requested person's profile.
+async function vibeDeclineRequest(uid,btn){
+  const wrap=btn&&btn.closest('.vm-actions'); if(!wrap)return;
+  const prev=wrap.innerHTML;
+  Array.from(wrap.querySelectorAll('button')).forEach(b=>b.disabled=true);
+  try{
+    await api('/api/friends/decline','POST',{fromId:uid});
+    const card=btn.closest('.vibe-match')||btn.closest('.sug-row');
+    if(card){card.style.transition='.25s';card.style.opacity='0';card.style.transform='translateX(30px)';setTimeout(()=>card.remove(),250);}
+    toast('Request declined');
+  }catch(e){ wrap.innerHTML=prev; toast(e.message); }
+}
 async function vibeIgnore(uid,btn){
   try{ await api('/api/vibe/ignore','POST',{userId:uid}); }catch(e){}
   const card=btn.closest('.vibe-match')||btn.closest('.sug-row');
@@ -7311,15 +7378,21 @@ function suggestedRowHTML(m,myAns,idx){
   const chipsHtml=chips.length?('<div class="vibe-chips" style="margin-top:8px">'+chips.map(c=>'<span class="vibe-chip">'+c+'</span>').join('')+'</div>'):'';
   const nm=(m.name||'Someone').replace(/'/g,"\\'");
   const distTxt=(m.distance!=null)?(' · '+(milesLabel(m.distance)||'')+' away'):'';
+  const btnSm='padding:9px 13px;font-size:13px';
+  let actions;
+  if(m.status==='friend'){ actions='<button class="btn" style="flex:1;'+btnSm+';background:#2e9e5b;color:#fff;border:none" disabled>✓ Friends</button><button class="vibe-btn-ghost" style="'+btnSm+'" onclick="openPublicProfile(\''+m.id+'\')">View</button>'; }
+  else if(m.status==='pending'){ actions='<button class="btn" style="flex:1;'+btnSm+';background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button><button class="vibe-btn-ghost" style="'+btnSm+'" onclick="openPublicProfile(\''+m.id+'\')">View</button>'; }
+  else if(m.status==='incoming'){ actions='<button class="btn btn-mango" style="flex:1;'+btnSm+'" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept 🎉</button><button class="vibe-btn-ghost" style="'+btnSm+'" onclick="vibeDeclineRequest(\''+m.id+'\',this)">Decline</button>'; }
+  else { actions='<button class="btn btn-mango" style="flex:1;'+btnSm+'" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button>'
+    +'<button class="vibe-btn-ghost" style="'+btnSm+'" onclick="openPublicProfile(\''+m.id+'\')">View</button>'
+    +'<button class="vibe-btn-ghost" style="'+btnSm+'" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button>'; }
   return '<div class="vibe-match sug-row" style="padding:14px;animation-delay:'+(idx*50)+'ms">'
     +'<div class="vm-top" style="gap:11px">'+av
       +'<div style="flex:1;min-width:0"><div class="vm-name" style="font-size:15px">'+esc(m.name||'Someone')+'</div>'
       +'<div class="vm-meta">✨ '+m.score+'% match'+distTxt+'</div></div>'
       +'<div style="flex:none;text-align:center"><div style="font-size:19px;font-weight:800;color:var(--coral);line-height:1">'+m.score+'%</div></div>'
     +'</div>'+chipsHtml
-    +'<div class="vm-actions" style="margin-top:12px"><button class="btn btn-mango" style="flex:1;padding:9px;font-size:13px" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button>'
-    +'<button class="vibe-btn-ghost" style="padding:9px 13px;font-size:13px" onclick="openPublicProfile(\''+m.id+'\')">View</button>'
-    +'<button class="vibe-btn-ghost" style="padding:9px 13px;font-size:13px" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'
+    +'<div class="vm-actions" style="margin-top:12px">'+actions+'</div>'
   +'</div>';
 }
 function openPublicProfile(uid){ if(typeof viewProfile==='function')viewProfile(uid); else toast('Opening profile…'); }
@@ -7334,9 +7407,9 @@ const CREW_ACTIVITIES=[
   ['art','🎨','Art'],['music','🎵','Music'],['drinks','🍸','Drinks'],['sports','⚽','Watch sports'],
   ['outdoors','🌳','Outdoors'],['books','📚','Books']
 ];
-let crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null};
+let crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null,places:[],placeChoiceId:null};
 
-function enterCrew(){ crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null}; go('s-crew'); renderCrewStep(); }
+function enterCrew(){ crewState={step:1,activity:null,size:'3-4',when:'',place:'',people:[],picked:new Set(),placeSug:null,places:[],placeChoiceId:null}; go('s-crew'); renderCrewStep(); }
 function crewBack(){
   if(crewState.step>1 && crewState.step<4){ crewState.step--; renderCrewStep(); }
   else if(crewState.step===4){ crewState.step=3; renderCrewStep(); }
@@ -7406,6 +7479,10 @@ async function crewFindPeople(){
 function crewShowResults(d){
   crewState.people=d.people||[];
   crewState.placeSug=d.place||null;
+  // Up to 3 real nearby venues, already sorted highest-rated first by the server.
+  // Pre-pick the top-rated one as a head start; the organizer can switch or ignore it.
+  crewState.places=d.places||[];
+  crewState.placeChoiceId=crewState.places.length?crewState.places[0].placeId:null;
   // pre-select the top N (wanted-1, since the user is one of the crew)
   crewState.picked=new Set(crewState.people.slice(0,Math.max(0,(d.wanted||4)-1)).map(p=>p.id));
   renderCrewResults();
@@ -7419,10 +7496,7 @@ function renderCrewResults(){
       +'<button class="btn btn-mango" onclick="crewState.step=1;renderCrewStep()">Try another activity</button></div>';
     return;
   }
-  const place=crewState.placeSug;
-  const placeHtml=place?('<div class="crew-place"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Suggested places</div>'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div style="font-size:14.5px;font-weight:700;color:var(--night)">'+crewEmoji()+' '+esc(place.label)+' near you</div>'
-    +'<a href="'+esc(place.mapsUrl)+'" target="_blank" rel="noopener" class="vibe-btn-ghost" style="text-decoration:none;display:inline-block">Open map ↗</a></div></div>'):'';
+  const placeHtml=crewPlacesHTML();
   const rows=crewState.people.map(p=>crewPersonRow(p)).join('');
   body.innerHTML=
     '<div class="vibe-archetype" style="background:linear-gradient(135deg,#12B886,#0CA678 60%,#7C83FF)"><div class="va-emoji">'+crewEmoji()+'</div><div class="va-label">Your '+esc(crewLabel())+' crew</div><div class="va-sub">We found '+crewState.people.length+' great '+(crewState.people.length===1?'fit':'fits')+' nearby. Tap to add or remove anyone.</div></div>'
@@ -7434,6 +7508,48 @@ function renderCrewResults(){
     +'<button class="btn btn-mango" style="width:100%;margin-top:14px" onclick="crewCreate()">🎉 Create crew & invite everyone</button>'
     +'<div class="vibe-skip" onclick="crewState.step=1;renderCrewStep()">↺ Start over</div>';
   updateCrewCount();
+}
+// Meeting-place suggester: up to 3 real venues near the organizer for the chosen
+// activity, best Google rating first (server already sorts them). Organizer taps
+// one to pick it as a head start — they can still meet wherever they actually want.
+function crewPlacesHTML(){
+  const places=crewState.places||[];
+  if(places.length){
+    const rows=places.map(pl=>crewPlaceOptRow(pl)).join('');
+    return '<div class="crew-place"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Suggested '+esc((crewState.placeSug&&crewState.placeSug.label)||'places').toLowerCase()+' · top-rated within 25 mi</div>'
+      +rows
+      +'<div style="font-size:11.5px;color:var(--muted);line-height:1.4;margin-top:2px">Just a head start — your crew can meet wherever works best.</div></div>';
+  }
+  // Fallback when Places lookup isn't available (no API key / no results / no location)
+  const place=crewState.placeSug;
+  if(!place)return '';
+  return '<div class="crew-place"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Suggested places</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div style="font-size:14.5px;font-weight:700;color:var(--night)">'+crewEmoji()+' '+esc(place.label)+' near you</div>'
+    +'<a href="'+esc(place.mapsUrl)+'" target="_blank" rel="noopener" class="vibe-btn-ghost" style="text-decoration:none;display:inline-block">Open map ↗</a></div></div>';
+}
+function crewStars(rating){
+  const full=Math.round((rating||0)*2)/2;
+  return '⭐ '+full.toFixed(1);
+}
+function crewPlaceOptRow(pl){
+  const on=crewState.placeChoiceId===pl.placeId?' on':'';
+  const distTxt=(pl.distance!=null)?(' · '+(milesLabel(pl.distance)||(Math.round(pl.distance)+' mi'))+' away'):'';
+  const reviews=pl.ratingCount?(' ('+pl.ratingCount.toLocaleString()+')'):'';
+  return '<div class="crew-place-opt'+on+'" id="crewpl-'+esc(pl.placeId)+'" onclick="crewPickPlace(\''+esc(pl.placeId)+'\')">'
+    +'<div class="cpo-radio">'+(on?'✓':'')+'</div>'
+    +'<div style="flex:1;min-width:0"><div class="cpo-name">'+esc(pl.name)+'</div>'
+    +'<div class="cpo-meta">'+esc(pl.address||'')+distTxt+'</div></div>'
+    +'<div style="flex:none;text-align:right"><div class="cpo-rating">'+crewStars(pl.rating)+'</div><div style="font-size:10.5px;color:var(--muted)">'+esc(reviews.trim())+'</div>'
+    +'<a href="'+esc(pl.mapsUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:var(--turq);text-decoration:none;display:inline-block;margin-top:4px">Maps ↗</a></div>'
+  +'</div>';
+}
+function crewPickPlace(placeId){
+  crewState.placeChoiceId=placeId;
+  document.querySelectorAll('.crew-place-opt').forEach(el=>{
+    const on=el.id==='crewpl-'+placeId;
+    el.classList.toggle('on',on);
+    el.querySelector('.cpo-radio').textContent=on?'✓':'';
+  });
 }
 function crewPersonRow(p){
   const on=crewState.picked.has(p.id)?' on':'';
@@ -7460,6 +7576,12 @@ async function crewCreate(){
   const payload={activity:crewState.activity,title:title,memberIds:[...crewState.picked],place:crewState.place||null};
   if(crewState.when){ const ts=Date.parse(crewState.when); if(!isNaN(ts))payload.event_at=ts; }
   if(userLoc){payload.lat=userLoc.lat;payload.lng=userLoc.lng;}
+  // Whichever suggested venue the organizer picked (if any) — used as a fallback
+  // if they didn't type a specific place of their own in the previous step.
+  if(crewState.placeChoiceId&&crewState.places&&crewState.places.length){
+    const chosen=crewState.places.find(pl=>pl.placeId===crewState.placeChoiceId);
+    if(chosen)payload.placeChoice={name:chosen.name,address:chosen.address,mapsUrl:chosen.mapsUrl};
+  }
   const btn=event&&event.target; if(btn){btn.disabled=true;btn.textContent='Creating…';}
   try{
     const r=await api('/api/crew/create','POST',payload);
