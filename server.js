@@ -1530,21 +1530,24 @@ app.post('/api/vibe/unignore', requireAuth, async (req, res) => {
 
 // Map each crew activity to: the interest tags that signal a fit, and the kind
 // of place to suggest (label + a maps search term).
+// `type` is a Google Places "type" value used to sharpen the Nearby Search
+// (findCrewPlaces, below) when one exists for the category; categories without
+// a clean 1:1 Places type just rely on the `term` keyword instead.
 const CREW_ACTIVITIES = {
-  bowling:  { emoji:'🎳', label:'Bowling',  interests:['Games & Trivia','Sports','Gaming'], place:{term:'bowling alley', label:'Bowling alleys'} },
-  food:     { emoji:'🍔', label:'Food',     interests:['Food','Cooking','Coffee'], place:{term:'popular restaurants', label:'Restaurants'} },
-  hiking:   { emoji:'🏕️', label:'Hiking',   interests:['Outdoors','Fitness','Camping','Travel'], place:{term:'hiking trails', label:'Trailheads & parks'} },
+  bowling:  { emoji:'🎳', label:'Bowling',  interests:['Games & Trivia','Sports','Gaming'], place:{term:'bowling alley', label:'Bowling alleys', type:'bowling_alley'} },
+  food:     { emoji:'🍔', label:'Food',     interests:['Food','Cooking','Coffee'], place:{term:'popular restaurants', label:'Restaurants', type:'restaurant'} },
+  hiking:   { emoji:'🏕️', label:'Hiking',   interests:['Outdoors','Fitness','Camping','Travel'], place:{term:'hiking trails', label:'Trailheads & parks', type:'park'} },
   gaming:   { emoji:'🎮', label:'Gaming',   interests:['Gaming','Games & Trivia','Tech'], place:{term:'game bar arcade', label:'Arcades & game bars'} },
-  movies:   { emoji:'🎬', label:'Movies',   interests:['Movies','Theater'], place:{term:'movie theater', label:'Cinemas'} },
-  coffee:   { emoji:'☕', label:'Coffee',   interests:['Coffee','Book Reviews','Book Club'], place:{term:'coffee shops', label:'Coffee shops'} },
+  movies:   { emoji:'🎬', label:'Movies',   interests:['Movies','Theater'], place:{term:'movie theater', label:'Cinemas', type:'movie_theater'} },
+  coffee:   { emoji:'☕', label:'Coffee',   interests:['Coffee','Book Reviews','Book Club'], place:{term:'coffee shops', label:'Coffee shops', type:'cafe'} },
   cars:     { emoji:'🚗', label:'Cars',     interests:['Cars','Motorcycles'], place:{term:'cars and coffee meetup', label:'Meetup spots'} },
-  fitness:  { emoji:'🏋️', label:'Fitness',  interests:['Fitness','Sports','Outdoors','Wellness'], place:{term:'gym fitness studio', label:'Gyms & studios'} },
-  art:      { emoji:'🎨', label:'Art',      interests:['Art','Crafts & DIY','Photography'], place:{term:'art gallery studio', label:'Galleries & studios'} },
+  fitness:  { emoji:'🏋️', label:'Fitness',  interests:['Fitness','Sports','Outdoors','Wellness'], place:{term:'gym fitness studio', label:'Gyms & studios', type:'gym'} },
+  art:      { emoji:'🎨', label:'Art',      interests:['Art','Crafts & DIY','Photography'], place:{term:'art gallery studio', label:'Galleries & studios', type:'art_gallery'} },
   music:    { emoji:'🎵', label:'Music',    interests:['Music','Instruments','Dance'], place:{term:'live music venue', label:'Live music venues'} },
-  drinks:   { emoji:'🍸', label:'Drinks',   interests:['Food','Music','Dance'], place:{term:'cocktail bar', label:'Bars & lounges'} },
-  sports:   { emoji:'⚽', label:'Watch sports', interests:['Sports','Basketball','Football','Baseball','Soccer'], place:{term:'sports bar', label:'Sports bars'} },
-  outdoors: { emoji:'🌳', label:'Outdoors', interests:['Outdoors','Camping','Fitness','Pets'], place:{term:'park', label:'Parks & green spaces'} },
-  books:    { emoji:'📚', label:'Books',    interests:['Book Club','Book Reviews','Writing'], place:{term:'bookstore cafe', label:'Bookstores & cafés'} }
+  drinks:   { emoji:'🍸', label:'Drinks',   interests:['Food','Music','Dance'], place:{term:'cocktail bar', label:'Bars & lounges', type:'bar'} },
+  sports:   { emoji:'⚽', label:'Watch sports', interests:['Sports','Basketball','Football','Baseball','Soccer'], place:{term:'sports bar', label:'Sports bars', type:'bar'} },
+  outdoors: { emoji:'🌳', label:'Outdoors', interests:['Outdoors','Camping','Fitness','Pets'], place:{term:'park', label:'Parks & green spaces', type:'park'} },
+  books:    { emoji:'📚', label:'Books',    interests:['Book Club','Book Reviews','Writing'], place:{term:'bookstore cafe', label:'Bookstores & cafés', type:'book_store'} }
 };
 
 function crewMapsLink(term, lat, lng, city) {
@@ -1553,6 +1556,57 @@ function crewMapsLink(term, lat, lng, city) {
     return 'https://www.google.com/maps/search/' + q + '/@' + lat + ',' + lng + ',13z';
   }
   return 'https://www.google.com/maps/search/' + q;
+}
+
+// ---- Meeting-place suggester (Build a Crew → pick a spot) ----
+// Optional: only runs when GOOGLE_PLACES_API_KEY is configured. Looks up real
+// venues near the organizer for the chosen activity (e.g. bowling alleys),
+// within CREW_PLACE_RADIUS_MI, and returns up to CREW_PLACE_MAX_RESULTS, ranked
+// by Google rating (highest first, ties broken by review count). This is a
+// head-start suggestion, not a booking — the group can meet wherever they want.
+const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
+const CREW_PLACE_RADIUS_MI = 25;
+const CREW_PLACE_MAX_RESULTS = 3;
+const MILES_TO_METERS = 1609.34;
+
+async function findCrewPlaces(act, lat, lng) {
+  if (!GOOGLE_PLACES_API_KEY) return { places: [], error: null };
+  if (typeof lat !== 'number' || typeof lng !== 'number') return { places: [], error: null };
+  const radiusMeters = Math.round(CREW_PLACE_RADIUS_MI * MILES_TO_METERS); // Places API caps at 50000m; 25mi ≈ 40233m fits
+  const params = new URLSearchParams({
+    location: lat + ',' + lng,
+    radius: String(radiusMeters),
+    keyword: act.place.term,
+    key: GOOGLE_PLACES_API_KEY
+  });
+  if (act.place.type) params.set('type', act.place.type);
+  const url = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json?' + params.toString();
+  let r;
+  try { r = await fetch(url); } catch (err) { return { places: [], error: 'Network error: ' + err.message }; }
+  if (!r.ok) return { places: [], error: 'Places API returned HTTP ' + r.status };
+  const data = await r.json();
+  if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    return { places: [], error: data.error_message || ('Places API status: ' + data.status) };
+  }
+  const places = (data.results || [])
+    .filter(p => typeof p.rating === 'number' && p.business_status !== 'CLOSED_PERMANENTLY' && p.business_status !== 'CLOSED_TEMPORARILY')
+    .sort((a, b) => (b.rating - a.rating) || ((b.user_ratings_total || 0) - (a.user_ratings_total || 0)))
+    .slice(0, CREW_PLACE_MAX_RESULTS)
+    .map(p => {
+      const ploc = p.geometry && p.geometry.location;
+      const dist = (ploc && typeof ploc.lat === 'number' && typeof ploc.lng === 'number')
+        ? distanceMiles(lat, lng, ploc.lat, ploc.lng) : null;
+      return {
+        placeId: p.place_id,
+        name: p.name,
+        rating: p.rating,
+        ratingCount: p.user_ratings_total || 0,
+        address: p.vicinity || '',
+        distance: dist,
+        mapsUrl: 'https://www.google.com/maps/place/?q=place_id:' + encodeURIComponent(p.place_id)
+      };
+    });
+  return { places, error: null };
 }
 
 // Find people who fit an activity + distance, ranked by vibe + interest overlap.
@@ -1613,10 +1667,21 @@ app.get('/api/crew/build', requireAuth, async (req, res) => {
   pool.sort((a, b) => (b.isFriend - a.isFriend) || b.fit - a.fit || (a.distance ?? 1e9) - (b.distance ?? 1e9));
   const suggested = pool.slice(0, Math.max(wanted + 4, 8)); // a few extra so the user can swap people out
 
+  // Up to 3 real nearby venues for the activity, best-rated first — a head start
+  // for the organizer, not a requirement. Falls back to a plain maps-search link
+  // when no API key is configured or nothing comes back.
+  let crewPlaces = [];
+  if (haveLoc) {
+    const pr = await findCrewPlaces(act, myLat, myLng);
+    crewPlaces = pr.places;
+    if (pr.error) console.error('crew places lookup failed:', pr.error);
+  }
+
   res.json({
     activity: { key:(req.query.activity||'').toLowerCase(), ...act },
     size, wanted,
     place: { label: act.place.label, mapsUrl: crewMapsLink(act.place.term, myLat, myLng, me.city) },
+    places: crewPlaces,
     people: suggested
   });
  } catch (e) {
@@ -1628,18 +1693,33 @@ app.get('/api/crew/build', requireAuth, async (req, res) => {
 // Create the crew: makes a Round and invites the chosen people with a note.
 app.post('/api/crew/create', requireAuth, async (req, res) => {
   const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  const { activity, title, memberIds, place, lat, lng, event_at } = req.body || {};
+  const { activity, title, memberIds, place, placeChoice, lat, lng, event_at } = req.body || {};
   const act = CREW_ACTIVITIES[(activity || '').toLowerCase()];
   if (!act) return res.status(400).json({ error: 'Pick an activity.' });
   const ids = Array.isArray(memberIds) ? memberIds.filter(x => typeof x === 'string').slice(0, 20) : [];
+
+  // Prefer whatever the organizer typed by hand; otherwise fall back to the
+  // Google-rated suggestion they picked from the meeting-place suggester. Either
+  // way this is just a starting point — the group can meet wherever they want.
+  let placeText = (place && typeof place === 'string' && place.trim()) ? place.trim().slice(0, 200) : null;
+  let linkUrl = null;
+  if (!placeText && placeChoice && typeof placeChoice === 'object' && typeof placeChoice.name === 'string') {
+    const nm = placeChoice.name.slice(0, 120);
+    const addr = (typeof placeChoice.address === 'string') ? placeChoice.address.slice(0, 120) : '';
+    placeText = addr ? (nm + ' — ' + addr) : nm;
+    if (typeof placeChoice.mapsUrl === 'string' && placeChoice.mapsUrl.startsWith('https://www.google.com/maps')) {
+      linkUrl = placeChoice.mapsUrl;
+    }
+  }
+
   const round = {
     id: id(), title: String(title || (act.label + ' crew')).trim().slice(0, 80),
     emoji: act.emoji, category: act.label, blurb: 'A crew put together with Build a Crew ✨',
     host_id: req.user.id, created_at: now(),
     lat: (typeof lat === 'number') ? lat : (typeof me.lat === 'number' ? me.lat : null),
     lng: (typeof lng === 'number') ? lng : (typeof me.lng === 'number' ? me.lng : null),
-    place: (place && typeof place === 'string') ? place.slice(0, 200) : null,
-    photo: null, link: null,
+    place: placeText,
+    photo: null, link: linkUrl,
     event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
   };
   await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
