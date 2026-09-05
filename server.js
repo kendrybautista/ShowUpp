@@ -4469,6 +4469,23 @@ async function rouletteMatchCycle(cycle) {
   return { groups: groupsMade, matched, pooled: people.length };
 }
 
+// How many people are currently opted-in and eligible for this cycle — used to tell
+// a waiting user honestly whether there simply aren't enough people yet, rather than
+// leaving them in "gathering your group" limbo with no explanation (item 2).
+async function rouletteCurrentPoolCount(cycle) {
+  const optins = await db.prepare(
+    "SELECT o.*, u.dob, u.vibe_answers, u.suspended FROM roulette_optins o JOIN users u ON u.id = o.user_id WHERE o.cycle = ? AND o.status = 'opted'"
+  ).all(cycle);
+  let count = 0;
+  for (const o of optins) {
+    if (o.suspended) continue;
+    const elig = await rouletteEligibility(o);
+    if (!elig.ok) continue;
+    count++;
+  }
+  return count;
+}
+
 // The weekly job. Idempotent-ish: only matches people still 'opted' for the current
 // cycle, so running it more than once in a week just picks up stragglers.
 let rouletteRunning = false;
@@ -4509,12 +4526,22 @@ app.get('/api/roulette/status', requireAuth, async (req, res) => {
       };
     }
   }
+  // Live pool-size check (item 2): only computed while the user is actually waiting,
+  // so we can tell them honestly if there just aren't enough people opted in yet
+  // instead of leaving "gathering your group" up indefinitely with no explanation.
+  let pool = null;
+  if (optin && optin.status === 'opted') {
+    const poolCount = await rouletteCurrentPoolCount(cycle);
+    pool = { count: poolCount, min: ROULETTE_GROUP_MIN, belowMin: poolCount < ROULETTE_GROUP_MIN };
+  }
+
   res.json({
     eligible: elig.ok, reason: elig.reason || null,
     cycle,
     opted_in: !!optin && optin.status !== 'left',
     status: optin ? optin.status : 'none',
     group,
+    pool,
     min_age: ROULETTE_MIN_AGE
   });
 });
