@@ -277,6 +277,33 @@ await db.exec(`
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS photo TEXT;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS link TEXT;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS event_at BIGINT;
+  -- Build a Crew (item 7): crews are made of a Round under the hood so chat/RSVPs
+  -- are reused, but they're private by design — the whole point is a small,
+  -- hand-picked group, so they must never surface in the public Discover feed.
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS hidden_from_discovery INTEGER DEFAULT 0;
+
+  -- Suspension overhaul (items 8-11): a suspension now has a reason, a start time,
+  -- and an end time the admin chooses. Accounts auto-reactivate once suspended_until
+  -- passes (checked opportunistically on login / any authenticated request).
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at BIGINT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until BIGINT;
+
+  -- Account lifecycle audit log (item 12). Rows here survive even after a user is
+  -- permanently deleted, which is the only way to keep historical metrics (e.g.
+  -- "accounts deleted by admin last month") once the users row itself is gone.
+  -- city/gender/age are snapshotted at the time of the event for the demographic filters.
+  CREATE TABLE IF NOT EXISTS account_events (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT,
+    event_type TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    city       TEXT,
+    gender     TEXT,
+    age        INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_account_events_created ON account_events(created_at);
+  CREATE INDEX IF NOT EXISTS idx_account_events_type ON account_events(event_type);
 
   ALTER TABLE memberships ADD COLUMN IF NOT EXISTS rsvp TEXT;
 
@@ -432,7 +459,7 @@ function makeToken(user) {
 async function authFromToken(token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin, lang FROM users WHERE id = ?').get(payload.uid);
+    return await db.prepare('SELECT id, email, name, username, avatar, city, origin, interests, is_admin, lang, suspended, suspended_reason, suspended_at, suspended_until FROM users WHERE id = ?').get(payload.uid);
   } catch {
     return null;
   }
@@ -444,6 +471,19 @@ async function requireAuth(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const user = token ? await authFromToken(token) : null;
   if (!user) return res.status(401).json({ error: 'Please log in again.' });
+  await maybeAutoReactivate(user);
+  // A suspended account can only reach a small allowlist of routes (item 8) — see
+  // its suspension screen (/api/me) and message an admin. Everything else is blocked
+  // centrally here so no individual route can be missed.
+  if (user.suspended && !ALLOWED_WHILE_SUSPENDED.has(req.path)) {
+    return res.status(403).json({
+      error: 'Your account is suspended.',
+      suspended: true,
+      suspendedReason: user.suspended_reason || '',
+      suspendedAt: user.suspended_at != null ? Number(user.suspended_at) : null,
+      suspendedUntil: user.suspended_until != null ? Number(user.suspended_until) : null
+    });
+  }
   req.user = user;
   next();
 }
@@ -483,6 +523,34 @@ function publicUser(u) {
     avatarOnMap: !!u.avatar_on_map
   };
 }
+
+// ---- Account lifecycle audit log (item 12) ----
+// Records a point-in-time snapshot so metrics survive account deletion.
+async function logAccountEvent(eventType, u) {
+  if (!u) return;
+  try {
+    await db.prepare('INSERT INTO account_events (id,user_id,event_type,created_at,city,gender,age) VALUES (?,?,?,?,?,?,?)')
+      .run(id(), u.id || null, eventType, now(), u.city || '', u.gender || '', ageFromDob(u.dob));
+  } catch (e) { console.error('logAccountEvent failed:', e); }
+}
+
+// ---- Suspension auto-expiry (item 11) ----
+// Checked opportunistically (login, /api/me, every authenticated request) rather than
+// via a background scheduler — simple and always correct the moment someone touches the app.
+async function maybeAutoReactivate(u) {
+  if (!u || !u.suspended) return u;
+  const until = u.suspended_until != null ? Number(u.suspended_until) : null;
+  if (until && until <= now()) {
+    const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
+    await db.prepare('UPDATE users SET suspended = 0, suspended_reason = NULL, suspended_at = NULL, suspended_until = NULL WHERE id = ?').run(u.id);
+    if (full) await logAccountEvent('reactivated_auto', full);
+    u.suspended = 0; u.suspended_reason = null; u.suspended_at = null; u.suspended_until = null;
+  }
+  return u;
+}
+// Routes a suspended user may still hit — just enough to see why, watch the countdown,
+// and reach an admin. Everything else in the app is off-limits while suspended (item 8).
+const ALLOWED_WHILE_SUSPENDED = new Set(['/api/me', '/api/suspension/contact-admin']);
 
 // --- App ---
 const app = express();
@@ -552,6 +620,7 @@ app.post('/api/signup', async (req, res) => {
   };
   await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,gender,created_at)
               VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
+  await logAccountEvent('created', user);
 
   res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
 });
@@ -571,10 +640,12 @@ app.post('/api/login', async (req, res) => {
   if (!row || !bcrypt.compareSync(String(password), row.pass_hash)) {
     return res.status(401).json({ error: 'Wrong login or password.' });
   }
-  if (row.suspended) {
-    return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
-  }
-  res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0 } });
+  // Suspended accounts CAN log in (item 8) — the app shows them a lock screen with the
+  // reason and a countdown instead of blocking sign-in entirely. Check for expiry first
+  // in case the suspension window has already passed since their last visit.
+  await maybeAutoReactivate(row);
+  res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
+    suspended: !!row.suspended, suspendedReason: row.suspended_reason || '', suspendedAt: row.suspended_at != null ? Number(row.suspended_at) : null, suspendedUntil: row.suspended_until != null ? Number(row.suspended_until) : null } });
 });
 
 // ---- Sign in with Google (item 3) ----
@@ -620,14 +691,16 @@ app.post('/api/auth/google', async (req, res) => {
   if (row) {
     // Existing account — log them in. Refresh a couple of profile fields from Google
     // if they were never set locally (e.g. an avatar), but never overwrite their choices.
-    if (row.suspended) return res.status(403).json({ error: 'This account has been suspended. Contact support if you think this is a mistake.' });
+    // Suspended accounts CAN log in (item 8) — the app shows a lock screen instead.
+    await maybeAutoReactivate(row);
     if ((!row.avatar || !row.avatar.trim()) && claims.picture) {
       await db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(String(claims.picture).slice(0, 3000000), row.id);
       row.avatar = claims.picture;
     }
     return res.json({
       token: makeToken(row),
-      user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0 },
+      user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
+        suspended: !!row.suspended, suspendedReason: row.suspended_reason || '', suspendedAt: row.suspended_at != null ? Number(row.suspended_at) : null, suspendedUntil: row.suspended_until != null ? Number(row.suspended_until) : null },
       isNew: false
     });
   }
@@ -656,6 +729,7 @@ app.post('/api/auth/google', async (req, res) => {
   };
   await db.prepare(`INSERT INTO users (id,email,pass_hash,name,username,avatar,phone,city,origin,interests,lang,dob,gender,created_at)
               VALUES (@id,@email,@pass_hash,@name,@username,@avatar,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
+  await logAccountEvent('created', user);
 
   res.json({
     token: makeToken(user),
@@ -669,8 +743,39 @@ app.get('/api/me', requireAuth, async (req, res) => {
   // Read the full, current record from the DB — the token snapshot can be stale
   // (e.g. relationship/bio set after login), which would blank fields on refresh.
   const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) || req.user;
+  await maybeAutoReactivate(full);
   res.json({ user: { ...publicUser(full), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0,
-    dob: full.dob || '', age: ageFromDob(full.dob), gender: full.gender || '', showAge: !!full.show_age } });
+    dob: full.dob || '', age: ageFromDob(full.dob), gender: full.gender || '', showAge: !!full.show_age,
+    suspended: !!full.suspended, suspendedReason: full.suspended_reason || '', suspendedAt: full.suspended_at != null ? Number(full.suspended_at) : null, suspendedUntil: full.suspended_until != null ? Number(full.suspended_until) : null } });
+});
+
+// A suspended account's one lifeline: message an admin. Reuses the normal 1:1
+// conversation/DM tables so the message lands in the admin's regular inbox —
+// no separate support system to build or maintain.
+app.post('/api/suspension/contact-admin', requireAuth, async (req, res) => {
+  const text = String((req.body && req.body.message) || '').trim().slice(0, 2000);
+  if (!text) return res.status(400).json({ error: 'Write a message first.' });
+  const admin = await db.prepare('SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1').get();
+  if (!admin) return res.status(500).json({ error: 'No admin account is configured.' });
+  const existing = await db.prepare(`
+    SELECT c.id FROM conversations c
+    WHERE c.is_group = 0
+      AND EXISTS(SELECT 1 FROM conversation_members m WHERE m.conv_id=c.id AND m.user_id=?)
+      AND EXISTS(SELECT 1 FROM conversation_members m WHERE m.conv_id=c.id AND m.user_id=?)
+      AND (SELECT COUNT(*) FROM conversation_members m WHERE m.conv_id=c.id)=2
+  `).get(req.user.id, admin.id);
+  let convId = existing ? existing.id : null;
+  if (!convId) {
+    convId = id();
+    await db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,0,?,?,?)').run(convId, '', req.user.id, now());
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, req.user.id);
+    await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0)').run(convId, admin.id);
+  }
+  await db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,created_at) VALUES (?,?,?,?,?,?)')
+    .run(id(), convId, req.user.id, text, 'text', now());
+  await pushNotif(admin.id, 'suspension_appeal', 'Message from a suspended account',
+    (req.user.name || 'A user') + ' sent a message about their suspension.', 'dm:' + convId);
+  res.json({ ok: true });
 });
 
 // Presence of my friends (respects their incognito setting)
@@ -1103,6 +1208,8 @@ app.post('/api/me/avatar/remove', requireAuth, async (req, res) => {
 // Permanently delete the current user's account and all their data
 app.post('/api/me/delete', requireAuth, async (req, res) => {
   const uid = req.user.id;
+  const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
+  await logAccountEvent('deleted_by_user', full);
   await db.prepare('DELETE FROM messages WHERE user_id = ?').run(uid);
   await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(uid);
   await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(uid, uid);
@@ -1720,10 +1827,13 @@ app.post('/api/crew/create', requireAuth, async (req, res) => {
     lng: (typeof lng === 'number') ? lng : (typeof me.lng === 'number' ? me.lng : null),
     place: placeText,
     photo: null, link: linkUrl,
-    event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null
+    event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null,
+    // Build a Crew is a private, hand-picked group by design (item 7) — it must never
+    // show up in the public Discover feed, only in the members' own Circles list.
+    hidden_from_discovery: 1
   };
-  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at)
-              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at)`).run(round);
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at,hidden_from_discovery)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at,@hidden_from_discovery)`).run(round);
   await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(round.id, req.user.id, now());
   // invite each person via a notification linking to the Round
   let invited = 0;
@@ -2416,31 +2526,135 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   let rows;
   if (q) {
-    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,is_admin,created_at
+    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at
       FROM users WHERE LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?
       ORDER BY created_at DESC LIMIT 200`).all('%'+q+'%','%'+q+'%','%'+q+'%');
   } else {
-    rows = await db.prepare('SELECT id,name,username,email,city,suspended,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+    rows = await db.prepare('SELECT id,name,username,email,city,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
   }
   res.json({ users: rows });
 });
 
-// Suspend / unsuspend a user (admin only)
+// Suspend / unsuspend a user (admin only). Suspending requires a reason + duration
+// (items 8-9); lifting a suspension early requires the supervisor password, same
+// gate already used for permanently deleting a report (item 9).
 app.post('/api/admin/suspend', requireAuth, requireAdmin, async (req, res) => {
-  const { userId, suspend } = req.body || {};
-  const target = await db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  const { userId, suspend, reason, durationHours, supervisorPassword } = req.body || {};
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_admin) return res.status(400).json({ error: 'You cannot suspend an admin account.' });
-  await db.prepare('UPDATE users SET suspended = ? WHERE id = ?').run(suspend ? 1 : 0, userId);
+
+  if (suspend) {
+    const cleanReason = String(reason || '').trim().slice(0, 500);
+    if (!cleanReason) return res.status(400).json({ error: 'Please explain why this account is being suspended.' });
+    const hours = parseFloat(durationHours);
+    if (!hours || hours <= 0) return res.status(400).json({ error: 'Please choose how long to suspend this account for.' });
+    const suspAt = now();
+    const suspUntil = suspAt + Math.round(hours * 3600 * 1000);
+    await db.prepare('UPDATE users SET suspended = 1, suspended_reason = ?, suspended_at = ?, suspended_until = ? WHERE id = ?')
+      .run(cleanReason, suspAt, suspUntil, userId);
+    await logAccountEvent('suspended', target);
+    const untilDate = new Date(suspUntil).toLocaleString();
+    await pushNotif(userId, 'account_suspended', 'Your account has been suspended',
+      'Reason: ' + cleanReason + '. Your account will be reactivated on ' + untilDate + '.', '');
+  } else {
+    if (!supervisorPassword || String(supervisorPassword) !== SUPERVISOR_PASSWORD) {
+      return res.status(403).json({ error: 'Incorrect supervisor password.' });
+    }
+    await db.prepare('UPDATE users SET suspended = 0, suspended_reason = NULL, suspended_at = NULL, suspended_until = NULL WHERE id = ?').run(userId);
+    await logAccountEvent('unsuspended_manual', target);
+    await pushNotif(userId, 'account_unsuspended', 'Your account has been reinstated',
+      'An admin lifted your suspension early. Welcome back!', '');
+  }
   res.json({ ok: true });
+});
+
+// ---- Manager metrics dashboard (item 12) ----
+// Combines the account_events audit log (which survives deletion) with a live snapshot
+// of the users table, filterable by date range, city, gender, and age. The event table
+// is small enough to filter/aggregate in JS rather than lean on engine-specific date SQL.
+function metricsAgeMatches(age, ageMin, ageMax) {
+  if (age == null) return ageMin == null && ageMax == null;
+  if (ageMin != null && age < ageMin) return false;
+  if (ageMax != null && age > ageMax) return false;
+  return true;
+}
+app.get('/api/admin/metrics', requireAuth, requireAdmin, async (req, res) => {
+  const from = req.query.from ? parseInt(req.query.from) : 0;
+  const to = req.query.to ? parseInt(req.query.to) : now();
+  const city = String(req.query.city || '').trim();
+  const gender = String(req.query.gender || '').trim();
+  const ageMin = req.query.ageMin ? parseInt(req.query.ageMin) : null;
+  const ageMax = req.query.ageMax ? parseInt(req.query.ageMax) : null;
+
+  const rawEvents = await db.prepare(
+    'SELECT event_type, created_at, city, gender, age FROM account_events WHERE created_at >= ? AND created_at <= ? ORDER BY created_at ASC'
+  ).all(from, to);
+  const events = rawEvents.filter(e =>
+    (!city || (e.city || '').toLowerCase() === city.toLowerCase()) &&
+    (!gender || (e.gender || '').toLowerCase() === gender.toLowerCase()) &&
+    metricsAgeMatches(e.age, ageMin, ageMax)
+  );
+
+  const EVENT_TYPES = ['created', 'suspended', 'unsuspended_manual', 'reactivated_auto', 'deleted_by_user', 'deleted_by_admin'];
+  const counts = {}; EVENT_TYPES.forEach(t => counts[t] = 0);
+  for (const e of events) if (counts[e.event_type] !== undefined) counts[e.event_type]++;
+
+  // "Active" is a live-table snapshot: accounts created in-range, matching the filters,
+  // that are still around and not currently suspended.
+  const liveRows = await db.prepare('SELECT city, gender, dob, suspended FROM users WHERE created_at >= ? AND created_at <= ?').all(from, to);
+  let active = 0;
+  for (const u of liveRows) {
+    if (u.suspended) continue;
+    if (city && (u.city || '').toLowerCase() !== city.toLowerCase()) continue;
+    if (gender && (u.gender || '').toLowerCase() !== gender.toLowerCase()) continue;
+    if (!metricsAgeMatches(ageFromDob(u.dob), ageMin, ageMax)) continue;
+    active++;
+  }
+
+  // Bucket the time series by day for ranges up to ~2 months, otherwise by month.
+  const spanDays = (to - from) / 86400000;
+  const monthly = spanDays > 62;
+  function bucketKey(ts) {
+    const d = new Date(ts);
+    if (monthly) return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    return d.toISOString().slice(0, 10);
+  }
+  const seriesMap = {};
+  for (const e of events) {
+    const k = bucketKey(e.created_at);
+    if (!seriesMap[k]) { seriesMap[k] = { bucket: k }; EVENT_TYPES.forEach(t => seriesMap[k][t] = 0); }
+    seriesMap[k][e.event_type] = (seriesMap[k][e.event_type] || 0) + 1;
+  }
+  const series = Object.values(seriesMap).sort((a, b) => a.bucket < b.bucket ? -1 : (a.bucket > b.bucket ? 1 : 0));
+
+  // Stable filter dropdown options, drawn from all-time data (not scoped to the current filters).
+  const cityRows = await db.prepare("SELECT DISTINCT city FROM users WHERE city IS NOT NULL AND city != '' ORDER BY city ASC LIMIT 300").all();
+  const genderRows = await db.prepare("SELECT DISTINCT gender FROM users WHERE gender IS NOT NULL AND gender != '' ORDER BY gender ASC LIMIT 50").all();
+
+  res.json({
+    summary: {
+      totalCreated: counts.created,
+      active,
+      deletedByUser: counts.deleted_by_user,
+      suspended: counts.suspended,
+      deletedByAdmin: counts.deleted_by_admin,
+      unsuspendedManual: counts.unsuspended_manual,
+      reactivatedAuto: counts.reactivated_auto
+    },
+    series,
+    bucketGranularity: monthly ? 'month' : 'day',
+    filters: { cities: cityRows.map(r => r.city), genders: genderRows.map(r => r.gender) }
+  });
 });
 
 // Permanently delete a user and their data (admin only)
 app.post('/api/admin/delete', requireAuth, requireAdmin, async (req, res) => {
   const { userId } = req.body || {};
-  const target = await db.prepare('SELECT id,is_admin FROM users WHERE id = ?').get(userId);
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_admin) return res.status(400).json({ error: 'You cannot delete an admin account.' });
+  await logAccountEvent('deleted_by_admin', target);
   await db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
   await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
   await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
@@ -2696,7 +2910,9 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
       EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='like') AS i_liked,
       EXISTS(SELECT 1 FROM round_reactions rr WHERE rr.round_id = r.id AND rr.user_id = ? AND rr.type='love') AS i_loved,
       EXISTS(SELECT 1 FROM saved_rounds sr WHERE sr.round_id = r.id AND sr.user_id = ?) AS i_saved
-    FROM rounds r LEFT JOIN users u ON u.id = r.host_id ORDER BY r.created_at DESC
+    FROM rounds r LEFT JOIN users u ON u.id = r.host_id
+    WHERE COALESCE(r.hidden_from_discovery, 0) = 0
+    ORDER BY r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
   // attach up to 4 member avatars for the card preview
   const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
