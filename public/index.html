@@ -204,6 +204,8 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 @keyframes slideUp{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
 #roulettePledgeOverlay.open{display:flex}
 #rpConfirmBtn:disabled{opacity:.45;cursor:not-allowed}
+@keyframes rouletteIconSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.roulette-icon-spin{display:inline-block;animation:rouletteIconSpin .55s linear infinite}
 .scroll{flex:1;overflow-y:auto;padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
 .hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
@@ -4477,10 +4479,18 @@ function renderRoulette(){
 
   // Opted in, waiting for the draw.
   if(s.opted_in&&s.status==='opted'){
+    // If there simply aren't enough eligible people opted in nearby yet this cycle,
+    // say so plainly instead of leaving the person guessing (item 2) — "we're
+    // gathering your group" forever otherwise looks like the feature is broken.
+    const pool=s.pool||null;
+    const notEnough=!!(pool&&pool.belowMin);
+    const waitMsg=notEnough
+      ?('Not enough people have opted in nearby yet this week ('+pool.count+' of '+pool.min+' needed to form a group). Hang tight — we\u2019ll match you the moment enough people join, or invite a friend to speed things up!')
+      :'We\u2019re gathering your group. You\u2019ll get a notification the moment your Social Roulette group is ready. 🎰';
     html+='<div style="text-align:center;background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:26px 20px">'
-      +'<div style="font-size:40px;margin-bottom:8px">⏳</div>'
+      +'<div style="font-size:40px;margin-bottom:8px">'+(notEnough?'🌱':'⏳')+'</div>'
       +'<div style="font-size:16px;font-weight:800;color:var(--night)">You\u2019re in for this week!</div>'
-      +'<p style="font-size:13.5px;color:var(--muted);line-height:1.55;margin:8px 0 16px">We\u2019re gathering your group. You\u2019ll get a notification the moment your Social Roulette group is ready. 🎰</p>'
+      +'<p style="font-size:13.5px;color:var(--muted);line-height:1.55;margin:8px 0 16px">'+escR(waitMsg)+'</p>'
       +'<button onclick="leaveRoulette()" style="background:none;color:var(--muted);border:none;padding:8px;font-size:13px;cursor:pointer;text-decoration:underline">Change my mind</button>'
       +'</div>';
     box.innerHTML=html;
@@ -4491,7 +4501,7 @@ function renderRoulette(){
   html+='<div style="background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:20px;text-align:center">'
     +'<div style="font-size:14px;font-weight:700;color:var(--night);margin-bottom:6px">Ready to roll this week?</div>'
     +'<p style="font-size:13px;color:var(--muted);line-height:1.55;margin:0 0 16px">Opt in and we\u2019ll match you with 3\u20135 compatible people nearby, plus a fun mission to get you out the door.</p>'
-    +'<button onclick="openRoulettePledge()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer">🎰 Spin me in</button>'
+    +'<button id="rouletteSpinBtn" onclick="openRoulettePledge()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer"><span id="rouletteSpinIcon">🎰</span> Spin me in</button>'
     +'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Opt-in is per week and you can leave anytime.</div>'
     +'</div>';
   box.innerHTML=html;
@@ -4499,10 +4509,19 @@ function renderRoulette(){
 
 // Safety pledge — shown every time before joining (per the app\u2019s safety-gating choice).
 function openRoulettePledge(){
+  // Instant feedback (item 2): the icon starts spinning the moment they tap "Spin me
+  // in", rather than waiting for the pledge to be confirmed — so the tap never feels
+  // like it did nothing.
+  const icon=document.getElementById('rouletteSpinIcon');
+  if(icon)icon.classList.add('roulette-icon-spin');
   const ov=document.getElementById('roulettePledgeOverlay');
   if(ov){document.getElementById('rpAgree').checked=false;document.getElementById('rpConfirmBtn').disabled=true;ov.classList.add('open');}
 }
-function closeRoulettePledge(){const ov=document.getElementById('roulettePledgeOverlay');if(ov)ov.classList.remove('open');}
+function closeRoulettePledge(){
+  const ov=document.getElementById('roulettePledgeOverlay');if(ov)ov.classList.remove('open');
+  const icon=document.getElementById('rouletteSpinIcon');
+  if(icon)icon.classList.remove('roulette-icon-spin');
+}
 function rpToggle(cb){const b=document.getElementById('rpConfirmBtn');if(b)b.disabled=!cb.checked;}
 
 // Plays a spinning-wheel animation in #rouletteSpinOverlay, then resolves. Purely
