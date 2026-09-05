@@ -4568,7 +4568,13 @@ app.post('/api/roulette/optin', requireAuth, async (req, res) => {
     "INSERT INTO roulette_optins (user_id,cycle,status,lat,lng,country,created_at) VALUES (?,?,'opted',?,?,?,?) " +
     "ON CONFLICT (user_id,cycle) DO UPDATE SET status='opted', lat=EXCLUDED.lat, lng=EXCLUDED.lng, country=EXCLUDED.country"
   ).run(req.user.id, cycle, useLat, useLng, country, now());
-  res.json({ ok: true, status: 'opted' });
+  // Try to form a group right away (item 9): if enough compatible people are already
+  // in this week's pool, the matcher creates the group now, so by the time the casino
+  // spin finishes on the client the group is ready to reveal. If there aren't enough
+  // people yet, this is a no-op and the weekly job will catch them later.
+  try { await runRouletteMatching(); } catch (e) {}
+  const after = await db.prepare('SELECT status FROM roulette_optins WHERE user_id = ? AND cycle = ?').get(req.user.id, cycle);
+  res.json({ ok: true, status: (after && after.status) || 'opted' });
 });
 
 // Back out. Before matching: removes them from the pool. After matching: leaves the
