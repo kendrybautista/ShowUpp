@@ -170,6 +170,44 @@ await db.exec(`
     used       INTEGER DEFAULT 0,
     created_at BIGINT NOT NULL
   );
+
+  -- ===== Social Roulette 🎰 =====
+  -- A weekly opt-in that drops the user into a small (4–6) group of compatible people
+  -- with a light, public-place mission. Safety is central: opt-in is per-week and
+  -- revocable, matching never groups people who've blocked each other, and every
+  -- group is a normal group conversation so report/block/leave already work.
+
+  -- One row per user per weekly cycle they opt into. The cycle is a YYYY-WW key so a
+  -- user can only be in one pool per week. Status moves opted -> matched -> (left).
+  CREATE TABLE IF NOT EXISTS roulette_optins (
+    user_id    TEXT NOT NULL,
+    cycle      TEXT NOT NULL,
+    status     TEXT DEFAULT 'opted',   -- 'opted' | 'matched' | 'left'
+    group_id   TEXT,                   -- set once matched
+    lat        REAL,                   -- snapshot at opt-in, for area-based matching
+    lng        REAL,
+    country    TEXT,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, cycle)
+  );
+
+  -- A matched group for a given cycle. Backed by a normal group conversation
+  -- (conv_id) so chat, reporting and blocking all reuse existing machinery.
+  CREATE TABLE IF NOT EXISTS roulette_groups (
+    id         TEXT PRIMARY KEY,
+    cycle      TEXT NOT NULL,
+    conv_id    TEXT NOT NULL,
+    mission    TEXT NOT NULL,
+    area_label TEXT,                   -- coarse area only, e.g. "Santo Domingo area" — never an address
+    created_at BIGINT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS roulette_members (
+    group_id  TEXT NOT NULL,
+    user_id   TEXT NOT NULL,
+    joined_at BIGINT NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+  );
 `);
 
 // --- Safe migrations: Postgres supports ADD COLUMN IF NOT EXISTS, so these are idempotent ---
@@ -3991,12 +4029,258 @@ wss.on('connection', (ws) => {
   });
 });
 
+// ============================================================================
+// Social Roulette 🎰  — weekly opt-in → small compatible group → light mission
+// ============================================================================
+// Design goals: fun but SAFE. Adults only; opt-in is per-week and revocable;
+// matching never pairs people who've blocked each other; every group is a normal
+// group conversation so report/block/leave are already covered. The mission is
+// always a PUBLIC place, and only a coarse area label is ever shared — never an
+// address.
+
+const ROULETTE_MIN_AGE = 18;
+const ROULETTE_GROUP_MIN = 4;
+const ROULETTE_GROUP_MAX = 6;
+const ROULETTE_RADIUS_MI = 30; // a little wider than vibe matching, since groups are larger
+
+// A rotating set of light, public-place missions. Kept deliberately simple and
+// low-pressure — invitations, not obligations.
+const ROULETTE_MISSIONS = [
+  "Find a local spot none of you have been to. Meet there, grab a group photo, and tell your friends what you thought in your Daily Updates. 📸",
+  "Pick a café or park nobody in the group has tried, meet up, and swap one story each. Snap a group photo to remember it. ☕",
+  "Discover somewhere new together — a market, a mural, a viewpoint. Meet, explore, and post a group photo to your Daily Updates. 🗺️",
+  "Hunt down the best dessert none of you have had yet. Meet, taste, and capture the moment with a group pic. 🍰"
+];
+
+// ISO-ish week key (YYYY-Www) so a user can only be pooled once per week and we can
+// tell "this week's" opt-in apart from next week's.
+function rouletteCycleKey(d) {
+  d = d ? new Date(d) : new Date();
+  const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7; // Mon=0
+  target.setUTCDate(target.getUTCDate() - dayNum + 3); // nearest Thursday
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((target - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return target.getUTCFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+// Is this user eligible to opt in? Must be a verified adult with a vibe profile so
+// we can actually match them to compatible people.
+async function rouletteEligibility(user) {
+  const age = ageFromDob(user.dob);
+  if (age == null) return { ok: false, reason: 'no_dob' };
+  if (age < ROULETTE_MIN_AGE) return { ok: false, reason: 'under_age' };
+  const vibe = parseVibe(user.vibe_answers);
+  if (!vibe || answeredCount(vibe) < 10) return { ok: false, reason: 'no_vibe' };
+  return { ok: true, age };
+}
+
+// Greedy compatibility grouping: seed with a person, pull in their most-compatible
+// still-unmatched neighbours (respecting blocks + distance) until the group reaches
+// a good size. Leftovers under the minimum are held for next week rather than forced
+// into a bad group.
+async function rouletteMatchCycle(cycle) {
+  const optins = await db.prepare(
+    "SELECT o.*, u.name, u.city, u.dob, u.vibe_answers, u.suspended FROM roulette_optins o JOIN users u ON u.id = o.user_id WHERE o.cycle = ? AND o.status = 'opted'"
+  ).all(cycle);
+
+  // Keep only still-eligible, non-suspended people with a usable vibe profile.
+  const people = [];
+  for (const o of optins) {
+    if (o.suspended) continue;
+    const elig = await rouletteEligibility(o);
+    if (!elig.ok) continue;
+    const v = parseVibe(o.vibe_answers);
+    people.push({
+      id: o.user_id, name: o.name, city: o.city,
+      lat: (typeof o.lat === 'number') ? o.lat : null,
+      lng: (typeof o.lng === 'number') ? o.lng : null,
+      country: o.country || '', answers: v.answers
+    });
+  }
+  if (people.length < ROULETTE_GROUP_MIN) return { groups: 0, matched: 0, pooled: people.length };
+
+  const weights = adaptiveWeights(people.map(p => ({ answers: p.answers })));
+  const remaining = new Set(people.map(p => p.id));
+  const byId = new Map(people.map(p => [p.id, p]));
+
+  // Can these two be in a group together? Not if either blocked the other, and — when
+  // we have coordinates for both — not if they're outside the radius.
+  async function compatible(a, b) {
+    if (await isBlocked(a.id, b.id)) return false;
+    if (a.lat != null && a.lng != null && b.lat != null && b.lng != null) {
+      if (distanceMiles(a.lat, a.lng, b.lat, b.lng) > ROULETTE_RADIUS_MI) return false;
+    }
+    return true;
+  }
+
+  let groupsMade = 0, matched = 0;
+  const order = people.slice().sort(() => Math.random() - 0.5); // shuffle for variety week to week
+  for (const seed of order) {
+    if (!remaining.has(seed.id)) continue;
+    // Rank everyone else still available by compatibility with the seed.
+    const candidates = [];
+    for (const otherId of remaining) {
+      if (otherId === seed.id) continue;
+      const other = byId.get(otherId);
+      if (!(await compatible(seed, other))) continue;
+      const { score } = vibeScore(seed.answers, other.answers, weights);
+      candidates.push({ other, score });
+    }
+    candidates.sort((x, y) => y.score - x.score);
+
+    // Build a group, checking each newcomer is compatible with everyone already in.
+    const group = [seed];
+    for (const cand of candidates) {
+      if (group.length >= ROULETTE_GROUP_MAX) break;
+      let okWithAll = true;
+      for (const m of group) { if (!(await compatible(m, cand.other))) { okWithAll = false; break; } }
+      if (okWithAll) group.push(cand.other);
+    }
+
+    if (group.length < ROULETTE_GROUP_MIN) continue; // leave the seed for next week
+    for (const m of group) remaining.delete(m.id);
+
+    // Coarse area label from the most common country / city among members — never an address.
+    const cities = group.map(m => m.city).filter(Boolean);
+    const areaLabel = cities.length ? (String(cities[0]).split(',')[0].trim() + ' area') : 'your area';
+    const mission = ROULETTE_MISSIONS[Math.floor(Math.random() * ROULETTE_MISSIONS.length)];
+
+    // Back the group with a real group conversation so chat/report/block just work.
+    const convId = id();
+    await db.prepare('INSERT INTO conversations (id,is_group,title,created_by,created_at) VALUES (?,1,?,?,?)')
+      .run(convId, '🎰 Social Roulette', 'system', now());
+    const groupId = id();
+    await db.prepare('INSERT INTO roulette_groups (id,cycle,conv_id,mission,area_label,created_at) VALUES (?,?,?,?,?,?)')
+      .run(groupId, cycle, convId, mission, areaLabel, now());
+    for (const m of group) {
+      await db.prepare('INSERT INTO conversation_members (conv_id,user_id,last_read) VALUES (?,?,0) ON CONFLICT DO NOTHING').run(convId, m.id);
+      await db.prepare('INSERT INTO roulette_members (group_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(groupId, m.id, now());
+      await db.prepare("UPDATE roulette_optins SET status='matched', group_id=? WHERE user_id=? AND cycle=?").run(groupId, m.id, cycle);
+      await pushNotif(m.id, 'roulette', "Your Social Roulette group is ready! 🎰", "You've been matched with " + (group.length - 1) + " others. Tap to see your mission.", 'roulette:' + groupId);
+    }
+    // Seed the chat with a friendly welcome carrying the mission + a safety note.
+    // Attributed to the first member (not a 'system' id) because the message-fetch
+    // query inner-joins on users — a message from a non-existent 'system' user would
+    // be silently dropped and never shown.
+    await db.prepare('INSERT INTO dm_messages (id,conv_id,user_id,body,kind,created_at) VALUES (?,?,?,?,?,?)')
+      .run(id(), convId, group[0].id,
+        "🎰 Welcome to your Social Roulette group! Your mission: " + mission +
+        "\n\n🛡️ Keep it safe: meet in a public place in daylight, and tell a friend where you're going. Tap 🚩 on anyone if something feels off.",
+        'text', now());
+    groupsMade++; matched += group.length;
+  }
+  return { groups: groupsMade, matched, pooled: people.length };
+}
+
+// The weekly job. Idempotent-ish: only matches people still 'opted' for the current
+// cycle, so running it more than once in a week just picks up stragglers.
+let rouletteRunning = false;
+async function runRouletteMatching() {
+  if (rouletteRunning) return;
+  rouletteRunning = true;
+  try {
+    const cycle = rouletteCycleKey();
+    const res = await rouletteMatchCycle(cycle);
+    if (res.groups) console.log(`[roulette] ${cycle}: made ${res.groups} group(s), matched ${res.matched}/${res.pooled}`);
+  } catch (e) {
+    console.log('[roulette] matching failed:', e.message);
+  } finally {
+    rouletteRunning = false;
+  }
+}
+
+// ---- Roulette endpoints ----
+
+// Where the user stands this week: eligibility, whether they've opted in, and — if
+// matched — their group + mission + fellow members (never any address).
+app.get('/api/roulette/status', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const elig = await rouletteEligibility(me);
+  const cycle = rouletteCycleKey();
+  const optin = await db.prepare('SELECT * FROM roulette_optins WHERE user_id = ? AND cycle = ?').get(req.user.id, cycle);
+
+  let group = null;
+  if (optin && optin.status === 'matched' && optin.group_id) {
+    const g = await db.prepare('SELECT * FROM roulette_groups WHERE id = ?').get(optin.group_id);
+    if (g) {
+      const members = await db.prepare(
+        'SELECT u.id,u.name,u.username,u.avatar FROM roulette_members rm JOIN users u ON u.id = rm.user_id WHERE rm.group_id = ?'
+      ).all(g.id);
+      group = {
+        id: g.id, conv_id: g.conv_id, mission: g.mission, area_label: g.area_label,
+        members: members.filter(m => m.id !== req.user.id), member_count: members.length
+      };
+    }
+  }
+  res.json({
+    eligible: elig.ok, reason: elig.reason || null,
+    cycle,
+    opted_in: !!optin && optin.status !== 'left',
+    status: optin ? optin.status : 'none',
+    group,
+    min_age: ROULETTE_MIN_AGE
+  });
+});
+
+// Opt in for this week. Requires the safety pledge to be acknowledged every time
+// (per your safety-gating choice). Snapshots location for area-based matching.
+app.post('/api/roulette/optin', requireAuth, async (req, res) => {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const elig = await rouletteEligibility(me);
+  if (!elig.ok) return res.status(403).json({ error: 'not_eligible', reason: elig.reason });
+
+  const { pledge, lat, lng } = req.body || {};
+  if (!pledge) return res.status(400).json({ error: 'pledge_required' });
+
+  const cycle = rouletteCycleKey();
+  const existing = await db.prepare('SELECT * FROM roulette_optins WHERE user_id = ? AND cycle = ?').get(req.user.id, cycle);
+  if (existing && existing.status === 'matched') {
+    return res.json({ ok: true, already: true, status: 'matched' });
+  }
+  const useLat = (typeof lat === 'number') ? lat : me.lat;
+  const useLng = (typeof lng === 'number') ? lng : me.lng;
+  const country = (countryToCode(me.origin || me.city) || '').toUpperCase();
+  await db.prepare(
+    "INSERT INTO roulette_optins (user_id,cycle,status,lat,lng,country,created_at) VALUES (?,?,'opted',?,?,?,?) " +
+    "ON CONFLICT (user_id,cycle) DO UPDATE SET status='opted', lat=EXCLUDED.lat, lng=EXCLUDED.lng, country=EXCLUDED.country"
+  ).run(req.user.id, cycle, useLat, useLng, country, now());
+  res.json({ ok: true, status: 'opted' });
+});
+
+// Back out. Before matching: removes them from the pool. After matching: leaves the
+// group (and its conversation) — the same as leaving any group, so no one is trapped.
+app.post('/api/roulette/leave', requireAuth, async (req, res) => {
+  const cycle = rouletteCycleKey();
+  const optin = await db.prepare('SELECT * FROM roulette_optins WHERE user_id = ? AND cycle = ?').get(req.user.id, cycle);
+  if (!optin) return res.json({ ok: true });
+  if (optin.status === 'matched' && optin.group_id) {
+    const g = await db.prepare('SELECT * FROM roulette_groups WHERE id = ?').get(optin.group_id);
+    if (g) await db.prepare('DELETE FROM conversation_members WHERE conv_id = ? AND user_id = ?').run(g.conv_id, req.user.id);
+    await db.prepare('DELETE FROM roulette_members WHERE group_id = ? AND user_id = ?').run(optin.group_id, req.user.id);
+  }
+  await db.prepare("UPDATE roulette_optins SET status='left' WHERE user_id = ? AND cycle = ?").run(req.user.id, cycle);
+  res.json({ ok: true });
+});
+
+// Admin/testing hook: force this week's matching to run now (owner only).
+app.post('/api/roulette/run-now', requireAuth, async (req, res) => {
+  if (!req.user.is_admin) return res.status(403).json({ error: 'Admins only.' });
+  await runRouletteMatching();
+  res.json({ ok: true });
+});
+
 initDb()
   .then(() => {
     server.listen(PORT, () => {
       console.log(`ShowUpp backend running on port ${PORT}`);
       console.log(`Open http://localhost:${PORT} to use the app.`);
     });
+    // Social Roulette 🎰: run the weekly matcher a little after boot, then once a day.
+    // The daily cadence catches stragglers who opted in later in the week and lets a
+    // pool that was too small one day fill up and match the next.
+    setTimeout(() => { runRouletteMatching(); }, 25000);
+    setInterval(() => { runRouletteMatching(); }, 24 * 60 * 60 * 1000);
     // Birthday notifications: check shortly after boot, then once every 24 hours.
     setTimeout(() => { checkBirthdays(); }, 15000);
     setInterval(() => { checkBirthdays(); }, 24 * 60 * 60 * 1000);
