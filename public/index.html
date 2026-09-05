@@ -68,6 +68,36 @@
 /* Back/return buttons: the glass background is dark-translucent in dark mode, so the
    icon should stay light (var(--night) already resolves to a light color there). */
 .phone[data-theme="dark"] .thread-head .back{background:#2c2c3e}
+/* ---- Dark-mode contrast fixes (item 6) ----
+   Back buttons and chevrons draw with stroke="currentColor", so they vanish when the
+   button keeps a hardcoded light background or inherits a dark text colour. Force a
+   readable icon colour in dark mode, and neutralise inline white backgrounds so the
+   glassy dark treatment applies consistently. */
+.phone[data-theme="dark"] .back{color:#EDEEF7}
+.phone[data-theme="dark"] .back svg{stroke:#EDEEF7}
+.phone[data-theme="dark"] .back[style*="#fff"],
+.phone[data-theme="dark"] .back[style*="background:#fff"]{background:rgba(20,20,36,.55)!important}
+.phone[data-theme="dark"] .chev{color:#8890B5}
+/* Section-row icon tiles keep a pale pastel background; in dark mode their coloured
+   glyphs stay legible, but the tile itself is lightened just enough to sit on the card. */
+.phone[data-theme="dark"] .sicon{filter:brightness(.9) saturate(1.1)}
+/* The "these Rounds have no location" note used a fixed light background with a
+   theme-driven (light) text colour — light-on-light in dark mode. Give it a dark card. */
+.phone[data-theme="dark"] #mapNoCoordsNote{background:#241a12!important;border-color:#5a4326!important;color:#F3D6C7!important}
+/* Generic safety net: any element that pins near-black text via inline style stays
+   readable on dark cards. Scoped to common content wrappers to avoid over-reach. */
+.phone[data-theme="dark"] .rc-title,.phone[data-theme="dark"] .rc-sub{color:#EDEEF7}
+/* Pale-blue selected/accent surfaces (#EEF0FF) pair with light text that becomes
+   light-on-light in dark mode. Recolour those surfaces to a deep indigo that keeps the
+   coral border and light text readable. Covers both the CSS classes and inline uses. */
+.phone[data-theme="dark"] .lang-opt.on,
+.phone[data-theme="dark"] .unit-opt.on,
+.phone[data-theme="dark"] .ract.on,
+.phone[data-theme="dark"] .rsvp-btn.on,
+.phone[data-theme="dark"] .catpill.on,
+.phone[data-theme="dark"] .react-chip.on,
+.phone[data-theme="dark"] .tav,
+.phone[data-theme="dark"] [style*="#EEF0FF"]{background:#20223f!important;color:#EDEEF7}
 .phone[data-theme="dark"] .thread-head .back svg{stroke:#EDEEF7!important;color:#EDEEF7!important}
 .phone[data-theme="dark"] .thread-head .back svg [fill]:not([fill="none"]){fill:#EDEEF7}
 /* The round card category pill sits on a translucent white chip over the photo.
@@ -189,9 +219,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   html:not(.native-app) .phone .screen>*{width:100%;max-width:720px;margin-left:auto;margin-right:auto}
   /* The bottom nav and any full-bleed overlays should still span the whole window. */
   html:not(.native-app) .phone .nav{max-width:none}
-  html:not(.native-app) .phone .screen>#mapView.map-expanded,
-  html:not(.native-app) .phone .screen>#eventsMapView.map-expanded{
-    max-width:720px;left:50%;right:auto;transform:translateX(-50%)
+  html:not(.native-app) .phone > #mapView.map-expanded,
+  html:not(.native-app) .phone > #eventsMapView.map-expanded{
+    max-width:none;left:0;right:0;transform:none
   }
 }
 .screen{position:absolute;inset:0;display:none;flex-direction:column;background:#FDFEFF;animation:fade .35s ease}
@@ -206,6 +236,30 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 #rpConfirmBtn:disabled{opacity:.45;cursor:not-allowed}
 @keyframes rouletteIconSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .roulette-icon-spin{display:inline-block;animation:rouletteIconSpin .55s linear infinite}
+/* ---- Social Roulette casino spin (item 9) ----
+   A full-screen overlay with three slot reels whose NUMBERS spin (not the wheel itself),
+   like a casino machine, for ~15s before the group is built. */
+#rouletteSpinOverlay{position:absolute;inset:0;z-index:130;display:none;flex-direction:column;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 35%,#2a2350,#14112e 70%,#0b0918);color:#fff;padding:24px;text-align:center;overflow:hidden}
+#rouletteSpinOverlay.open{display:flex}
+.rsp-emoji{font-size:64px;line-height:1;filter:drop-shadow(0 6px 18px rgba(124,131,255,.6))}
+.rsp-title{font-size:22px;font-weight:800;margin-top:10px;letter-spacing:-.3px}
+.rsp-sub{font-size:13.5px;opacity:.8;margin-top:6px;max-width:280px;line-height:1.5}
+.rsp-reels{display:flex;gap:12px;margin:26px 0 8px}
+.rsp-reel{width:66px;height:92px;border-radius:16px;background:linear-gradient(#fff,#e9e9f5);
+  box-shadow:0 10px 30px rgba(0,0,0,.5),inset 0 -8px 16px rgba(0,0,0,.12),inset 0 8px 16px rgba(255,255,255,.7);
+  overflow:hidden;position:relative;border:3px solid rgba(255,255,255,.25)}
+.rsp-reel::before,.rsp-reel::after{content:"";position:absolute;left:0;right:0;height:26px;z-index:2;pointer-events:none}
+.rsp-reel::before{top:0;background:linear-gradient(rgba(255,255,255,.9),rgba(255,255,255,0))}
+.rsp-reel::after{bottom:0;background:linear-gradient(rgba(255,255,255,0),rgba(255,255,255,.9))}
+.rsp-strip{display:flex;flex-direction:column;align-items:center;will-change:transform}
+.rsp-strip>span{height:92px;line-height:92px;font-size:44px;font-weight:800;color:#2a2350;font-family:'Fraunces',serif}
+.rsp-reel.spinning .rsp-strip{animation:rspSpin .18s linear infinite}
+@keyframes rspSpin{from{transform:translateY(0)}to{transform:translateY(-460px)}}
+.rsp-progress{width:220px;height:6px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;margin-top:22px}
+.rsp-progress>i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#7C83FF,#A78BFA)}
+.rsp-glow{position:absolute;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(124,131,255,.35),transparent 70%);animation:rspPulse 2.4s ease-in-out infinite;pointer-events:none}
+@keyframes rspPulse{0%,100%{transform:scale(.9);opacity:.5}50%{transform:scale(1.15);opacity:.85}}
 .scroll{flex:1;overflow-y:auto;padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
 .hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
@@ -359,11 +413,11 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 .map-count-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 3px rgba(255,111,97,.25)}
 
 /* ---- Expanded / fullscreen map (item 4) ----
-   Fills the phone frame. position:absolute pins to the .screen (which is the app's
-   full viewport), above content but below the top status bar and bottom nav. */
+   While expanded, the map is reparented to the .phone frame (see toggleMapExpand) and
+   pinned to fill it entirely — top to bottom, edge to edge — above content and nav. */
 #mapView.map-expanded,#eventsMapView.map-expanded{
-  position:absolute;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
-  margin:0;border-radius:0;border:none;z-index:1200
+  position:absolute!important;left:0;top:0;right:0;bottom:0;width:100%;height:100%;
+  margin:0!important;border-radius:0;border:none;z-index:1200
 }
 /* When any map is expanded, hide the bottom nav so the map truly covers the screen. */
 .phone.map-is-expanded .nav{display:none}
@@ -1141,7 +1195,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     <div style="display:flex;gap:6px;padding:0 18px 12px">
       <div class="circ-tab on sec-toggle" id="tab-rounds" onclick="switchCircTab('rounds')">Rounds</div>
       <div class="circ-tab sec-toggle" id="tab-friends" onclick="switchCircTab('friends')">Friends</div>
-      <div class="circ-tab sec-toggle" id="tab-discover" onclick="switchCircTab('discover')">✨ Similar</div>
       <div class="circ-tab sec-toggle" id="tab-roulette" onclick="switchCircTab('roulette')">🎰 Roulette</div>
     </div>
   </div>
@@ -1190,31 +1243,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       </div>
       <div id="fsub-blocked-pane" style="display:none"><div id="blockedListTab" style="padding:0 22px"></div></div>
     </div>
-    <div id="circ-discover-pane" style="display:none">
-      <p style="padding:0 22px 8px;font-size:13.5px;color:var(--muted);line-height:1.5">People who share <b style="color:var(--night)">5 or more</b> of your interests. Great potential friends!</p>
-      <div style="display:flex;gap:6px;padding:0 22px 8px">
-        <div class="circ-tab on sec-toggle" id="dp-mode-dist" onclick="setDiscoverMode('distance')">📍 By distance</div>
-        <div class="circ-tab sec-toggle" id="dp-mode-country" onclick="setDiscoverMode('country')">🌍 By country</div>
-      </div>
-      <div id="dpDistanceControls">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:0 22px 8px">
-          <div style="font-size:12.5px;color:var(--muted)">Within <b id="dpDistVal" style="color:var(--coral)">25</b> <span id="dpDistUnit">mi</span></div>
-          <div style="display:flex;background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden">
-            <div class="vt on" id="dp-list" onclick="setDiscoverView('list')">List</div>
-            <div class="vt" id="dp-map" onclick="setDiscoverView('map')">Map</div>
-          </div>
-        </div>
-        <div style="padding:0 22px 12px"><input type="range" id="dpDist" min="1" max="200" value="25" oninput="onDpDist(this.value)" style="width:100%"></div>
-      </div>
-      <div id="dpCountryControls" style="display:none;padding:0 22px 12px">
-        <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Show people from a specific country — great for language learning.</div>
-        <input type="text" id="dpCountrySearch" placeholder="🔍 Search a country…" oninput="renderDpCountryList(this.value)" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-family:'Instrument Sans';font-size:15px;margin-bottom:8px">
-        <div id="dpSelectedCountry" style="display:none;align-items:center;gap:8px;background:#EEF0FF;border:1px solid var(--coral);border-radius:12px;padding:10px 12px;margin-bottom:8px;font-weight:700;font-size:14px"></div>
-        <div id="dpCountryList" style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:12px"></div>
-      </div>
-      <div id="discoverPeopleList" style="padding:0 22px"></div>
-      <div id="discoverPeopleMap" style="display:none;height:420px;margin:8px 22px;border-radius:20px;overflow:hidden;border:1px solid var(--line)"></div>
-    </div>
     <div id="circ-roulette-pane" style="display:none">
       <div id="rouletteBody" style="padding:0 22px 20px"></div>
     </div>
@@ -1242,21 +1270,6 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
     </div>
   </div>
 
-  <!-- Social Roulette spin animation — plays right after the pledge is confirmed -->
-  <div id="rouletteSpinOverlay" style="position:absolute;inset:0;z-index:95;display:none;background:rgba(20,16,40,.6);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);align-items:center;justify-content:center;flex-direction:column">
-    <div style="position:relative;width:200px;height:200px">
-      <div style="position:absolute;top:-13px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-top:17px solid #fff;filter:drop-shadow(0 2px 4px rgba(0,0,0,.3));z-index:2"></div>
-      <div id="rouletteWheelDial" style="width:200px;height:200px;border-radius:50%;border:6px solid #fff;box-shadow:0 12px 44px rgba(0,0,0,.4);
-        background:conic-gradient(#7C83FF 0deg 30deg,#FF6F61 30deg 60deg,#FFB648 60deg 90deg,#12B886 90deg 120deg,
-                                   #A78BFA 120deg 150deg,#FF6F61 150deg 180deg,#7C83FF 180deg 210deg,#FFB648 210deg 240deg,
-                                   #12B886 240deg 270deg,#A78BFA 270deg 300deg,#FF6F61 300deg 330deg,#FFB648 330deg 360deg);
-        display:flex;align-items:center;justify-content:center">
-        <div style="width:58px;height:58px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 2px 10px rgba(0,0,0,.25)">🎰</div>
-      </div>
-    </div>
-    <div id="rouletteSpinLabel" style="color:#fff;font-weight:800;font-size:16px;margin-top:24px;letter-spacing:.2px">Spinning you in…</div>
-    <div style="color:rgba(255,255,255,.72);font-size:12.5px;margin-top:5px">Finding your people 🎲</div>
-  </div>
 </div>
 
 <!-- CHATS -->
@@ -1504,11 +1517,26 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
           <button class="btn btn-mango" style="width:100%" onclick="loadAdminMetrics()">🔎 Apply filters</button>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 22px 14px" id="metricsTiles"></div>
-      <div style="padding:0 22px 16px">
-        <div style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow)">
-          <div style="font-weight:700;font-size:14px;color:var(--night);margin-bottom:10px">Accounts over time</div>
-          <div style="position:relative;height:240px"><canvas id="metricsChart"></canvas></div>
+      <div id="metricsTiles" style="padding:0 22px 14px"></div>
+      <div style="padding:0 22px 16px;display:flex;flex-direction:column;gap:14px">
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <div style="font-weight:800;font-size:14.5px;color:var(--night)">Growth & churn over time</div>
+            <div style="display:flex;gap:4px" id="metChartToggle">
+              <div class="circ-tab on" data-chart="area" onclick="metSetChartType('area',this)" style="padding:5px 10px;font-size:11.5px">Trend</div>
+              <div class="circ-tab" data-chart="bars" onclick="metSetChartType('bars',this)" style="padding:5px 10px;font-size:11.5px">Bars</div>
+            </div>
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px" id="metChartCaption">New accounts vs. accounts lost</div>
+          <div style="position:relative;height:250px"><canvas id="metricsChart"></canvas></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div style="background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow)">
+            <div style="font-weight:800;font-size:13.5px;color:var(--night);margin-bottom:2px">Where accounts go</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Churn breakdown</div>
+            <div style="position:relative;height:150px"><canvas id="metricsChurnChart"></canvas></div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px" id="metricsHealth"></div>
         </div>
       </div>
     </div>
@@ -2331,6 +2359,20 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<!-- Social Roulette casino spin overlay (item 9) -->
+<div id="rouletteSpinOverlay">
+  <div class="rsp-glow"></div>
+  <div class="rsp-emoji">🎰</div>
+  <div class="rsp-title">Finding your group…</div>
+  <div class="rsp-sub">Matching you with compatible people nearby. Hold tight!</div>
+  <div class="rsp-reels">
+    <div class="rsp-reel" id="rspReel0"><div class="rsp-strip"></div></div>
+    <div class="rsp-reel" id="rspReel1"><div class="rsp-strip"></div></div>
+    <div class="rsp-reel" id="rspReel2"><div class="rsp-strip"></div></div>
+  </div>
+  <div class="rsp-progress"><i id="rspProgress"></i></div>
+</div>
+
 <div class="toast" id="toast"></div>
 </div>
 
@@ -2615,7 +2657,18 @@ let me=null, ws=null, activeRound=null, signupInterests=[], selectedCats=['Food'
 async function api(path,method,body){
   const res=await fetch(API+path,{method:method||'GET',headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined});
   const data=await res.json().catch(()=>({}));
-  if(!res.ok)throw new Error(data.error||'Something went wrong.');
+  if(!res.ok){
+    // A suspended account gets a 403 carrying the suspension details on almost every
+    // route. Capture them onto `me` so the lock screen can always show the admin's
+    // reason, even if the screen was reached via a route that 403'd rather than /api/me.
+    if(res.status===403&&data&&data.suspended){
+      me=Object.assign(me||{},{suspended:true,suspendedReason:data.suspendedReason||(me&&me.suspendedReason)||'',suspendedAt:data.suspendedAt!=null?data.suspendedAt:(me&&me.suspendedAt),suspendedUntil:data.suspendedUntil!=null?data.suspendedUntil:(me&&me.suspendedUntil)});
+      if(document.getElementById('suspReasonText'))showSuspendedScreen();
+    }
+    const err=new Error(data.error||'Something went wrong.');
+    err.status=res.status;err.data=data;
+    throw err;
+  }
   return data;
 }
 
@@ -3020,13 +3073,19 @@ let suspendCountdownTimer=null;
 function showSuspendedScreen(){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('s-suspended').classList.add('active');
-  document.getElementById('suspReasonText').textContent=me.suspendedReason||'No reason was given.';
-  document.getElementById('suspSince').textContent=me.suspendedAt?new Date(me.suspendedAt).toLocaleString():'—';
+  const paint=()=>{
+    document.getElementById('suspReasonText').textContent=(me&&me.suspendedReason)?me.suspendedReason:'No reason was given.';
+    document.getElementById('suspSince').textContent=(me&&me.suspendedAt)?new Date(me.suspendedAt).toLocaleString():'—';
+  };
+  paint();
   document.getElementById('suspContactMsg').value='';
   document.getElementById('suspContactStatus').textContent='';
   tickSuspendCountdown();
   if(suspendCountdownTimer)clearInterval(suspendCountdownTimer);
   suspendCountdownTimer=setInterval(tickSuspendCountdown,1000);
+  // /api/me is reachable while suspended and always carries the admin's reason — pull it
+  // once more so the screen is correct even if we arrived here with a partial record.
+  api('/api/me').then(d=>{if(d&&d.user){me=d.user;paint();tickSuspendCountdown();}}).catch(()=>{});
 }
 function tickSuspendCountdown(){
   const el=document.getElementById('suspCountdown');
@@ -3457,7 +3516,7 @@ const QA_ALL=[
   {id:'saved',emoji:'🔖',title:'Saved',sub:'Your picks',fixed:true,act:()=>switchHomeSection('saved')},
   {id:'nearme',emoji:'📍',title:'Near me',sub:'Find nearby',act:()=>qaNearMe()},
   {id:'friends',emoji:'👥',title:'Friends',sub:'Your people',act:()=>{go('s-circles');switchCircTab('friends');}},
-  {id:'similar',emoji:'✨',title:'Similar',sub:'People like you',act:()=>{go('s-circles');switchCircTab('discover');}},
+  {id:'roulette',emoji:'🎰',title:'Roulette',sub:'Social Roulette',act:()=>{go('s-circles');switchCircTab('roulette');}},
   {id:'chats',emoji:'💬',title:'Chats',sub:'Messages',act:()=>go('s-chats')},
   {id:'qr',emoji:'🔳',title:'QR code',sub:'Find me',act:()=>{if(typeof openMyQR==='function')openMyQR();}},
   {id:'invite',emoji:'📨',title:'Invite',sub:'Bring friends',act:()=>{if(typeof openInvite==='function')openInvite();}},
@@ -3660,7 +3719,13 @@ function fetchEventsPage(page){
     q+='&dateFrom='+encodeURIComponent(dateFilterFrom);
     q+='&dateTo='+encodeURIComponent(dateFilterTo||dateFilterFrom);
   }
-  if(userLoc&&typeof maxDistKm==='number'&&maxDistKm<MAX_DIST_KM){
+  // Distance vs country (item 4): the distance filter and an explicit country filter are
+  // mutually exclusive FOR EVENTS. If the user has picked a country, they want to browse
+  // everything happening in that country — not just what's near them — so we skip the
+  // distance constraint entirely and let the country filter do the narrowing. When no
+  // country is chosen, distance behaves as before. (Rounds are unaffected by this.)
+  const countryActive=!!currentCountryFilter && currentCountryFilter!==guessUserCountry();
+  if(!countryActive && userLoc && typeof maxDistKm==='number' && maxDistKm<MAX_DIST_KM){
     const miles=maxDistKm*0.621371;
     q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
   }
@@ -4008,10 +4073,11 @@ function mapTiles(type){
   if(type==='satellite'){
     return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
   }
-  // Modern, low-clutter basemap (item 5): CARTO Voyager reads cleaner and more current
-  // than raw OSM tiles. Uses CARTO's free no-key basemap tile hosts (cartodb-basemaps-*)
-  // which don't stamp an "API KEY REQUIRED" watermark on the tiles.
-  return L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO',subdomains:'abcd'});
+  // Standard basemap (item 5): plain OpenStreetMap tiles. These are completely free,
+  // require no API key, and never stamp an "API KEY REQUIRED" watermark on the tiles —
+  // unlike keyed providers (e.g. MapTiler) which overlay that text when the key is
+  // missing or rejected. OSM's own tile servers are reliable and need no subdomain trick.
+  return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'});
 }
 function setMapType(type){
   mapType=type;
@@ -4049,16 +4115,37 @@ function setMapCount(containerId,n,noun){
   if(!n){pill.style.display='none';return;}
   pill.style.display='flex';pill.querySelector('.txt').textContent=n+' '+noun+(n===1?'':'s');
 }
-// Item 4: toggle a map between inline and full-screen. Invalidates size after the CSS
-// transition so Leaflet re-renders tiles to the new dimensions.
+// Item 4: toggle a map between inline and full-screen. The map normally lives inside a
+// scrollable container, so a plain position:absolute expand only fills that container's
+// box (which is why it looked short until the device was rotated). To truly cover the
+// screen we lift the map out to be a direct child of the .phone frame while expanded and
+// put it back exactly where it was on collapse. invalidateSize() re-renders tiles to fit.
 function toggleMapExpand(containerId,getMap){
   const host=document.getElementById(containerId);if(!host)return;
+  const phone=document.querySelector('.phone');
   const expanding=!host.classList.contains('map-expanded');
-  host.classList.toggle('map-expanded',expanding);
-  const phone=document.querySelector('.phone');if(phone)phone.classList.toggle('map-is-expanded',expanding);
+  if(expanding){
+    // Remember where it came from so we can restore it precisely.
+    host._origParent=host.parentNode;
+    host._origNext=host.nextSibling;
+    host._origInlineDisplay=host.style.display;
+    if(phone)phone.appendChild(host);
+    host.classList.add('map-expanded');
+    host.style.display='block';
+    if(phone)phone.classList.add('map-is-expanded');
+  }else{
+    host.classList.remove('map-expanded');
+    if(phone)phone.classList.remove('map-is-expanded');
+    // Restore to original spot in the DOM.
+    if(host._origParent){
+      if(host._origNext&&host._origNext.parentNode===host._origParent)host._origParent.insertBefore(host,host._origNext);
+      else host._origParent.appendChild(host);
+    }
+    if(host._origInlineDisplay!==undefined)host.style.display=host._origInlineDisplay;
+  }
   const btn=document.getElementById(containerId+'-expand');if(btn)btn.innerHTML=expanding?'⤡':'⤢';
   const map=getMap&&getMap();
-  if(map){setTimeout(()=>map.invalidateSize(),300);}
+  if(map){setTimeout(()=>{map.invalidateSize();},60);setTimeout(()=>{map.invalidateSize();},320);}
 }
 // Item 3: recenter helper. Re-requests location if we don't have it yet, then smoothly
 // flies the map to the user with a gentle zoom. Spins the button while locating.
@@ -4399,17 +4486,14 @@ async function removeMember(uid){
 
 // ---- Circles ----
 function switchCircTab(which){
-  const rp=document.getElementById('circ-rounds-pane'),fp=document.getElementById('circ-friends-pane'),dp=document.getElementById('circ-discover-pane'),rl=document.getElementById('circ-roulette-pane');
+  const rp=document.getElementById('circ-rounds-pane'),fp=document.getElementById('circ-friends-pane'),rl=document.getElementById('circ-roulette-pane');
   document.getElementById('tab-rounds').classList.toggle('on',which==='rounds');
   document.getElementById('tab-friends').classList.toggle('on',which==='friends');
-  document.getElementById('tab-discover').classList.toggle('on',which==='discover');
   document.getElementById('tab-roulette').classList.toggle('on',which==='roulette');
   rp.style.display=which==='rounds'?'block':'none';
   fp.style.display=which==='friends'?'block':'none';
-  dp.style.display=which==='discover'?'block':'none';
   if(rl)rl.style.display=which==='roulette'?'block':'none';
   if(which==='friends'){switchFriendSub('friends');loadFriends();}
-  if(which==='discover'){updateDistSliderMax();loadDiscoverPeople();}
   if(which==='roulette'){loadRoulette();}
 }
 
@@ -4459,7 +4543,8 @@ function renderRoulette(){
     const others=g.members||[];
     const avatars=others.slice(0,6).map(m=>{
       const av=m.avatar?('<img src="'+escR(m.avatar)+'" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #fff">'):('<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;border:2px solid #fff">'+escR((m.name||'?').charAt(0).toUpperCase())+'</div>');
-      return '<div style="text-align:center;width:60px"><div style="display:flex;justify-content:center">'+av+'</div><div style="font-size:11px;color:var(--night);margin-top:4px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escR((m.name||'').split(' ')[0])+'</div></div>';
+      // Tap any group member to open their public profile (item 2).
+      return '<div style="text-align:center;width:60px;cursor:pointer" onclick="viewProfile(\''+escR(m.id)+'\')"><div style="display:flex;justify-content:center">'+av+'</div><div style="font-size:11px;color:var(--night);margin-top:4px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escR((m.name||'').split(' ')[0])+'</div></div>';
     }).join('');
     html+='<div style="background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:18px;margin-bottom:16px">'
       +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px;font-weight:800;color:var(--night)">Your group is ready! 🎉</span></div>'
@@ -4526,25 +4611,45 @@ function rpToggle(cb){const b=document.getElementById('rpConfirmBtn');if(b)b.dis
 
 // Plays a spinning-wheel animation in #rouletteSpinOverlay, then resolves. Purely
 // visual — gives "spin me in" an actual spin instead of just a network request.
+// Item 9: a casino slot-machine spin. The NUMBERS on three reels spin (not a wheel),
+// the machine fills the screen, and it runs for a full 15 seconds before the group is
+// built — reels stop one by one for that satisfying "clunk-clunk-clunk" finish.
+const ROULETTE_SPIN_MS=15000;
 function playRouletteSpin(){
   return new Promise(resolve=>{
     const ov=document.getElementById('rouletteSpinOverlay');
-    const wheel=document.getElementById('rouletteWheelDial');
-    if(!ov||!wheel){resolve();return;}
-    wheel.style.transition='none';
-    wheel.style.transform='rotate(0deg)';
-    void wheel.offsetWidth; // force reflow so the next transform actually animates
-    ov.style.display='flex';
-    const spins=6+Math.floor(Math.random()*3); // 6-8 full turns
-    const finalAngle=spins*360+Math.floor(Math.random()*360);
-    requestAnimationFrame(()=>{
-      wheel.style.transition='transform 3.1s cubic-bezier(.14,.68,.1,1)';
-      wheel.style.transform='rotate('+finalAngle+'deg)';
+    if(!ov){resolve();return;}
+    const reels=[0,1,2].map(i=>document.getElementById('rspReel'+i)).filter(Boolean);
+    // Fill each reel strip with a tall column of random digits so the vertical scroll
+    // animation always has numbers streaming past the window.
+    reels.forEach(r=>{
+      const strip=r.querySelector('.rsp-strip');
+      let cells='';
+      for(let n=0;n<40;n++)cells+='<span>'+Math.floor(Math.random()*10)+'</span>';
+      strip.innerHTML=cells;
+      r.classList.add('spinning');
     });
-    setTimeout(resolve,3200);
+    ov.classList.add('open');
+    ov.style.display='flex';
+    // Progress bar fills over the full 15s.
+    const prog=document.getElementById('rspProgress');
+    if(prog){prog.style.transition='none';prog.style.width='0';void prog.offsetWidth;
+      prog.style.transition='width '+ROULETTE_SPIN_MS+'ms linear';prog.style.width='100%';}
+    // Stagger the reels stopping across the last few seconds for a casino feel.
+    const stops=[ROULETTE_SPIN_MS-2600,ROULETTE_SPIN_MS-1500,ROULETTE_SPIN_MS-400];
+    reels.forEach((r,i)=>{
+      setTimeout(()=>{
+        r.classList.remove('spinning');
+        // Land on a crisp random digit.
+        const strip=r.querySelector('.rsp-strip');
+        strip.style.transition='transform .28s cubic-bezier(.2,1.2,.3,1)';
+        strip.style.transform='translateY(-'+(92*(2+Math.floor(Math.random()*6)))+'px)';
+      },Math.max(600,stops[i]));
+    });
+    setTimeout(resolve,ROULETTE_SPIN_MS);
   });
 }
-function hideRouletteSpin(){const ov=document.getElementById('rouletteSpinOverlay');if(ov)ov.style.display='none';}
+function hideRouletteSpin(){const ov=document.getElementById('rouletteSpinOverlay');if(ov){ov.classList.remove('open');ov.style.display='none';}}
 
 async function confirmRouletteOptin(){
   const btn=document.getElementById('rpConfirmBtn');
@@ -4557,9 +4662,10 @@ async function confirmRouletteOptin(){
   try{
     const body={pledge:true};
     if(loc){body.lat=loc.lat;body.lng=loc.lng;}
-    await Promise.all([spin, api('/api/roulette/optin','POST',body)]);
+    const [,optinRes]=await Promise.all([spin, api('/api/roulette/optin','POST',body)]);
     hideRouletteSpin();
-    toast('You\u2019re in! 🎰 We\u2019ll ping you when your group is ready.');
+    if(optinRes&&optinRes.status==='matched')toast('🎉 Your group is ready! Say hello.');
+    else toast('You\u2019re in! 🎰 We\u2019ll ping you when your group is ready.');
     loadRoulette();
   }catch(e){
     hideRouletteSpin();
@@ -7414,10 +7520,13 @@ function vibeMatchCardHTML(m,myAns,idx){
   else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="vibeDeclineRequest(\''+m.id+'\',this)">Decline</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
   else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'; }
   const archLine=m.archetype?('<div class="vm-meta">'+ (VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.emoji||'✨') +' '+(VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.label||'')+'</div>'):'';
+  // Tapping the avatar/name opens the match's public profile (item 2).
   return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
-    +'<div class="vm-top">'+av
-      +'<div style="flex:1;min-width:0"><div class="vm-name">'+esc(m.name||'Someone')+(m.username?' <span style="color:var(--muted);font-weight:600;font-size:13px">@'+esc(m.username)+'</span>':'')+'</div>'
-      +'<div class="vm-meta">📍 '+esc(m.city||'nearby')+' '+distTxt+'</div>'+archLine+'</div>'
+    +'<div class="vm-top">'
+      +'<div style="display:flex;align-items:center;gap:13px;flex:1;min-width:0;cursor:pointer" onclick="viewProfile(\''+esc(m.id)+'\')">'+av
+        +'<div style="flex:1;min-width:0"><div class="vm-name">'+esc(m.name||'Someone')+(m.username?' <span style="color:var(--muted);font-weight:600;font-size:13px">@'+esc(m.username)+'</span>':'')+'</div>'
+        +'<div class="vm-meta">📍 '+esc(m.city||'nearby')+' '+distTxt+'</div>'+archLine+'</div>'
+      +'</div>'
       +ring+'</div>'
     +chipsHtml+actions+'</div>';
 }
@@ -7537,9 +7646,11 @@ function suggestedRowHTML(m,myAns,idx){
     +'<button class="vibe-btn-ghost" style="'+btnSm+'" onclick="openPublicProfile(\''+m.id+'\')">View</button>'
     +'<button class="vibe-btn-ghost" style="'+btnSm+'" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button>'; }
   return '<div class="vibe-match sug-row" style="padding:14px;animation-delay:'+(idx*50)+'ms">'
-    +'<div class="vm-top" style="gap:11px">'+av
-      +'<div style="flex:1;min-width:0"><div class="vm-name" style="font-size:15px">'+esc(m.name||'Someone')+'</div>'
-      +'<div class="vm-meta">✨ '+m.score+'% match'+distTxt+'</div></div>'
+    +'<div class="vm-top" style="gap:11px">'
+      +'<div style="display:flex;align-items:center;gap:11px;flex:1;min-width:0;cursor:pointer" onclick="viewProfile(\''+esc(m.id)+'\')">'+av
+        +'<div style="flex:1;min-width:0"><div class="vm-name" style="font-size:15px">'+esc(m.name||'Someone')+'</div>'
+        +'<div class="vm-meta">✨ '+m.score+'% match'+distTxt+'</div></div>'
+      +'</div>'
       +'<div style="flex:none;text-align:center"><div style="font-size:19px;font-weight:800;color:var(--coral);line-height:1">'+m.score+'%</div></div>'
     +'</div>'+chipsHtml
     +'<div class="vm-actions" style="margin-top:12px">'+actions+'</div>'
@@ -7865,10 +7976,60 @@ async function initAdminMetrics(){
     loadAdminMetrics();
   }
 }
-function metricsTile(label,value,color){
-  return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow)">'+
-    '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">'+esc(label)+'</div>'+
-    '<div style="font-size:24px;font-weight:800;color:'+(color||'var(--night)')+'">'+value+'</div></div>';
+let metChartType='area';
+let metLastData=null;
+let metricsChurnInstance=null;
+function metSetChartType(kind,el){
+  metChartType=kind;
+  document.querySelectorAll('#metChartToggle .circ-tab').forEach(t=>t.classList.remove('on'));
+  if(el)el.classList.add('on');
+  document.getElementById('metChartCaption').textContent=kind==='bars'?'Daily/monthly activity by type':'New accounts vs. accounts lost';
+  if(metLastData)renderMetricsChart(metLastData.series,metLastData.bucketGranularity);
+}
+// A big, modern KPI hero: one prominent headline metric (net growth) plus a row of
+// supporting stat cards, each with an accent bar and an at-a-glance trend arrow.
+function metKpiCard(label,value,color,sub){
+  return '<div style="flex:1;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:13px 14px;box-shadow:var(--shadow);position:relative;overflow:hidden">'+
+    '<div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:'+color+'"></div>'+
+    '<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">'+esc(label)+'</div>'+
+    '<div style="font-size:23px;font-weight:800;color:var(--night);line-height:1">'+value+'</div>'+
+    (sub?'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+sub+'</div>':'')+
+  '</div>';
+}
+function renderMetricsDashboard(data){
+  const s=data.summary;
+  const lost=(s.deletedByUser||0)+(s.deletedByAdmin||0);
+  const net=(s.totalCreated||0)-lost;
+  const netColor=net>=0?'#2e9e5b':'#d94b3b';
+  const retentionPct=s.totalCreated?Math.round((s.active/s.totalCreated)*100):0;
+  // Hero: net growth headline + supporting KPIs.
+  document.getElementById('metricsTiles').innerHTML=
+    '<div style="background:linear-gradient(135deg,#5B5FEF,#7C83FF 60%,#A78BFA);border-radius:20px;padding:18px 20px;color:#fff;box-shadow:0 10px 26px rgba(91,95,239,.32);margin-bottom:12px">'+
+      '<div style="font-size:11.5px;font-weight:700;opacity:.85;text-transform:uppercase;letter-spacing:.5px">Net account growth</div>'+
+      '<div style="font-size:38px;font-weight:800;line-height:1.05;margin:4px 0">'+(net>=0?'+':'')+net.toLocaleString()+'</div>'+
+      '<div style="font-size:12.5px;opacity:.9">'+(s.totalCreated||0).toLocaleString()+' created · '+lost.toLocaleString()+' lost in this period</div>'+
+    '</div>'+
+    '<div style="display:flex;gap:10px;margin-bottom:10px">'+
+      metKpiCard('Active now',(s.active||0).toLocaleString(),'#2e9e5b',retentionPct+'% of created')+
+      metKpiCard('Suspended',(s.suspended||0).toLocaleString(),'#F59E0B')+
+    '</div>'+
+    '<div style="display:flex;gap:10px">'+
+      metKpiCard('Left (user)',(s.deletedByUser||0).toLocaleString(),'#8B5CF6')+
+      metKpiCard('Removed (admin)',(s.deletedByAdmin||0).toLocaleString(),'#d94b3b')+
+      metKpiCard('Reactivated',((s.reactivatedAuto||0)+(s.unsuspendedManual||0)).toLocaleString(),'#4FB0FF')+
+    '</div>';
+  // Health panel next to the churn doughnut.
+  const health=document.getElementById('metricsHealth');
+  if(health){
+    const churnRate=s.totalCreated?Math.round((lost/s.totalCreated)*100):0;
+    const bar=(label,pct,color)=>'<div><div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px"><span style="color:var(--muted);font-weight:600">'+label+'</span><span style="color:var(--night);font-weight:800">'+pct+'%</span></div>'+
+      '<div style="height:7px;border-radius:99px;background:var(--line);overflow:hidden"><i style="display:block;height:100%;width:'+Math.min(100,pct)+'%;background:'+color+';border-radius:99px"></i></div></div>';
+    health.innerHTML='<div style="font-weight:800;font-size:13.5px;color:var(--night)">Health</div>'+
+      bar('Retention',retentionPct,'#2e9e5b')+
+      bar('Churn',churnRate,'#d94b3b')+
+      bar('Suspended share',s.totalCreated?Math.round((s.suspended/s.totalCreated)*100):0,'#F59E0B');
+  }
+  renderMetricsChurnChart(s);
 }
 async function loadAdminMetrics(){
   try{
@@ -7886,7 +8047,7 @@ async function loadAdminMetrics(){
     if(ageMin)params.set('ageMin',ageMin);
     if(ageMax)params.set('ageMax',ageMax);
     const data=await api('/api/admin/metrics?'+params.toString());
-    // populate filter dropdowns once with the stable, all-time option lists
+    metLastData=data;
     const citySel=document.getElementById('metCity'), genderSel=document.getElementById('metGender');
     if(citySel.options.length<=1){
       (data.filters.cities||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;citySel.appendChild(o);});
@@ -7894,14 +8055,7 @@ async function loadAdminMetrics(){
     if(genderSel.options.length<=1){
       (data.filters.genders||[]).forEach(g=>{const o=document.createElement('option');o.value=g;o.textContent=g;genderSel.appendChild(o);});
     }
-    const s=data.summary;
-    document.getElementById('metricsTiles').innerHTML=
-      metricsTile('Total created',s.totalCreated)+
-      metricsTile('Active',s.active,'#2e9e5b')+
-      metricsTile('Suspended',s.suspended,'#d94b3b')+
-      metricsTile('Deleted by user',s.deletedByUser,'#8B5CF6')+
-      metricsTile('Deleted by admin',s.deletedByAdmin,'#d94b3b')+
-      metricsTile('Reactivated automatically',s.reactivatedAuto,'#2e9e5b');
+    renderMetricsDashboard(data);
     renderMetricsChart(data.series,data.bucketGranularity);
   }catch(e){toast(e.message);}
 }
@@ -7909,26 +8063,47 @@ function renderMetricsChart(series,granularity){
   const ctx=document.getElementById('metricsChart');
   if(!ctx||typeof Chart==='undefined')return;
   const labels=series.map(r=>r.bucket);
-  const ds=(key,label,color)=>({label,data:series.map(r=>r[key]||0),borderColor:color,backgroundColor:color+'33',tension:.35,fill:true,pointRadius:2});
   if(metricsChartInstance)metricsChartInstance.destroy();
-  metricsChartInstance=new Chart(ctx,{
-    type:'line',
-    data:{labels,datasets:[
-      ds('created','Created','#5B5FEF'),
-      ds('suspended','Suspended','#d94b3b'),
-      ds('deleted_by_user','Deleted (user)','#8B5CF6'),
-      ds('deleted_by_admin','Deleted (admin)','#F59E0B')
-    ]},
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      interaction:{mode:'index',intersect:false},
-      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},
-      scales:{
-        x:{ticks:{font:{size:10},maxRotation:0,autoSkip:true}},
-        y:{beginAtZero:true,ticks:{precision:0,font:{size:10}}}
-      }
-    }
-  });
+  const grid=(getComputedStyle(document.querySelector('.phone')).getPropertyValue('--line')||'#eee').trim();
+  const common={responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11},usePointStyle:true}}},
+    scales:{x:{grid:{display:false},ticks:{font:{size:10},maxRotation:0,autoSkip:true}},
+            y:{beginAtZero:true,grid:{color:grid},ticks:{precision:0,font:{size:10}}}}};
+  if(metChartType==='bars'){
+    // Grouped bars per event type — good for spotting spikes on a given day.
+    const bar=(key,label,color)=>({label,data:series.map(r=>r[key]||0),backgroundColor:color,borderRadius:5,maxBarThickness:18});
+    metricsChartInstance=new Chart(ctx,{type:'bar',data:{labels,datasets:[
+      bar('created','Created','#5B5FEF'),
+      bar('suspended','Suspended','#F59E0B'),
+      bar('deleted_by_user','Left (user)','#8B5CF6'),
+      bar('deleted_by_admin','Removed (admin)','#d94b3b')
+    ]},options:common});
+  }else{
+    // Area view: growth (created) vs total lost, filled, to read momentum at a glance.
+    const created=series.map(r=>r.created||0);
+    const lost=series.map(r=>(r.deleted_by_user||0)+(r.deleted_by_admin||0));
+    const mkGrad=(hex)=>{const g=ctx.getContext('2d').createLinearGradient(0,0,0,230);g.addColorStop(0,hex+'55');g.addColorStop(1,hex+'05');return g;};
+    metricsChartInstance=new Chart(ctx,{type:'line',data:{labels,datasets:[
+      {label:'Created',data:created,borderColor:'#5B5FEF',backgroundColor:mkGrad('#5B5FEF'),tension:.4,fill:true,pointRadius:0,borderWidth:2.5},
+      {label:'Lost',data:lost,borderColor:'#d94b3b',backgroundColor:mkGrad('#d94b3b'),tension:.4,fill:true,pointRadius:0,borderWidth:2.5}
+    ]},options:common});
+  }
+}
+// Doughnut: how accounts leave (user-deleted / admin-removed / currently suspended).
+function renderMetricsChurnChart(s){
+  const ctx=document.getElementById('metricsChurnChart');
+  if(!ctx||typeof Chart==='undefined')return;
+  if(metricsChurnInstance)metricsChurnInstance.destroy();
+  const vals=[s.deletedByUser||0,s.deletedByAdmin||0,s.suspended||0];
+  const total=vals.reduce((a,b)=>a+b,0);
+  if(!total){ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);
+    if(!document.getElementById('metChurnEmpty')){const p=document.createElement('div');p.id='metChurnEmpty';p.style.cssText='font-size:12px;color:var(--muted);text-align:center;padding-top:50px';p.textContent='No churn in this period 🎉';ctx.parentNode.appendChild(p);}
+    return;}
+  const empt=document.getElementById('metChurnEmpty');if(empt)empt.remove();
+  metricsChurnInstance=new Chart(ctx,{type:'doughnut',data:{labels:['Left (user)','Removed (admin)','Suspended'],
+    datasets:[{data:vals,backgroundColor:['#8B5CF6','#d94b3b','#F59E0B'],borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:9,font:{size:10},usePointStyle:true}}}}});
 }
 let admRoundSearchTimer;
 function loadAdminRounds(q){
