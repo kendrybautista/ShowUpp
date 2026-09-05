@@ -200,6 +200,9 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 
 .screen.active{display:flex}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes slideUp{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
+#roulettePledgeOverlay.open{display:flex}
+#rpConfirmBtn:disabled{opacity:.45;cursor:not-allowed}
 .scroll{flex:1;overflow-y:auto;padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
 .hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:cover;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
@@ -1100,6 +1103,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div class="circ-tab on sec-toggle" id="tab-rounds" onclick="switchCircTab('rounds')">Rounds</div>
       <div class="circ-tab sec-toggle" id="tab-friends" onclick="switchCircTab('friends')">Friends</div>
       <div class="circ-tab sec-toggle" id="tab-discover" onclick="switchCircTab('discover')">✨ Similar</div>
+      <div class="circ-tab sec-toggle" id="tab-roulette" onclick="switchCircTab('roulette')">🎰 Roulette</div>
     </div>
   </div>
   <div class="scroll">
@@ -1172,8 +1176,32 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div id="discoverPeopleList" style="padding:0 22px"></div>
       <div id="discoverPeopleMap" style="display:none;height:420px;margin:8px 22px;border-radius:20px;overflow:hidden;border:1px solid var(--line)"></div>
     </div>
+    <div id="circ-roulette-pane" style="display:none">
+      <div id="rouletteBody" style="padding:0 22px 20px"></div>
+    </div>
   </div>
   <div class="nav" data-nav></div>
+
+  <!-- Social Roulette safety pledge — shown before every opt-in -->
+  <div id="roulettePledgeOverlay" style="position:absolute;inset:0;z-index:80;display:none;background:rgba(20,20,40,.35);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);align-items:flex-end" onclick="if(event.target===this)closeRoulettePledge()">
+    <div style="background:var(--card);width:100%;border-radius:24px 24px 0 0;padding:22px 22px 26px;max-height:86%;overflow-y:auto;animation:slideUp .22s ease">
+      <div style="width:40px;height:4px;background:var(--line);border-radius:2px;margin:0 auto 16px"></div>
+      <div style="font-size:20px;font-weight:800;color:var(--night);text-align:center">Before you spin 🎰</div>
+      <p style="font-size:13.5px;color:var(--muted);line-height:1.5;text-align:center;margin:6px 0 18px">Social Roulette is about meeting new people in real life. Let\u2019s keep it fun <b>and</b> safe.</p>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:18px">
+        <div style="display:flex;gap:12px;align-items:flex-start"><span style="font-size:22px">📍</span><div><div style="font-weight:700;font-size:14px;color:var(--night)">Meet in public, in daylight</div><div style="font-size:12.5px;color:var(--muted);line-height:1.5">Cafés, parks, museums — never someone\u2019s home or a private address.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start"><span style="font-size:22px">🧭</span><div><div style="font-weight:700;font-size:14px;color:var(--night)">Tell a friend where you\u2019re going</div><div style="font-size:12.5px;color:var(--muted);line-height:1.5">Share your plan with someone you trust before you head out.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start"><span style="font-size:22px">🚩</span><div><div style="font-weight:700;font-size:14px;color:var(--night)">Trust your gut — report anything off</div><div style="font-size:12.5px;color:var(--muted);line-height:1.5">One tap to report or block anyone. You can leave the group anytime.</div></div></div>
+        <div style="display:flex;gap:12px;align-items:flex-start"><span style="font-size:22px">🔒</span><div><div style="font-weight:700;font-size:14px;color:var(--night)">Your address stays private</div><div style="font-size:12.5px;color:var(--muted);line-height:1.5">Your group only ever sees a general area — never your exact location.</div></div></div>
+      </div>
+      <label style="display:flex;gap:10px;align-items:flex-start;background:#EEF0FF;border-radius:14px;padding:14px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="rpAgree" onchange="rpToggle(this)" style="margin-top:2px;width:18px;height:18px;accent-color:var(--coral);flex-shrink:0">
+        <span style="font-size:13px;line-height:1.5;color:var(--night)">I\u2019m 18 or older and I\u2019ll follow these safety steps when I meet my group.</span>
+      </label>
+      <button id="rpConfirmBtn" disabled onclick="confirmRouletteOptin()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer;opacity:1">I agree — spin me in 🎰</button>
+      <button onclick="closeRoulettePledge()" style="width:100%;background:none;color:var(--muted);border:none;padding:12px;font-size:14px;cursor:pointer;margin-top:4px">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- CHATS -->
@@ -2194,6 +2222,19 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
   </div>
 </div>
 
+<!-- Weekly Social Roulette invite. Must-answer (no tap-away dismiss), but only shown
+     on a safe screen — never over a live call or an open chat. -->
+<div id="rouletteInviteModal" style="position:absolute;inset:0;z-index:120;display:none;background:rgba(20,20,40,.5);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);align-items:center;justify-content:center;padding:24px">
+  <div style="background:var(--card);border-radius:26px;padding:26px 22px;width:100%;max-width:340px;text-align:center;animation:slideUp .24s ease;box-shadow:0 20px 60px rgba(20,20,40,.4)">
+    <div style="font-size:52px;line-height:1;margin-bottom:8px">🎰</div>
+    <div style="font-size:21px;font-weight:800;color:var(--night);letter-spacing:-.3px">Social Roulette is open!</div>
+    <p style="font-size:13.5px;color:var(--muted);line-height:1.55;margin:8px 4px 20px">This week we can drop you into a small group of compatible people nearby, with a fun mission to get you out the door. Want in?</p>
+    <button onclick="rouletteInviteAccept()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer;margin-bottom:8px">🎰 Try it this week</button>
+    <button onclick="rouletteInviteSkip()" style="width:100%;background:var(--bone);color:var(--night);border:1.5px solid var(--line);padding:13px;border-radius:14px;font-weight:700;font-size:14px;cursor:pointer">Skip this week</button>
+    <div onclick="rouletteInviteNever()" style="margin-top:14px;font-size:12.5px;color:var(--muted);cursor:pointer;text-decoration:underline">Don\u2019t remind me about this</div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 </div>
 
@@ -2884,6 +2925,9 @@ function enterApp(){
   handleDeepLink();
   // Gently nudge people who haven't taken the Vibe Check (new users once, then monthly).
   setTimeout(()=>{try{maybePromptVibe();}catch(e){}},2600);
+  // Weekly Social Roulette invite (once per cycle; waits for a safe moment; opt-out honored).
+  // Staggered after the vibe nudge so the two never stack on top of each other.
+  setTimeout(()=>{try{maybePromptRoulette();}catch(e){}},5200);
 }
 // ---- Profile picture upload ----
 function pickAvatar(){document.getElementById('avatarInput').click();}
@@ -4199,15 +4243,138 @@ async function removeMember(uid){
 
 // ---- Circles ----
 function switchCircTab(which){
-  const rp=document.getElementById('circ-rounds-pane'),fp=document.getElementById('circ-friends-pane'),dp=document.getElementById('circ-discover-pane');
+  const rp=document.getElementById('circ-rounds-pane'),fp=document.getElementById('circ-friends-pane'),dp=document.getElementById('circ-discover-pane'),rl=document.getElementById('circ-roulette-pane');
   document.getElementById('tab-rounds').classList.toggle('on',which==='rounds');
   document.getElementById('tab-friends').classList.toggle('on',which==='friends');
   document.getElementById('tab-discover').classList.toggle('on',which==='discover');
+  document.getElementById('tab-roulette').classList.toggle('on',which==='roulette');
   rp.style.display=which==='rounds'?'block':'none';
   fp.style.display=which==='friends'?'block':'none';
   dp.style.display=which==='discover'?'block':'none';
+  if(rl)rl.style.display=which==='roulette'?'block':'none';
   if(which==='friends'){switchFriendSub('friends');loadFriends();}
   if(which==='discover'){updateDistSliderMax();loadDiscoverPeople();}
+  if(which==='roulette'){loadRoulette();}
+}
+
+// ==== Social Roulette 🎰 ====
+// A weekly opt-in that drops you into a small compatible group with a light, public
+// mission. Fun but safe: adults only, a safety pledge every time you join, coarse
+// area only (never addresses), and full report/block/leave via the normal group chat.
+let rouletteState=null;
+function escR(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function loadRoulette(){
+  const box=document.getElementById('rouletteBody');
+  if(!box)return;
+  box.innerHTML='<div style="text-align:center;padding:40px 0;color:var(--muted)">'+t('Loading…')+'</div>';
+  try{
+    rouletteState=await api('/api/roulette/status');
+    renderRoulette();
+  }catch(e){
+    box.innerHTML='<div style="text-align:center;padding:30px 10px;color:var(--muted);font-size:14px">Couldn\u2019t load Social Roulette. Pull to retry.</div>';
+  }
+}
+function renderRoulette(){
+  const box=document.getElementById('rouletteBody');
+  if(!box||!rouletteState)return;
+  const s=rouletteState;
+
+  // Hero card — playful but warm.
+  let html='<div style="background:linear-gradient(140deg,#7C83FF,#A78BFA);border-radius:24px;padding:22px 20px;color:#fff;margin:14px 0 18px;box-shadow:0 10px 30px rgba(124,131,255,.35)">'
+    +'<div style="font-size:40px;line-height:1;margin-bottom:8px">🎰</div>'
+    +'<div style="font-size:21px;font-weight:800;letter-spacing:-.3px">Social Roulette</div>'
+    +'<div style="font-size:13.5px;opacity:.92;line-height:1.5;margin-top:6px">Once a week, we drop you into a small group of compatible people nearby and give you a fun little mission. Meet up, make memories, make friends. Let\u2019s <b>do</b> something about it!</div>'
+    +'</div>';
+
+  // Not eligible → explain why, kindly, and point to the fix.
+  if(!s.eligible){
+    let msg='',cta='';
+    if(s.reason==='under_age'){msg='Social Roulette is for adults (18+) only, to keep the community safe.';}
+    else if(s.reason==='no_dob'){msg='Add your date of birth to your profile to use Social Roulette. It\u2019s how we keep this adults-only and safe.';cta='<button onclick="go(\'s-profile\')" style="margin-top:12px;background:var(--coral);color:#fff;border:none;padding:12px 18px;border-radius:14px;font-weight:700;font-size:14px;cursor:pointer">Go to profile</button>';}
+    else if(s.reason==='no_vibe'){msg='Take the quick Vibe Check first so we can match you with people you\u2019ll actually click with.';cta='<button onclick="if(typeof enterVibe===\'function\')enterVibe()" style="margin-top:12px;background:var(--coral);color:#fff;border:none;padding:12px 18px;border-radius:14px;font-weight:700;font-size:14px;cursor:pointer">Take the Vibe Check ✨</button>';}
+    else{msg='You\u2019re not eligible for Social Roulette just yet.';}
+    box.innerHTML=html+'<div style="text-align:center;padding:10px 6px 30px"><div style="font-size:38px">🔒</div><p style="margin-top:10px;font-size:14px;line-height:1.55;color:var(--muted)">'+escR(msg)+'</p>'+cta+'</div>';
+    return;
+  }
+
+  // Matched → show the group + mission.
+  if(s.status==='matched'&&s.group){
+    const g=s.group;
+    const others=g.members||[];
+    const avatars=others.slice(0,6).map(m=>{
+      const av=m.avatar?('<img src="'+escR(m.avatar)+'" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #fff">'):('<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;border:2px solid #fff">'+escR((m.name||'?').charAt(0).toUpperCase())+'</div>');
+      return '<div style="text-align:center;width:60px"><div style="display:flex;justify-content:center">'+av+'</div><div style="font-size:11px;color:var(--night);margin-top:4px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escR((m.name||'').split(' ')[0])+'</div></div>';
+    }).join('');
+    html+='<div style="background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:18px;margin-bottom:16px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px;font-weight:800;color:var(--night)">Your group is ready! 🎉</span></div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">'+(g.member_count)+' people · '+escR(g.area_label||'your area')+'</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:16px">'+avatars+'</div>'
+      +'<div style="background:#EEF0FF;border-radius:14px;padding:14px;margin-bottom:14px">'
+        +'<div style="font-size:11px;font-weight:800;color:var(--coral);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🎯 Your mission</div>'
+        +'<div style="font-size:14px;line-height:1.55;color:var(--night)">'+escR(g.mission)+'</div>'
+      +'</div>'
+      +'<button onclick="openDm(\''+escR(g.conv_id)+'\')" style="width:100%;background:var(--night);color:#fff;border:none;padding:14px;border-radius:14px;font-weight:700;font-size:15px;cursor:pointer;margin-bottom:10px">💬 Open group chat</button>'
+      +'<div style="background:#FFF6E9;border:1px solid #F5D9A8;border-radius:12px;padding:12px;font-size:12.5px;line-height:1.5;color:#8A6A2F;margin-bottom:12px">🛡️ <b>Stay safe:</b> meet in a public place in daylight, tell a friend where you\u2019re going, and tap 🚩 on anyone in the chat if something feels off. You can leave anytime.</div>'
+      +'<button onclick="leaveRoulette()" style="width:100%;background:none;color:var(--muted);border:none;padding:8px;font-size:13px;cursor:pointer;text-decoration:underline">Leave this group</button>'
+      +'</div>';
+    box.innerHTML=html;
+    return;
+  }
+
+  // Opted in, waiting for the draw.
+  if(s.opted_in&&s.status==='opted'){
+    html+='<div style="text-align:center;background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:26px 20px">'
+      +'<div style="font-size:40px;margin-bottom:8px">⏳</div>'
+      +'<div style="font-size:16px;font-weight:800;color:var(--night)">You\u2019re in for this week!</div>'
+      +'<p style="font-size:13.5px;color:var(--muted);line-height:1.55;margin:8px 0 16px">We\u2019re gathering your group. You\u2019ll get a notification the moment your Social Roulette group is ready. 🎰</p>'
+      +'<button onclick="leaveRoulette()" style="background:none;color:var(--muted);border:none;padding:8px;font-size:13px;cursor:pointer;text-decoration:underline">Change my mind</button>'
+      +'</div>';
+    box.innerHTML=html;
+    return;
+  }
+
+  // Eligible, not yet opted in → the join CTA (which opens the safety pledge).
+  html+='<div style="background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:20px;text-align:center">'
+    +'<div style="font-size:14px;font-weight:700;color:var(--night);margin-bottom:6px">Ready to roll this week?</div>'
+    +'<p style="font-size:13px;color:var(--muted);line-height:1.55;margin:0 0 16px">Opt in and we\u2019ll match you with 3\u20135 compatible people nearby, plus a fun mission to get you out the door.</p>'
+    +'<button onclick="openRoulettePledge()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:15px;border-radius:16px;font-weight:800;font-size:16px;cursor:pointer">🎰 Spin me in</button>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Opt-in is per week and you can leave anytime.</div>'
+    +'</div>';
+  box.innerHTML=html;
+}
+
+// Safety pledge — shown every time before joining (per the app\u2019s safety-gating choice).
+function openRoulettePledge(){
+  const ov=document.getElementById('roulettePledgeOverlay');
+  if(ov){document.getElementById('rpAgree').checked=false;document.getElementById('rpConfirmBtn').disabled=true;ov.classList.add('open');}
+}
+function closeRoulettePledge(){const ov=document.getElementById('roulettePledgeOverlay');if(ov)ov.classList.remove('open');}
+function rpToggle(cb){const b=document.getElementById('rpConfirmBtn');if(b)b.disabled=!cb.checked;}
+async function confirmRouletteOptin(){
+  const btn=document.getElementById('rpConfirmBtn');
+  if(btn){btn.disabled=true;btn.textContent='Spinning you in…';}
+  // Best-effort location so matching can use distance; opt-in still works without it.
+  let loc=userLoc;
+  if(!loc){try{loc=await requestLocation();}catch(e){loc=null;}}
+  try{
+    const body={pledge:true};
+    if(loc){body.lat=loc.lat;body.lng=loc.lng;}
+    await api('/api/roulette/optin','POST',body);
+    closeRoulettePledge();
+    toast('You\u2019re in! 🎰 We\u2019ll ping you when your group is ready.');
+    loadRoulette();
+  }catch(e){
+    toast(e.message||'Couldn\u2019t opt in.');
+    if(btn){btn.disabled=false;btn.textContent='I agree — spin me in 🎰';}
+  }
+}
+async function leaveRoulette(){
+  if(!confirm('Leave Social Roulette for this week? If you\u2019ve already been matched, you\u2019ll be removed from the group and its chat.'))return;
+  try{
+    await api('/api/roulette/leave','POST',{});
+    toast('You\u2019ve left this week\u2019s Social Roulette.');
+    loadRoulette();
+  }catch(e){toast(e.message);}
 }
 // ---- Find people with similar interests ----
 let discoverView='list',dpRadiusKm=40,discoverPeople=[],dpMap=null,dpMarkers=[],discoverMode='distance';
@@ -5871,6 +6038,7 @@ function handleNotifClick(link){
   else if(link.startsWith('round:')){const rid=link.slice('round:'.length);if(typeof openDetail==='function')openDetail(rid);}
   else if(link==='friends:requests'){go('s-circles');switchCircTab('friends');setTimeout(()=>switchFriendSub('requests'),50);}
   else if(link.startsWith('friends:')){go('s-circles');switchCircTab('friends');}
+  else if(link.startsWith('roulette:')){go('s-circles');switchCircTab('roulette');}
   else if(link==='admin:reports'){openAdmin();setTimeout(()=>switchAdminTab('reports'),50);}
 }
 function timeAgo(ts){
@@ -6746,6 +6914,77 @@ async function maybePromptVibe(){
   try{ localStorage.setItem(vibeNudgeKey(),String(Date.now())); }catch(e){}
 }
 function closeVibeNudge(){ const s=document.getElementById('vibeNudgeSheet'); if(s)s.classList.remove('open'); }
+
+// ==== Weekly Social Roulette invite ====
+// A must-answer weekly prompt (Try it / Skip this week / Don't remind me) that never
+// interrupts a live call or an open chat — if the user is busy, it waits and pops the
+// next time they land on a safe screen.
+let _rouletteInviteCycle=null; // cycle we intend to show for, once fetched
+function rouletteNeverKey(){ return 'su_roulette_never_'+(me&&me.id?me.id:'anon'); }
+function rouletteSeenKey(){ return 'su_roulette_seen_'+(me&&me.id?me.id:'anon'); }
+// Busy = anything where a full-screen prompt would hijack the moment: an active
+// audio/video call, the group-call overlay, or being inside a chat thread.
+function rouletteUserBusy(){
+  const co=document.getElementById('callOverlay');
+  const gco=document.getElementById('groupCallOverlay');
+  if(co&&co.style.display!=='none'&&co.style.display!=='')return true;
+  if(gco&&gco.style.display!=='none'&&gco.style.display!=='')return true;
+  const dm=document.getElementById('s-dm');
+  if(dm&&dm.classList.contains('active'))return true;
+  if(activeConv)return true; // inside a conversation
+  const vn=document.getElementById('vibeNudgeSheet');
+  if(vn&&vn.classList.contains('open'))return true; // another prompt is up
+  return false;
+}
+async function maybePromptRoulette(){
+  if(!me)return;
+  // Permanent opt-out.
+  try{ if(localStorage.getItem(rouletteNeverKey())==='1')return; }catch(e){}
+  // Ask the server where things stand this week.
+  let s;
+  try{ s=await api('/api/roulette/status'); }catch(e){ return; }
+  if(!s||!s.eligible)return;                 // not 18+/no vibe — don't invite
+  if(s.opted_in||s.status==='matched')return; // already in this week
+  _rouletteInviteCycle=s.cycle;
+  // Only once per weekly cycle.
+  let seen='';
+  try{ seen=localStorage.getItem(rouletteSeenKey())||''; }catch(e){}
+  if(seen===s.cycle)return;
+  showRouletteInviteWhenSafe();
+}
+// Show now if the screen is safe; otherwise poll gently and show the moment it is.
+function showRouletteInviteWhenSafe(){
+  if(rouletteUserBusy()){
+    if(window._rouletteWait)return; // already waiting
+    window._rouletteWait=setInterval(()=>{
+      if(!rouletteUserBusy()){
+        clearInterval(window._rouletteWait);window._rouletteWait=null;
+        openRouletteInvite();
+      }
+    },4000);
+    return;
+  }
+  openRouletteInvite();
+}
+function openRouletteInvite(){
+  // Mark this cycle as shown so it won't reappear this week even if skipped.
+  try{ if(_rouletteInviteCycle)localStorage.setItem(rouletteSeenKey(),_rouletteInviteCycle); }catch(e){}
+  const m=document.getElementById('rouletteInviteModal'); if(m)m.style.display='flex';
+}
+function closeRouletteInvite(){ const m=document.getElementById('rouletteInviteModal'); if(m)m.style.display='none'; }
+function rouletteInviteAccept(){
+  closeRouletteInvite();
+  go('s-circles');
+  switchCircTab('roulette');
+  // Take them straight to the safety pledge to opt in.
+  setTimeout(()=>{ if(typeof openRoulettePledge==='function')openRoulettePledge(); },350);
+}
+function rouletteInviteSkip(){ closeRouletteInvite(); }
+function rouletteInviteNever(){
+  try{ localStorage.setItem(rouletteNeverKey(),'1'); }catch(e){}
+  closeRouletteInvite();
+  toast('Okay \u2014 we won\u2019t remind you about Social Roulette.');
+}
 
 function refreshVibeCard(){
   // Reflect saved progress on the You-page card.
