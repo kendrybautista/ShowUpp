@@ -2536,13 +2536,55 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   let rows;
   if (q) {
-    rows = await db.prepare(`SELECT id,name,username,email,city,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at
+    rows = await db.prepare(`SELECT id,name,username,email,city,avatar,bio,vibe_answers,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at
       FROM users WHERE LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?
       ORDER BY created_at DESC LIMIT 200`).all('%'+q+'%','%'+q+'%','%'+q+'%');
   } else {
-    rows = await db.prepare('SELECT id,name,username,email,city,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+    rows = await db.prepare('SELECT id,name,username,email,city,avatar,bio,vibe_answers,suspended,suspended_reason,suspended_at,suspended_until,is_admin,created_at FROM users ORDER BY created_at DESC LIMIT 200').all();
+  }
+  // Attach a vibe-completion state (items 1-2): 'done' | 'partial' | 'none'
+  for (const u of rows) {
+    const v = parseVibe(u.vibe_answers);
+    const n = v ? answeredCount(v) : 0;
+    u.vibe_state = n >= VIBE_QUESTION_COUNT ? 'done' : (n > 0 ? 'partial' : 'none');
+    u.vibe_answered = n;
+    u.vibe_total = VIBE_QUESTION_COUNT;
+    delete u.vibe_answers; // don't ship raw answers to the client list
   }
   res.json({ users: rows });
+});
+
+// Item 2: manager view of a single user, with extra context for moderation.
+app.get('/api/admin/user/:id', requireAuth, requireAdmin, async (req, res) => {
+  const u = await db.prepare('SELECT id,name,username,email,city,avatar,bio,vibe_answers,is_private,premium,suspended,suspended_reason,suspended_until,is_admin,created_at FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  const v = parseVibe(u.vibe_answers);
+  const n = v ? answeredCount(v) : 0;
+  u.vibe_state = n >= VIBE_QUESTION_COUNT ? 'done' : (n > 0 ? 'partial' : 'none');
+  u.vibe_answered = n;
+  u.vibe_total = VIBE_QUESTION_COUNT;
+  u.archetype = (v && v.archetype) || '';
+  delete u.vibe_answers;
+  // Extra stats a manager might want at a glance.
+  u.rounds_hosted = Number((await db.prepare('SELECT COUNT(*) AS c FROM rounds WHERE host_id = ?').get(u.id)).c) || 0;
+  u.rounds_joined = Number((await db.prepare('SELECT COUNT(*) AS c FROM memberships WHERE user_id = ?').get(u.id)).c) || 0;
+  u.friend_count = Number((await db.prepare('SELECT COUNT(*) AS c FROM friendships WHERE user_id = ?').get(u.id)).c) || 0;
+  res.json({ user: u });
+});
+
+// Item 2: promote/demote a user to manager. Guarded so you can't demote yourself
+// (which could lock every manager out) and there's always at least one admin left.
+app.post('/api/admin/set-admin', requireAuth, requireAdmin, async (req, res) => {
+  const { userId, makeAdmin } = req.body || {};
+  const target = await db.prepare('SELECT id, is_admin FROM users WHERE id = ?').get(userId);
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (userId === req.user.id) return res.status(400).json({ error: "You can't change your own manager status." });
+  if (!makeAdmin) {
+    const adminCount = Number((await db.prepare('SELECT COUNT(*) AS c FROM users WHERE is_admin = 1').get()).c) || 0;
+    if (adminCount <= 1 && target.is_admin) return res.status(400).json({ error: 'There must be at least one manager.' });
+  }
+  await db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(makeAdmin ? 1 : 0, userId);
+  res.json({ ok: true, is_admin: makeAdmin ? 1 : 0 });
 });
 
 // Suspend / unsuspend a user (admin only). Suspending requires a reason + duration
@@ -2971,6 +3013,11 @@ app.post('/api/admin/rounds/:id/delete', requireAuth, requireAdmin, async (req, 
 
 // ---- Rounds ----
 app.get('/api/rounds', requireAuth, async (req, res) => {
+  // Item 26: hide Rounds whose event date is in the past (by DATE, not time). Rounds
+  // with no event_at are ongoing groups and always remain. We use the start of the
+  // current day as the cutoff so a Round happening "today" still shows all day.
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const todayFloor = startOfToday.getTime();
   const rounds = await db.prepare(`
     SELECT r.*, u.city AS host_city,
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
@@ -2985,8 +3032,9 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
       (SELECT COUNT(*) FROM round_join_requests jr WHERE jr.round_id = r.id) AS pending_count
     FROM rounds r LEFT JOIN users u ON u.id = r.host_id
     WHERE COALESCE(r.hidden_from_discovery, 0) = 0
+      AND (r.event_at IS NULL OR r.event_at >= ?)
     ORDER BY r.created_at DESC
-  `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+  `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, todayFloor);
   // attach up to 4 member avatars for the card preview
   const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
   for (const r of rounds) {

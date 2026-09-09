@@ -2377,7 +2377,7 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
 <!-- Social Roulette casino spin overlay (item 9) -->
 <div id="rouletteSpinOverlay">
   <div class="rsp-glow"></div>
-  <video id="rspGif" src="assets/showupp-wheel-GIF.mp4" class="rsp-gif" autoplay muted loop playsinline></video>
+  <img id="rspGif" src="assets/showupp-transitional-GIF.gif" alt="Finding your group…" class="rsp-gif" data-gifsrc="assets/showupp-transitional-GIF.gif">
   <div class="rsp-title">Finding your group…</div>
   <div class="rsp-sub">Matching you with compatible people nearby. Hold tight!</div>
   <div class="rsp-progress"><i id="rspProgress"></i></div>
@@ -2402,6 +2402,17 @@ body{display:flex;justify-content:center;padding:12px 0;min-height:100vh}
       <div onclick="closeVibeCompletion()" style="width:30px;height:30px;border-radius:50%;background:rgba(120,120,140,.14);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
     </div>
     <div id="vibeCompletionList" style="max-height:62vh;overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- Item 2: manager profile view of a single user -->
+<div class="filter-overlay" id="mgrUserOverlay" onclick="if(event.target===this)closeManagerUser()">
+  <div class="filter-panel" id="mgrUserPanel">
+    <div class="filter-panel-head">
+      <h3>User</h3>
+      <div onclick="closeManagerUser()" style="width:30px;height:30px;border-radius:50%;background:rgba(120,120,140,.14);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--night)" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+    </div>
+    <div id="mgrUserBody" style="max-height:70vh;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -4752,9 +4763,9 @@ function playRouletteSpin(){
   return new Promise(resolve=>{
     const ov=document.getElementById('rouletteSpinOverlay');
     if(!ov){resolve();return;}
-    // Restart the wheel video from its first frame each time the overlay opens.
-    const vid=document.getElementById('rspGif');
-    if(vid){try{vid.currentTime=0;const p=vid.play();if(p&&p.catch)p.catch(function(){});}catch(e){}}
+    // Restart the GIF from its first frame each time the overlay opens.
+    const gif=document.getElementById('rspGif');
+    if(gif){const s=gif.getAttribute('data-gifsrc')||gif.src;gif.src='';requestAnimationFrame(()=>{gif.src=s;});}
     ov.classList.add('open');
     ov.style.display='flex';
     // Progress bar fills over the full 10s.
@@ -6400,6 +6411,20 @@ async function updateNotifBadge(){
       else chatBadge.style.display='none';
     }
     if(typeof applyChatTabBadges==='function')applyChatTabBadges();
+    // Item 3: reflect unread count on the phone's home-screen app icon (PWA Badging API).
+    // The OS decides whether to actually show it — users can turn badges off for the
+    // app in their phone's notification settings, and this call becomes a no-op there.
+    updateAppIconBadge((bellCount||0)+(c.chatsTotal||0));
+  }catch(e){}
+}
+// Item 3: app-icon badge. Uses the standard Badging API when the app is installed
+// (added to home screen); silently ignored by browsers/devices that don't support it.
+function updateAppIconBadge(total){
+  try{
+    if('setAppBadge' in navigator){
+      if(total>0)navigator.setAppBadge(total).catch(function(){});
+      else navigator.clearAppBadge().catch(function(){});
+    }
   }catch(e){}
 }
 // Show each category's unread total on the Round chats / Friends tabs
@@ -8017,15 +8042,71 @@ function loadAdminUsers(q){
         const badge=u.is_admin?'<span style="font-size:10px;background:#F1ECFF;color:#5B4FCF;padding:2px 6px;border-radius:6px;font-weight:700">ADMIN</span>':(u.suspended?'<span style="font-size:10px;background:#FDECEA;color:#d94b3b;padding:2px 6px;border-radius:6px;font-weight:700">SUSPENDED</span>':'');
         const nameSafe=esc(u.name).replace(/'/g,"");
         const actions=u.is_admin?'<span style="font-size:11px;color:var(--muted)">protected</span>':
-          '<button class="friend-btn remove" onclick="admOpenSuspend(\''+u.id+'\',\''+nameSafe+'\','+(u.suspended?1:0)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
-          '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="admDelete(\''+u.id+'\',\''+nameSafe+'\')">Delete</button>';
+          '<button class="friend-btn remove" onclick="event.stopPropagation();admOpenSuspend(\''+u.id+'\',\''+nameSafe+'\','+(u.suspended?1:0)+')">'+(u.suspended?'Unsuspend':'Suspend')+'</button>'+
+          '<button class="friend-btn" style="background:#FDECEA;color:#d94b3b" onclick="event.stopPropagation();admDelete(\''+u.id+'\',\''+nameSafe+'\')">Delete</button>';
         const suspendInfo=(u.suspended&&u.suspended_until)?'<div style="font-size:11px;color:#d94b3b;margin-top:2px">🚫 '+esc(u.suspended_reason||'No reason given')+' · until '+new Date(Number(u.suspended_until)).toLocaleString()+'</div>':'';
-        return '<div class="friend-row" style="flex-direction:column;align-items:stretch"><div style="display:flex;justify-content:space-between;align-items:center;width:100%"><div class="fi"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div><div style="display:flex;gap:6px">'+actions+'</div></div>'+suspendInfo+'</div>';
+        // Item 1: profile picture with a color-coded Vibe Check mark.
+        // green ✓ = completed · amber ◐ = partial · grey ○ = not started.
+        const vs=u.vibe_state||'none';
+        const vColor=vs==='done'?'#2e9e5b':(vs==='partial'?'#F59E0B':'#b6b6c2');
+        const vMark=vs==='done'?'✓':(vs==='partial'?'◐':'○');
+        const vTitle=vs==='done'?'Vibe Check complete':(vs==='partial'?('Vibe Check '+u.vibe_answered+'/'+u.vibe_total):'Vibe Check not started');
+        const av=u.avatar
+          ? '<div style="width:44px;height:44px;border-radius:50%;background:center/cover no-repeat url(\''+esc(u.avatar)+'\');flex:none"></div>'
+          : '<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#5B5FEF,#8B5CF6);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none">'+esc((u.name||'?')[0].toUpperCase())+'</div>';
+        const avatarWithMark='<div style="position:relative;flex:none" title="'+vTitle+'">'+av
+          +'<div style="position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:'+vColor+';color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid var(--card)">'+vMark+'</div></div>';
+        return '<div class="friend-row" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick="openManagerUser(\''+u.id+'\')"><div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:10px"><div style="display:flex;align-items:center;gap:11px;min-width:0">'+avatarWithMark+'<div class="fi" style="min-width:0"><b>'+esc(u.name)+' '+badge+'</b><span>@'+esc(u.username||'—')+' · '+esc(u.email||'')+'</span></div></div><div style="display:flex;gap:6px;flex:none">'+actions+'</div></div>'+suspendInfo+'</div>';
       }).join('');
+      window._admUsersCache=data.users;
     }catch(e){toast(e.message);}
   },250);
 }
-// Suspend/unsuspend flow (items 8-9): suspending asks for a reason + duration;
+// Item 2: open a manager profile for a user with extra tools.
+async function openManagerUser(uid){
+  document.getElementById('mgrUserOverlay').classList.add('open');
+  const box=document.getElementById('mgrUserBody');
+  box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;padding:24px">Loading…</p>';
+  try{
+    const {user:u}=await api('/api/admin/user/'+uid);
+    window._mgrUser=u;
+    const vs=u.vibe_state||'none';
+    const vColor=vs==='done'?'#2e9e5b':(vs==='partial'?'#F59E0B':'#b6b6c2');
+    const vLabel=vs==='done'?'Vibe Check complete ✓':(vs==='partial'?('Vibe Check '+u.vibe_answered+'/'+u.vibe_total+' ◐'):'Vibe Check not started ○');
+    const av=u.avatar
+      ? '<div style="width:78px;height:78px;border-radius:50%;background:center/cover no-repeat url(\''+esc(u.avatar)+'\');margin:0 auto;cursor:pointer" onclick="openAvatarViewer(\''+esc(u.avatar)+'\',\''+esc((u.name||'').replace(/\x27/g,\'\'))+'\',false)"></div>'
+      : '<div style="width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,#5B5FEF,#8B5CF6);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:30px;margin:0 auto">'+esc((u.name||'?')[0].toUpperCase())+'</div>';
+    const stat=(n,l)=>'<div style="flex:1;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--night)">'+n+'</div><div style="font-size:11px;color:var(--muted)">'+l+'</div></div>';
+    const btn=(label,color,handler)=>'<button class="btn" style="width:100%;background:'+color+';color:#fff;border:none;font-weight:700;margin-top:8px" onclick="'+handler+'">'+label+'</button>';
+    box.innerHTML=
+      av
+      +'<h2 style="text-align:center;font-size:20px;font-weight:800;color:var(--night);margin:10px 0 2px">'+esc(u.name||'Someone')+(u.is_admin?' <span style="font-size:11px;background:#F1ECFF;color:#5B4FCF;padding:2px 7px;border-radius:6px;vertical-align:middle">MANAGER</span>':'')+'</h2>'
+      +'<div style="text-align:center;font-size:13px;color:var(--muted);margin-bottom:4px">@'+esc(u.username||'—')+'</div>'
+      +'<div style="text-align:center;font-size:12.5px;color:var(--muted)">'+esc(u.email||'')+(u.city?(' · '+esc(u.city)):'')+'</div>'
+      +(u.bio?'<p style="text-align:center;font-size:13px;color:var(--night);margin:10px 16px 0;line-height:1.5">'+esc(u.bio)+'</p>':'')
+      +'<div style="display:inline-flex;align-items:center;gap:6px;margin:12px auto 0;padding:5px 12px;border-radius:99px;background:'+vColor+'1a;color:'+vColor+';font-size:12px;font-weight:700;">'+vLabel+(u.archetype?(' · '+esc(u.archetype)):'')+'</div>'
+      +'<div style="display:flex;gap:6px;margin:16px 0 6px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">'+stat(u.rounds_hosted,'Hosted')+stat(u.rounds_joined,'Joined')+stat(u.friend_count,'Friends')+'</div>'
+      +(u.suspended?'<div style="font-size:12px;color:#d94b3b;text-align:center;margin-top:8px">🚫 '+esc(u.suspended_reason||'Suspended')+(u.suspended_until?(' · until '+new Date(Number(u.suspended_until)).toLocaleDateString()):'')+'</div>':'')
+      +(u.is_admin
+        ? '<div style="font-size:12px;color:var(--muted);text-align:center;margin-top:12px">This account is a manager — protected from suspend/delete.</div>'
+          +btn('⬇️ Remove manager access','#8B5CF6','mgrSetAdmin(false)')
+        : btn('💬 Message this user','#5B5FEF','mgrMessageUser()')
+          +btn('⬆️ Make manager','#8B5CF6','mgrSetAdmin(true)')
+          +btn(u.suspended?'✅ Lift suspension':'🚫 Suspend account',u.suspended?'#2e9e5b':'#d97706','mgrSuspendFromProfile()')
+          +btn('🗑️ Delete account','#d94b3b','mgrDeleteFromProfile()')
+        );
+  }catch(e){box.innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;padding:20px">'+esc(e.message)+'</p>';}
+}
+function closeManagerUser(){document.getElementById('mgrUserOverlay').classList.remove('open');}
+async function mgrSetAdmin(makeAdmin){
+  const u=window._mgrUser;if(!u)return;
+  if(!confirm(makeAdmin?('Give '+ (u.name||'this user') +' manager access?'):('Remove manager access from '+(u.name||'this user')+'?')))return;
+  try{await api('/api/admin/set-admin','POST',{userId:u.id,makeAdmin});toast(makeAdmin?'Promoted to manager':'Manager access removed');openManagerUser(u.id);loadAdminUsers(document.getElementById('adminSearch').value);}catch(e){toast(e.message);}
+}
+function mgrMessageUser(){const u=window._mgrUser;if(!u)return;closeManagerUser();if(typeof openDmWithFriend==='function')openDmWithFriend(u.id);else toast('Open a chat from their profile.');}
+function mgrSuspendFromProfile(){const u=window._mgrUser;if(!u)return;closeManagerUser();admOpenSuspend(u.id,(u.name||'').replace(/'/g,''),u.suspended?1:0);}
+function mgrDeleteFromProfile(){const u=window._mgrUser;if(!u)return;closeManagerUser();admDelete(u.id,(u.name||'').replace(/'/g,''));}
+
 // lifting a suspension early is gated by the supervisor password.
 let pendingSuspendUser=null;
 function admOpenSuspend(uid,name,isSuspended){
