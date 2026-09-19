@@ -41,6 +41,16 @@ const SUPERVISOR_PASSWORD = process.env.SUPERVISOR_PASSWORD || 'supervisor123';
 // --- Database setup (Neon Postgres) ---
 // All data lives in Neon, separate from the app host, so it survives restarts/deploys.
 const db = require('./db-pg');
+// Item 4: enforce a strong password — upper, lower, number, special char, min 8.
+function passwordProblem(pw) {
+  pw = String(pw || '');
+  if (pw.length < 8) return 'Password must be at least 8 characters.';
+  if (!/[a-z]/.test(pw)) return 'Password needs at least one lowercase letter.';
+  if (!/[A-Z]/.test(pw)) return 'Password needs at least one uppercase letter.';
+  if (!/[0-9]/.test(pw)) return 'Password needs at least one number.';
+  if (!/[^A-Za-z0-9]/.test(pw)) return 'Password needs at least one special character (e.g. ! @ # $).';
+  return '';
+}
 
 // All schema creation and migrations run inside init(), called before the server listens.
 async function initDb() {
@@ -835,9 +845,7 @@ app.post('/api/signup', async (req, res) => {
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
-  if (String(password).length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-  }
+  { const pe = passwordProblem(password); if (pe) return res.status(400).json({ error: pe }); }
   // Age gate — ShowUpp is strictly 18+. Enforced on the server so it can't be bypassed.
   const birth = dob ? new Date(dob) : null;
   if (!birth || isNaN(birth.getTime())) {
@@ -1243,7 +1251,7 @@ app.post('/api/me/secure-change', requireAuth, async (req, res) => {
     const phone = val.replace(/[^0-9+]/g, '').slice(0, 20);
     await db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
   } else if (field === 'password') {
-    if (val.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+    { const pe = passwordProblem(val); if (pe) return res.status(400).json({ error: pe }); }
     const hash = bcrypt.hashSync(val, 10);
     await db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, req.user.id);
   }
@@ -4960,9 +4968,11 @@ async function ingestExternalEvents(opts) {
       } catch (err) {}
     }
     // Trim: drop non-community events that are now in the past or have fallen outside
-    // the display window (e.g. a provider stopped returning them). Community posts are
-    // left for their poster/admin to manage via the existing delete endpoint.
-    await db.prepare(`DELETE FROM events WHERE source != 'community' AND (starts_at IS NULL OR starts_at < ? OR starts_at > ?)`)
+    // the display window. IMPORTANT: keep events with NO date (starts_at IS NULL) — many
+    // website-scraped events legitimately have no parseable date, and deleting them here
+    // is why they never appeared in Discover. Dateless events stay; only clearly-past or
+    // beyond-window dated events are trimmed.
+    await db.prepare(`DELETE FROM events WHERE source != 'community' AND starts_at IS NOT NULL AND (starts_at < ? OR starts_at > ?)`)
       .run(now() - 6 * 3600 * 1000, cutoff);
   } finally { eventIngestRunning = false; }
 }
