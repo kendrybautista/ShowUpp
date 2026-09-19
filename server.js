@@ -49,6 +49,8 @@ function passwordProblem(pw) {
   if (!/[A-Z]/.test(pw)) return 'Password needs at least one uppercase letter.';
   if (!/[0-9]/.test(pw)) return 'Password needs at least one number.';
   if (!/[^A-Za-z0-9]/.test(pw)) return 'Password needs at least one special character (e.g. ! @ # $).';
+  const COMMON = ['password1!', 'password123', 'p@ssw0rd', 'qwerty123!', 'welcome1!', 'admin123!', 'letmein1!', 'iloveyou1!', 'abc123!@#', 'password!1', 'changeme1!', 'password@1'];
+  if (COMMON.includes(pw.toLowerCase())) return 'That password is too common — please choose a less guessable one.';
   return '';
 }
 
@@ -509,6 +511,12 @@ await db.exec(`
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS last_fetched_count INTEGER;
   -- For the "website" provider: the events-page URL to auto-read (no API).
   ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS url TEXT;
+  -- Items 2/3: a manager-set default location for a source (e.g. "San Juan, Puerto Rico").
+  -- Website-scraped events rarely include a parseable address, so without this they can't
+  -- be placed on the map. Any event from this source with no location of its own inherits
+  -- this, so it geocodes to the right area.
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS default_location TEXT;
+  ALTER TABLE event_sources ADD COLUMN IF NOT EXISTS default_country TEXT;
   -- Country the event takes place in (ISO 3166-1 alpha-2, e.g. 'US', 'DO'). Lets the
   -- feed serve users their own country's events instead of a US-only catalog (item 6).
   ALTER TABLE events ADD COLUMN IF NOT EXISTS country TEXT;
@@ -4398,13 +4406,31 @@ function normalizeWebsiteEvent(ev, s, pageUrl) {
   const sd = ev.startDate || (ev.subEvent && ev.subEvent.startDate) || null;
   if (sd) { const ms = Date.parse(sd); if (!isNaN(ms)) starts = ms; }
   const loc = ev.location || {};
-  let place = '';
-  if (typeof loc === 'string') place = loc;
-  else if (loc.name) place = loc.name;
-  else if (loc.address) place = (typeof loc.address === 'string') ? loc.address : (loc.address.streetAddress || loc.address.addressLocality || '');
-  const geo = (loc && loc.geo) || {};
-  const lat = geo.latitude != null ? parseFloat(geo.latitude) : null;
-  const lng = geo.longitude != null ? parseFloat(geo.longitude) : null;
+  // Build the richest possible address string + structured city/state/country from
+  // schema.org so events geocode to their REAL location worldwide — no manual setup.
+  let place = '', city = '', state = '', country = '', postal = '', streetAddr = '';
+  const locObj = Array.isArray(loc) ? (loc[0] || {}) : loc;
+  if (typeof locObj === 'string') { place = locObj; }
+  else {
+    if (locObj.name) place = decodeEntities(locObj.name);
+    const addr = locObj.address;
+    if (typeof addr === 'string') { if (!place) place = decodeEntities(addr); else place += ', ' + decodeEntities(addr); }
+    else if (addr && typeof addr === 'object') {
+      streetAddr = decodeEntities(addr.streetAddress || '');
+      city = decodeEntities(addr.addressLocality || addr.addressRegion || '');
+      state = decodeEntities(addr.addressRegion || '');
+      postal = decodeEntities(addr.postalCode || '');
+      const ctry = addr.addressCountry;
+      country = (typeof ctry === 'string') ? ctry : (ctry && (ctry.name || ctry.alternateName || '')) || '';
+      if (!place) place = decodeEntities(addr.name || '') || streetAddr;
+    }
+  }
+  // A full address string for geocoding: venue, street, city, region, postal, country.
+  const fullAddrParts = [place && place !== city ? place : '', streetAddr, city, state, postal, country].filter(Boolean);
+  const fullAddress = Array.from(new Set(fullAddrParts)).join(', ');
+  const geo = (locObj && locObj.geo) || {};
+  const lat = geo.latitude != null ? parseFloat(geo.latitude) : (geo.lat != null ? parseFloat(geo.lat) : null);
+  const lng = geo.longitude != null ? parseFloat(geo.longitude) : (geo.lon != null ? parseFloat(geo.lon) : (geo.lng != null ? parseFloat(geo.lng) : null));
   let photo = null;
   if (ev.image) photo = Array.isArray(ev.image) ? (ev.image[0] && (ev.image[0].url || ev.image[0])) : (ev.image.url || ev.image);
   let link = ev.url || ev.mainEntityOfPage || null;
@@ -4423,12 +4449,23 @@ function normalizeWebsiteEvent(ev, s, pageUrl) {
     photo: (typeof photo === 'string' ? absolutizeUrl(photo, pageUrl) : null),
     link,
     place: String(place || '').slice(0, 200),
+    city: String(city || '').slice(0, 100),
+    state: String(state || '').slice(0, 100),
+    geo_address: String(fullAddress || '').slice(0, 300), // full string for geocoding
     lat: (typeof lat === 'number' && !isNaN(lat)) ? lat : null,
     lng: (typeof lng === 'number' && !isNaN(lng)) ? lng : null,
     starts_at: starts, ends_at: (ev.endDate ? (Date.parse(ev.endDate) || null) : null),
     source_label: s.label || 'Website',
-    country: null
+    country: normalizeCountryCode(country)
   };
+}
+// Turn a country name/code from schema.org into a 2-letter ISO code when possible.
+function normalizeCountryCode(c) {
+  if (!c) return null;
+  c = String(c).trim();
+  if (/^[A-Za-z]{2}$/.test(c)) return c.toLowerCase();
+  const map = { 'united states': 'us', 'usa': 'us', 'puerto rico': 'pr', 'canada': 'ca', 'mexico': 'mx', 'united kingdom': 'gb', 'uk': 'gb', 'jamaica': 'jm', 'dominican republic': 'do', 'spain': 'es', 'france': 'fr', 'germany': 'de', 'italy': 'it', 'brazil': 'br', 'argentina': 'ar', 'colombia': 'co', 'australia': 'au' };
+  return map[c.toLowerCase()] || null;
 }
 // Generic HTML event reader. No site-specific rules — it finds repeated "event-ish"
 // blocks and pulls a title, a date, and a link from each. Heuristic and best-effort:
@@ -4495,7 +4532,13 @@ function parseHtmlEvents(html, pageUrl, s) {
       const tkey = title.toLowerCase();
       if (seenTitles.has(tkey)) continue;
       seenTitles.add(tkey);
-      candidates.push({ title, when, link, photo, text: textOnly });
+      // Try to grab a location hint from the block: an "at <Place>" phrase, a venue in a
+      // <span class="location/venue/address"> or similar, or the microdata location field.
+      let placeHint = '';
+      const locM = inner.match(/(?:class|itemprop)=["'][^"']*(?:location|venue|address|place|where)[^"']*["'][^>]*>([\s\S]*?)</i);
+      if (locM) placeHint = stripTags(locM[1]).trim();
+      if (!placeHint) { const atM = textOnly.match(/\bat\s+([A-Z][\w'&.\- ]{2,60})/); if (atM) placeHint = atM[1].trim(); }
+      candidates.push({ title, when, link, photo, text: textOnly, place: decodeEntities(placeHint).slice(0, 120) });
       if (candidates.length >= 150) return;
     }
   }
@@ -4511,7 +4554,8 @@ function parseHtmlEvents(html, pageUrl, s) {
       category, emoji,
       photo: c.photo || null,
       link: c.link,
-      place: '', city: '', state: '',
+      place: c.place || '', city: '', state: '',
+      geo_address: c.place || '',
       lat: null, lng: null,
       starts_at: c.when, ends_at: null,
       source_label: s.label || 'Website', country: null
@@ -4848,7 +4892,11 @@ async function geocodeEventAddress(addr, countryCode) {
     const r = await fetch(url, { headers: { 'User-Agent': 'ShowUppApp/1.0 (friendship app; contact admin@showupp.app)', 'Accept': 'application/json' } });
     if (r.ok) {
       const arr = await r.json();
-      if (Array.isArray(arr) && arr[0] && arr[0].lat) out = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
+      if (Array.isArray(arr) && arr[0] && arr[0].lat) {
+        const lat = parseFloat(arr[0].lat), lng = parseFloat(arr[0].lon);
+        // Reject the classic bad result at/near 0,0 (Atlantic "null island").
+        if (!isNaN(lat) && !isNaN(lng) && !(Math.abs(lat) < 0.5 && Math.abs(lng) < 0.5)) out = { lat, lng };
+      }
     }
   } catch (e) {}
   _eventGeoCache[key] = out;
@@ -4912,17 +4960,32 @@ async function ingestOneSource(s, opts) {
     const result = await fn(s);
     const evs = result.events || [];
     let kept = 0, geocoded = 0;
+    // Items 2/3: the manager can set a default location for a source. Any event lacking
+    // its own place/city inherits it, so website-scraped events land in the right area
+    // instead of at 0,0 (the Atlantic "null island").
+    const srcDefaultLoc = (s.default_location || '').trim();
+    const srcDefaultCC = (s.default_country || '').trim();
     for (const e of evs) {
       if (e.starts_at && e.starts_at > cutoff) continue; // outside the display window — skip storing it
-      // Item 2: many events (especially website-scraped ones) arrive with an address but
-      // no coordinates, so they can't plot on the map. Geocode them here at ingest time
-      // (cached + rate-limited) so EVERY event with a resolvable location gets pinned.
+      // If the event has no location of its own, inherit the source's default location.
+      if (!e.place && !e.city && !e.state && srcDefaultLoc) { e.place = srcDefaultLoc; if (!e.country && srcDefaultCC) e.country = srcDefaultCC; }
       if ((e.lat == null || e.lng == null) && geocoded < 60) {
-        const addr = [e.place, e.city, e.state].filter(Boolean).join(', ');
-        if (addr && addr.length >= 3) {
+        // Prefer the full address string the scraper extracted from the site (venue,
+        // street, city, region, country); fall back to piecing parts together. This is
+        // what lets events geocode to their REAL location worldwide with no manual setup.
+        let addr = (e.geo_address && e.geo_address.length >= 4) ? e.geo_address : '';
+        if (!addr) {
+          const parts = [e.place, e.city, e.state].filter(Boolean);
+          if (srcDefaultLoc && !parts.join(', ').toLowerCase().includes(srcDefaultLoc.toLowerCase())) parts.push(srcDefaultLoc);
+          addr = parts.join(', ');
+        }
+        const cc = e.country || srcDefaultCC || '';
+        if (addr && addr.length >= 4) {
           try {
-            const g = await geocodeEventAddress(addr, e.country);
-            if (g && g.lat != null) { e.lat = g.lat; e.lng = g.lng; geocoded++; await new Promise(r => setTimeout(r, 250)); }
+            const g = await geocodeEventAddress(addr, cc);
+            if (g && g.lat != null && g.lng != null && !(Math.abs(g.lat) < 0.5 && Math.abs(g.lng) < 0.5)) {
+              e.lat = g.lat; e.lng = g.lng; geocoded++; await new Promise(r => setTimeout(r, 250));
+            }
           } catch (ge) {}
         }
       }
@@ -5368,7 +5431,7 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
 // "ticketmaster", needs an API key) OR any free-typed label for a manual source —
 // one whose events the admin will add by hand from the panel instead of an API pull.
 app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const { provider, label, apiKey, url } = req.body || {};
+  const { provider, label, apiKey, url, defaultLocation, defaultCountry } = req.body || {};
   if (!provider || !String(provider).trim()) return res.status(400).json({ error: 'Give the source a provider name.' });
   const providerKey = String(provider).trim().slice(0, 60);
   const isWebsite = (providerKey === WEBSITE_PROVIDER);
@@ -5386,10 +5449,12 @@ app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res)
     id: id(), provider: providerKey, label: String(label || '').slice(0, 80) || providerKey,
     api_key: (apiKey && String(apiKey).trim()) ? String(apiKey).trim() : null,
     url: cleanUrl,
+    default_location: (defaultLocation && String(defaultLocation).trim()) ? String(defaultLocation).trim().slice(0, 120) : null,
+    default_country: (defaultCountry && String(defaultCountry).trim()) ? String(defaultCountry).trim().slice(0, 2).toLowerCase() : null,
     enabled: 1, created_by: req.user.id, created_at: now()
   };
-  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,url,enabled,created_by,created_at)
-    VALUES (@id,@provider,@label,@api_key,@url,@enabled,@created_by,@created_at)`).run(row);
+  await db.prepare(`INSERT INTO event_sources (id,provider,label,api_key,url,default_location,default_country,enabled,created_by,created_at)
+    VALUES (@id,@provider,@label,@api_key,@url,@default_location,@default_country,@enabled,@created_by,@created_at)`).run(row);
   // Kick off an immediate ingest for THIS freshly-added auto source only (forced, since
   // it has no cache yet), rather than re-sweeping every existing source and multiplying
   // API calls.
