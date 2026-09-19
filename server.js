@@ -378,6 +378,10 @@ await db.exec(`
   -- meeting_url holds the join link (a ShowUpp room or any external link).
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS is_online INTEGER DEFAULT 0;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS meeting_url TEXT;
+  -- Item 3: split date/time — event_at is the start; ends_at is the end; recurrence_end
+  -- caps a repeating Round so it doesn't repeat forever.
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS ends_at BIGINT;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS recurrence_end BIGINT;
   ALTER TABLE memberships ADD COLUMN IF NOT EXISTS commitment TEXT;
   -- Item 4: store the event's city + state/region so the State/City filters work
   -- (Ticketmaster's place is the venue name, which the parser couldn't match).
@@ -3809,7 +3813,7 @@ function safeUrl(u) {
 }
 
 app.post('/api/rounds', requireAuth, async (req, res) => {
-  const { title, emoji, category, blurb, lat, lng, place, photo, link, event_at, requires_approval, recurrence, is_online, meeting_url } = req.body || {};
+  const { title, emoji, category, blurb, lat, lng, place, photo, link, event_at, requires_approval, recurrence, is_online, meeting_url, ends_at, recurrence_end } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Give your Round a name.' });
   // Validate/flag any attached link
   if (link && String(link).trim()) {
@@ -3842,10 +3846,12 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     requires_approval: requires_approval ? 1 : 0,
     recurrence: ['weekly', 'biweekly', 'monthly'].includes(recurrence) ? recurrence : 'none',
     is_online: is_online ? 1 : 0,
-    meeting_url: (is_online && meeting_url) ? (String(meeting_url) === 'showupp://round-room' ? 'showupp://round-room' : safeUrl(meeting_url)) : null
+    meeting_url: (is_online && meeting_url) ? (String(meeting_url) === 'showupp://round-room' ? 'showupp://round-room' : safeUrl(meeting_url)) : null,
+    ends_at: (typeof ends_at === 'number' && ends_at > 0) ? ends_at : null,
+    recurrence_end: (typeof recurrence_end === 'number' && recurrence_end > 0) ? recurrence_end : null
   };
-  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at,requires_approval,recurrence,is_online,meeting_url)
-              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at,@requires_approval,@recurrence,@is_online,@meeting_url)`).run(round);
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at,requires_approval,recurrence,is_online,meeting_url,ends_at,recurrence_end)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at,@requires_approval,@recurrence,@is_online,@meeting_url,@ends_at,@recurrence_end)`).run(round);
   await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
     .run(round.id, req.user.id, now());
   res.json({ round });
