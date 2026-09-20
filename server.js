@@ -3833,6 +3833,15 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     if (salvaged && finalLat == null) { finalLat = salvaged.lat; finalLng = salvaged.lng; }
     finalPlace = null; // don't keep a link masquerading as an address
   }
+  // Item 1: date/time validation (authoritative). Reject impossible combinations.
+  {
+    const st = (typeof event_at === 'number' && event_at > 0) ? event_at : 0;
+    const en = (typeof ends_at === 'number' && ends_at > 0) ? ends_at : 0;
+    const isRecurring = ['weekly', 'biweekly', 'monthly'].includes(recurrence);
+    const re = (typeof recurrence_end === 'number' && recurrence_end > 0) ? recurrence_end : 0;
+    if (st && en && en < st) return res.status(400).json({ error: 'End time can\u2019t be before the start time.' });
+    if (isRecurring && re && st && re < st) return res.status(400).json({ error: 'The repeat-until date can\u2019t be before the start date.' });
+  }
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
     category: category || 'General', blurb: blurb || '',
