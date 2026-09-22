@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.26';
+const APP_VERSION='1.27';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2977,7 +2977,13 @@ pendingMapRestore=null;
 }
 function openEventPlaceInMaps(e){
 const q=(typeof e.lat==='number'&&typeof e.lng==='number')?(e.lat+','+e.lng):encodeURIComponent(e.place||'');
-window.open('https://maps.google.com/?q='+q,'_blank');
+// Navigate the current tab (not window.open/_blank). Maps links like this hand off to the
+// native Maps app at the OS level — window.open spawns a NEW blank tab first, and when
+// the OS intercepts that blank tab's navigation to launch Maps, closing Maps strands the
+// person on that empty tab (the "search or enter website name" screen) instead of back in
+// ShowUpp. location.href keeps everything in ShowUpp's own tab, so the handoff is invisible
+// and closing Maps returns straight to where they were.
+location.href='https://maps.google.com/?q='+q;
 }
 function eventToCalendar(){
 if(!activeEvent||!activeEvent.starts_at)return;
@@ -3573,7 +3579,9 @@ const q=encodeURIComponent(address);
 const ua=navigator.userAgent||'';
 const isIOS=/iPad|iPhone|iPod/.test(ua)&&!window.MSStream;
 const url=isIOS?('https://maps.apple.com/?q='+q):('https://www.google.com/maps/search/?api=1&query='+q);
-window.open(url,'_blank','noopener');
+// Same-tab navigation, not window.open — see openEventPlaceInMaps for why: this avoids
+// getting stranded on a blank "search or enter website name" tab after closing Maps.
+location.href=url;
 }
 function downloadIcs(){
 if(!activeRound||!activeRound.event_at)return;
@@ -7015,7 +7023,8 @@ function specialCardHTML(body){
 }
 function openSharedLocation(lat,lng){
   const url='https://maps.google.com/?q='+lat+','+lng;
-  try{ window.open(url,'_blank'); }catch(e){ location.href=url; }
+  // Same-tab navigation, not window.open — see openEventPlaceInMaps for why.
+  location.href=url;
 }
 // DM menu router (item 7): one three-dot button. Group chats → full group manage sheet;
 // 1-on-1 DMs → the DM options sheet. This removes the duplicate menu icon.
