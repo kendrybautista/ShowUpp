@@ -456,11 +456,15 @@ await db.exec(`
     expires_at BIGINT NOT NULL
   );
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS media TEXT;
+
+  -- Who has seen a Daily Update (moment). One row per (moment, viewer) so repeat
+  -- opens don't inflate the count; powers the owner-only "seen by" list.
   CREATE TABLE IF NOT EXISTS moment_views (
+    id TEXT PRIMARY KEY,
     moment_id TEXT NOT NULL,
     viewer_id TEXT NOT NULL,
     viewed_at BIGINT NOT NULL,
-    PRIMARY KEY (moment_id, viewer_id)
+    UNIQUE(moment_id, viewer_id)
   );
   CREATE INDEX IF NOT EXISTS idx_moment_views_moment ON moment_views(moment_id);
 
@@ -2350,7 +2354,6 @@ app.post('/api/crew/create', requireAuth, async (req, res) => {
 const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
 const MOMENT_DAILY_MAX = 10;
 async function pruneMoments() {
-  await db.prepare('DELETE FROM moment_views WHERE moment_id IN (SELECT id FROM moments WHERE expires_at < ?)').run(now());
   await db.prepare('DELETE FROM moments WHERE expires_at < ?').run(now());
 }
 // Create a moment
@@ -2397,40 +2400,7 @@ app.get('/api/moments/mine', requireAuth, async (req, res) => {
   const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
   const since = now() - MOMENT_TTL;
   const used = Number((await db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since)).c) || 0;
-  // Attach each post's view count in one batched query (not one query per post).
-  if (rows.length) {
-    const momentIds = rows.map(m => m.id);
-    const ph = momentIds.map(() => '?').join(',');
-    const counts = await db.prepare(`SELECT moment_id, COUNT(*) c FROM moment_views WHERE moment_id IN (${ph}) GROUP BY moment_id`).all(...momentIds);
-    const byId = {};
-    counts.forEach(c => { byId[c.moment_id] = Number(c.c) || 0; });
-    rows.forEach(m => { m.view_count = byId[m.id] || 0; });
-  }
   res.json({ moments: rows, remaining: Math.max(0, MOMENT_DAILY_MAX - used) });
-});
-// Record that the current user has viewed a moment (a "post," which may hold up to 50
-// photos/videos) — counted once per viewer no matter how many times they replay it or
-// how many media items it contains. Only friends (or the owner, who is a no-op) may view.
-app.post('/api/moments/:id/view', requireAuth, async (req, res) => {
-  const m = await db.prepare('SELECT id,user_id,expires_at FROM moments WHERE id = ?').get(req.params.id);
-  if (!m || m.expires_at <= now()) return res.status(404).json({ error: 'Post not found.' });
-  if (m.user_id === req.user.id) return res.json({ ok: true }); // owners viewing their own post don't count
-  if (!await areFriends(req.user.id, m.user_id)) return res.status(403).json({ error: 'Only friends can view this.' });
-  await db.prepare('INSERT INTO moment_views (moment_id,viewer_id,viewed_at) VALUES (?,?,?) ON CONFLICT (moment_id,viewer_id) DO NOTHING')
-    .run(m.id, req.user.id, now());
-  res.json({ ok: true });
-});
-// List who has viewed a moment — owner only, so people can see who's checked in on their post.
-app.get('/api/moments/:id/viewers', requireAuth, async (req, res) => {
-  const m = await db.prepare('SELECT id,user_id FROM moments WHERE id = ?').get(req.params.id);
-  if (!m) return res.status(404).json({ error: 'Post not found.' });
-  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'Only the poster can see who has viewed this.' });
-  const viewers = await db.prepare(`
-    SELECT u.id, u.name, u.username, u.avatar, v.viewed_at
-    FROM moment_views v JOIN users u ON u.id = v.viewer_id
-    WHERE v.moment_id = ? ORDER BY v.viewed_at DESC
-  `).all(m.id);
-  res.json({ viewers, count: viewers.length });
 });
 // Get a user's active moments — only if self or friends
 // All friends who currently have active daily updates, each with their posts.
@@ -2466,9 +2436,34 @@ app.post('/api/moments/:id/delete', requireAuth, async (req, res) => {
   const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Post not found.' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
-  await db.prepare('DELETE FROM moment_views WHERE moment_id = ?').run(req.params.id);
   await db.prepare('DELETE FROM moments WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+// Record that the current user has seen this Daily Update. Only counts views from
+// someone other than the owner (a poster looking at their own post isn't a "view"),
+// and is idempotent per viewer — reopening the same post doesn't inflate the count.
+app.post('/api/moments/:id/view', requireAuth, async (req, res) => {
+  const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Post not found.' });
+  if (m.user_id === req.user.id) return res.json({ ok: true, counted: false });
+  try {
+    await db.prepare('INSERT INTO moment_views (id,moment_id,viewer_id,viewed_at) VALUES (?,?,?,?) ON CONFLICT (moment_id,viewer_id) DO NOTHING')
+      .run(id(), req.params.id, req.user.id, now());
+  } catch (e) { /* best-effort — a missed view shouldn't break the viewer's experience */ }
+  res.json({ ok: true, counted: true });
+});
+// Who has seen this Daily Update — owner only, powers the "seen by" popup.
+app.get('/api/moments/:id/viewers', requireAuth, async (req, res) => {
+  const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Post not found.' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'Only the poster can see who viewed this.' });
+  const viewers = await db.prepare(`
+    SELECT u.id, u.name, u.username, u.avatar, mv.viewed_at
+    FROM moment_views mv JOIN users u ON u.id = mv.viewer_id
+    WHERE mv.moment_id = ?
+    ORDER BY mv.viewed_at DESC
+  `).all(req.params.id);
+  res.json({ count: viewers.length, viewers });
 });
 // Item 5: edit the text/caption of your own daily update (while it's still active).
 app.post('/api/moments/:id/edit', requireAuth, async (req, res) => {
