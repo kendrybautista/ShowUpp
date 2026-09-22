@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.21';
+const APP_VERSION='1.22';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2786,20 +2786,30 @@ if(currentView==='map'&&eventsHasMore){ loadAllEventPagesForMap(); }
 }catch(e){box.innerHTML='<p style="text-align:center;color:var(--muted);padding:20px;font-size:13px">'+e.message+'</p>';}
 }
 let _loadingAllEventPages=false;
+const EVENT_MAP_PAGE_CONCURRENCY=6; // pages fetched at once, instead of one round trip at a
+// time — our own /api/events endpoint (not an external service), so running several
+// requests in parallel is safe and turns up to 40 sequential round trips into ~7 batches.
 async function loadAllEventPagesForMap(){
 if(_loadingAllEventPages)return; _loadingAllEventPages=true;
 try{
-let page=1, guard=0;
+let nextPage=1, guard=0;
 while(eventsHasMore && guard<40){ // 40 pages × 50 = up to 2000 events, plenty for a map
-const r=await fetchEventsPage(page);
-const batch=r.events||[];
-if(batch.length){
+if(currentView!=='map')break; // navigated away — stop fetching pages nobody will see
+const batchPages=[];
+for(let i=0;i<EVENT_MAP_PAGE_CONCURRENCY && guard<40;i++,nextPage++,guard++)batchPages.push(nextPage);
+const results=await Promise.all(batchPages.map(p=>fetchEventsPage(p).catch(()=>({events:[],hasMore:false}))));
 const seen=new Set(allEvents.map(e=>e.id));
-batch.forEach(e=>{ if(!seen.has(e.id))allEvents.push(e); });
-}
-eventsHasMore=!!r.hasMore;
-page++; guard++;
+let gotAny=false, anyMore=false;
+results.forEach(r=>{
+const batch=r.events||[];
+if(batch.length){ gotAny=true; batch.forEach(e=>{ if(!seen.has(e.id)){allEvents.push(e);seen.add(e.id);} }); }
+if(r.hasMore)anyMore=true;
+});
+eventsHasMore=anyMore;
+// Render once per BATCH of pages, not once per page — rebuilding the marker-cluster
+// layer up to 40 times per load was the other big chunk of the slowness.
 if(currentView==='map')renderEvents();
+if(!gotAny)break;
 }
 if(currentView==='map')renderEvents();
 }catch(e){}
@@ -3302,10 +3312,14 @@ setTimeout(()=>leafletMap.invalidateSize(),100);
 let _roundGeoCache={};
 async function geocodeMissingRounds(rounds){
 if(!leafletMap||!roundsCluster)return;
-let added=0;
+let added=0, attempted=0;
 for(const r of rounds){
+// Cap sequential external geocode lookups per pass (matches geocodeMissingEvents).
+// Cached addresses (the common case on repeat visits) don't count against this, since
+// they never touch the network — only genuinely new/uncached places do.
 const key=(r.place||'').trim().toLowerCase();
 if(!key)continue;
+if(_roundGeoCache[key]===undefined){ if(attempted>=25)continue; attempted++; }
 let loc=_roundGeoCache[key];
 if(loc===undefined){
 loc=await geocodeAddress(r.place);

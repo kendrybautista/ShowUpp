@@ -3715,11 +3715,26 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
       AND (r.event_at IS NULL OR r.event_at >= ?)
     ORDER BY COALESCE(r.featured,0) DESC, r.created_at DESC
   `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, todayFloor);
-  // attach up to 4 member avatars for the card preview
-  const avStmt = db.prepare(`SELECT u.avatar FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.round_id=? ORDER BY m.joined_at ASC LIMIT 4`);
-  for (const r of rounds) {
-    const avRows = await avStmt.all(r.id);
-    r.member_avatars = avRows.map(x => x.avatar || '').filter(Boolean);
+  // Attach up to 4 member avatars per round for the card preview. Batched into a single
+  // query (via a window function ranking memberships within each round) instead of one
+  // query per round — the old loop did N extra DB round trips for N rounds, which is the
+  // kind of thing that quietly gets much slower as the Rounds table grows.
+  if (rounds.length) {
+    const roundIds = rounds.map(r => r.id);
+    const ph = roundIds.map(() => '?').join(',');
+    const avRows = await db.prepare(`
+      SELECT round_id, avatar FROM (
+        SELECT m.round_id AS round_id, u.avatar AS avatar,
+          ROW_NUMBER() OVER (PARTITION BY m.round_id ORDER BY m.joined_at ASC) AS rn
+        FROM memberships m JOIN users u ON u.id = m.user_id
+        WHERE m.round_id IN (${ph})
+      ) ranked WHERE rn <= 4
+    `).all(...roundIds);
+    const avatarsByRound = {};
+    for (const row of avRows) {
+      (avatarsByRound[row.round_id] = avatarsByRound[row.round_id] || []).push(row.avatar || '');
+    }
+    for (const r of rounds) r.member_avatars = (avatarsByRound[r.id] || []).filter(Boolean);
   }
   res.json({ rounds });
 });
