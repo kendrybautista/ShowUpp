@@ -1276,7 +1276,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.28';
+const APP_VERSION='1.29';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -1797,10 +1797,13 @@ _vz={scale:1,x:0,y:0,startDist:0,startScale:1,panX:0,panY:0,lastX:0,lastY:0,pann
 const img=document.getElementById('avatarViewerImg');
 if(img&&!img._logoScale)img.style.transform='';
 }
-function applyViewerTransform(){
+function applyViewerTransform(animate){
 const img=document.getElementById('avatarViewerImg');if(!img)return;
+// Only ease into a new value on discrete snaps (double-tap toggle, release-bounce-back).
+// Applying a transition while scale/position update continuously (pinch, drag, wheel)
+// makes the image visibly lag and "shake" as each frame re-triggers the animation.
+img.style.transition=animate?'transform .12s ease':'none';
 img.style.transform='translate('+_vz.x+'px,'+_vz.y+'px) scale('+_vz.scale+')';
-img.style.transition=_vz.panning?'none':'transform .12s ease';
 }
 function initViewerZoom(){
 const img=document.getElementById('avatarViewerImg');if(!img||img._zoomWired)return;
@@ -1823,12 +1826,12 @@ _vz.lastX=e.touches[0].clientX;_vz.lastY=e.touches[0].clientY;applyViewerTransfo
 img.addEventListener('touchend',e=>{
 _vz.panning=false;
 if(e.touches.length<2)_vz.startDist=0;
-if(_vz.scale<=1){_vz.x=0;_vz.y=0;applyViewerTransform();}
+if(_vz.scale<=1){_vz.x=0;_vz.y=0;applyViewerTransform(true);}
 });
 let lastTap=0;
 const toggle=(cx,cy)=>{
 if(_vz.scale>1){_vz.scale=1;_vz.x=0;_vz.y=0;}else{_vz.scale=2.5;}
-applyViewerTransform();
+applyViewerTransform(true);
 };
 img.addEventListener('click',e=>{
 const now=Date.now();
@@ -1846,10 +1849,13 @@ function openRoundCoverViewer(){
 if(!activeRound||!activeRound.photo)return;
 const img=document.getElementById('avatarViewerImg');
 img.src=activeRound.photo;img.style.display='block';
-img.style.transform='';img.style.maxWidth='94%';img.style.maxHeight='80%';img.style.width='';img.style.height='';
+img.style.maxWidth='94%';img.style.maxHeight='80%';img.style.width='';img.style.height='';
 document.getElementById('avatarViewerName').textContent=activeRound.title||'';
 document.getElementById('avatarViewerEdit').style.display='none';
 document.getElementById('avatarViewer').style.display='flex';
+img._logoScale=false;
+resetViewerZoom();
+initViewerZoom();
 }
 function onAvatarChosen(e){
 const file=e.target.files&&e.target.files[0];
