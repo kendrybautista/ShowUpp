@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.20';
+const APP_VERSION='1.21';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2103,7 +2103,7 @@ p=>{userLoc={lat:p.coords.latitude,lng:p.coords.longitude};setLocPref('granted')
 );
 }
 let maxDistKm=25;
-function defaultDistKm(){return distUnit==='mi'?250*1.60934:250;}
+function defaultDistKm(){return distUnit==='mi'?50*1.60934:50;}
 let currentCountryFilter='';
 let currentCityFilter='';
 let currentStateFilter='';
@@ -2440,7 +2440,7 @@ dateFilterFrom='';dateFilterTo='';
 currentCityFilter='';currentStateFilter='';
 distAnywhere=false;
 maxDistKm=defaultDistKm();
-const slider=document.getElementById('distSlider');if(slider)slider.value=(distUnit==='mi')?250:Math.round(defaultDistKm());
+const slider=document.getElementById('distSlider');if(slider)slider.value=(distUnit==='mi')?50:Math.round(defaultDistKm());
 if(typeof updateDistLabel==='function')updateDistLabel();
 const sel=document.getElementById('tfSelect');if(sel)sel.value='any';
 currentCountryFilter='';
