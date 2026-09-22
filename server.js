@@ -402,6 +402,13 @@ await db.exec(`
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS featured INTEGER DEFAULT 0;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS moderated_by TEXT;
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS moderated_at BIGINT;
+  -- Server-side country/distance filtering for /api/rounds (mirrors the events feed):
+  -- country is stamped on the Round at creation time (from the host's profile), so it
+  -- can be filtered in SQL without joining out to users.country on every request. lat/lng
+  -- already existed; the index lets the distance bounding-box pre-filter use it.
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS country TEXT;
+  CREATE INDEX IF NOT EXISTS idx_rounds_country ON rounds (country);
+  CREATE INDEX IF NOT EXISTS idx_rounds_lat_lng ON rounds (lat, lng);
 
   -- Suspension overhaul (items 8-11): a suspension now has a reason, a start time,
   -- and an end time the admin chooses. Accounts auto-reactivate once suspended_until
@@ -578,6 +585,27 @@ await db.exec(`
       }
       console.log('Seeded starter Rounds.');
     }
+  }
+
+  // One-time backfill: stamp `country` on any pre-existing Rounds that predate the
+  // column, derived from their host's profile (same derivation /api/events uses for
+  // the user's own country). Lets the new server-side country filter on /api/rounds
+  // cover rows created before this migration, not just newly-created ones.
+  try {
+    const uncoded = await db.prepare(
+      'SELECT r.id, u.origin, u.city FROM rounds r JOIN users u ON u.id = r.host_id WHERE r.country IS NULL'
+    ).all();
+    let backfilled = 0;
+    for (const row of uncoded) {
+      const cc = (countryToCode(row.origin || row.city) || '').toUpperCase();
+      if (cc) {
+        await db.prepare('UPDATE rounds SET country = ? WHERE id = ?').run(cc, row.id);
+        backfilled++;
+      }
+    }
+    if (backfilled) console.log(`Backfilled country on ${backfilled} existing Round(s).`);
+  } catch (e) {
+    console.log('[rounds] country backfill skipped:', e.message);
   }
 
   console.log('Database ready (Neon Postgres).');
@@ -3691,14 +3719,73 @@ app.post('/api/admin/rounds/:id/delete', requireAuth, requireAdmin, async (req, 
 
 
 // ---- Rounds ----
+// Server-side country/distance filtering + pagination (mirrors /api/events — see the
+// comments there for the general approach). Backward compatible: with no lat/lng/country
+// params this returns everything, same as before, just now capped to pageSize per page.
 app.get('/api/rounds', requireAuth, async (req, res) => {
   // Item 26: hide Rounds whose event date is in the past (by DATE, not time). Rounds
   // with no event_at are ongoing groups and always remain. We use the start of the
   // current day as the cutoff so a Round happening "today" still shows all day.
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const todayFloor = startOfToday.getTime();
-  const rounds = await db.prepare(`
-    SELECT r.*, u.city AS host_city,
+
+  const page = Math.max(0, parseInt(req.query.page) || 0);
+  const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize) || 200));
+
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+  const maxDistanceMiles = parseFloat(req.query.maxDistance);
+  const hasDistCap = hasLoc && !isNaN(maxDistanceMiles) && maxDistanceMiles > 0;
+
+  // Country filter — same derived-default / explicit-strict split as /api/events: an
+  // explicit ?country= is honored strictly; otherwise we default to the user's own
+  // profile country, but stay lenient (also keep untagged rows) so nothing vanishes for
+  // rounds created before the country column existed and never got backfilled.
+  const wantsInternational = req.query.international === '1' || req.query.international === 'true';
+  const explicitCountry = String(req.query.country || '').trim().toUpperCase();
+  let userCC = explicitCountry;
+  if (!userCC && !wantsInternational) {
+    userCC = (countryToCode(req.user && (req.user.origin || req.user.city)) || '').toUpperCase();
+  }
+  let countryClause = '', countryParams = [];
+  if (userCC && !wantsInternational) {
+    countryClause = explicitCountry
+      ? ' AND r.country = ?'
+      : ' AND (r.country = ? OR r.country IS NULL)';
+    countryParams = [userCC];
+  }
+
+  // Distance filter. A plain lat/lng bounding-box check runs first (cheap comparisons
+  // the idx_rounds_lat_lng index can use directly) so the trig-heavy haversine expression
+  // below only has to run over rows already known to be roughly in range — the same
+  // bounding-box-then-exact-distance technique used for /api/events.
+  let distSelect = '', distClause = '', distParams = [];
+  if (hasLoc) {
+    const distExpr = `(3958.8 * 2 * ASIN(SQRT(
+        POWER(SIN(RADIANS(r.lat - ?) / 2), 2) +
+        COS(RADIANS(?)) * COS(RADIANS(r.lat)) * POWER(SIN(RADIANS(r.lng - ?) / 2), 2)
+      )))`;
+    distSelect = `, ${distExpr} AS calc_distance`;
+    if (hasDistCap) {
+      const MILES_PER_DEG_LAT = 69.0;
+      const latDelta = maxDistanceMiles / MILES_PER_DEG_LAT;
+      const cosLat = Math.max(0.01, Math.cos(lat * Math.PI / 180)); // guard near the poles
+      const lngDelta = maxDistanceMiles / (MILES_PER_DEG_LAT * cosLat);
+      distClause = ` AND r.lat IS NOT NULL AND r.lng IS NOT NULL
+        AND r.lat BETWEEN ? AND ? AND r.lng BETWEEN ? AND ?
+        AND ${distExpr} <= ?`;
+      distParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta, lat, lat, lng, maxDistanceMiles];
+    }
+  }
+  const distOrderParams = hasLoc ? [lat, lat, lng] : [];
+  const orderClause = hasLoc
+    ? 'ORDER BY COALESCE(r.featured,0) DESC, (r.lat IS NULL OR r.lng IS NULL), calc_distance ASC, r.created_at DESC'
+    : 'ORDER BY COALESCE(r.featured,0) DESC, r.created_at DESC';
+
+  // Param order must match the SQL: base SELECT params, then SELECT distance params,
+  // then WHERE (today floor, country, distance), then LIMIT/OFFSET.
+  const runQuery = (withCountry) => db.prepare(`
+    SELECT r.*, u.city AS host_city ${distSelect},
       (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count,
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
       (r.host_id = ?) AS is_host,
@@ -3713,8 +3800,30 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
     WHERE COALESCE(r.hidden_from_discovery, 0) = 0
       AND COALESCE(r.on_hold, 0) = 0
       AND (r.event_at IS NULL OR r.event_at >= ?)
-    ORDER BY COALESCE(r.featured,0) DESC, r.created_at DESC
-  `).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, todayFloor);
+      ${withCountry ? countryClause : ''}
+      ${distClause}
+    ${orderClause}
+    LIMIT ? OFFSET ?
+  `).all(
+    req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, // base SELECT
+    ...distOrderParams,                                                          // SELECT calc_distance
+    todayFloor,
+    ...(withCountry ? countryParams : []),
+    ...distParams,
+    pageSize, page * pageSize
+  );
+
+  let rounds = await runQuery(!!countryClause);
+  // Same empty-country fallback as /api/events: if the DERIVED (not explicit) country
+  // filter zeroed out the first page, retry without it rather than showing an empty feed.
+  if (countryClause && !explicitCountry && rounds.length === 0 && page === 0) {
+    rounds = await runQuery(false);
+  }
+  rounds = rounds.map(r => {
+    const { calc_distance, ...rest } = r;
+    return { ...rest, distance: (typeof calc_distance === 'number') ? calc_distance : null };
+  });
+
   // Attach up to 4 member avatars per round for the card preview. Batched into a single
   // query (via a window function ranking memberships within each round) instead of one
   // query per round — the old loop did N extra DB round trips for N rounds, which is the
@@ -3736,7 +3845,7 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
     }
     for (const r of rounds) r.member_avatars = (avatarsByRound[r.id] || []).filter(Boolean);
   }
-  res.json({ rounds });
+  res.json({ rounds, page, pageSize, hasMore: rounds.length === pageSize, country: userCC || null });
 });
 
 // Toggle save/bookmark on a Round
@@ -3857,6 +3966,9 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     if (st && en && en < st) return res.status(400).json({ error: 'End time can\u2019t be before the start time.' });
     if (isRecurring && re && st && re < st) return res.status(400).json({ error: 'The repeat-until date can\u2019t be before the start date.' });
   }
+  // Stamp country from the host's profile (same derivation used for the events feed) so
+  // the server-side country filter on GET /api/rounds can match without a join at read time.
+  const roundCountry = (countryToCode(req.user && (req.user.origin || req.user.city)) || '').toUpperCase() || null;
   const round = {
     id: id(), title: String(title).trim(), emoji: emoji || '✨',
     category: category || 'General', blurb: blurb || '',
@@ -3864,6 +3976,7 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     lat: finalLat,
     lng: finalLng,
     place: finalPlace,
+    country: roundCountry,
     photo: (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null,
     link: safeUrl(link),
     event_at: (typeof event_at === 'number' && event_at > 0) ? event_at : null,
@@ -3874,8 +3987,8 @@ app.post('/api/rounds', requireAuth, async (req, res) => {
     ends_at: (typeof ends_at === 'number' && ends_at > 0) ? ends_at : null,
     recurrence_end: (typeof recurrence_end === 'number' && recurrence_end > 0) ? recurrence_end : null
   };
-  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,photo,link,event_at,requires_approval,recurrence,is_online,meeting_url,ends_at,recurrence_end)
-              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@photo,@link,@event_at,@requires_approval,@recurrence,@is_online,@meeting_url,@ends_at,@recurrence_end)`).run(round);
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,country,photo,link,event_at,requires_approval,recurrence,is_online,meeting_url,ends_at,recurrence_end)
+              VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@country,@photo,@link,@event_at,@requires_approval,@recurrence,@is_online,@meeting_url,@ends_at,@recurrence_end)`).run(round);
   await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
     .run(round.id, req.user.id, now());
   res.json({ round });
@@ -5191,10 +5304,21 @@ app.get('/api/events', requireAuth, async (req, res) => {
     orderParams = [lat, lat, lng];
     orderClause = 'ORDER BY ' + prefOrder + '(lat IS NULL OR lng IS NULL), calc_distance ASC, (starts_at IS NULL), starts_at ASC';
     if (hasDistCap) {
-      // Require coordinates AND within-radius. Repeats the distance expression in WHERE
-      // (Postgres can't reference a SELECT alias there); params are ordered to match.
-      distClause = ` AND lat IS NOT NULL AND lng IS NOT NULL AND ${distExpr} <= ?`;
-      distParams = [lat, lat, lng, maxDistanceMiles];
+      // Bounding-box pre-filter: a plain lat/lng range check that idx_events_lat_lng can
+      // use directly, evaluated BEFORE the exact (and much more expensive, trig-heavy)
+      // haversine expression. Postgres's planner can seek straight to the rows in the box
+      // via the index instead of computing ASIN/SQRT over every row in the table; the exact
+      // haversine check after it then trims the box's rounded corners down to a true circle.
+      // This isn't as tight as PostGIS (which can index the distance itself), but it's a
+      // real reduction in the row count the trig math runs over, with no new dependency.
+      const MILES_PER_DEG_LAT = 69.0;
+      const latDelta = maxDistanceMiles / MILES_PER_DEG_LAT;
+      const cosLat = Math.max(0.01, Math.cos(lat * Math.PI / 180)); // guard near the poles
+      const lngDelta = maxDistanceMiles / (MILES_PER_DEG_LAT * cosLat);
+      distClause = ` AND lat IS NOT NULL AND lng IS NOT NULL
+        AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+        AND ${distExpr} <= ?`;
+      distParams = [lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta, lat, lat, lng, maxDistanceMiles];
     }
   }
 
