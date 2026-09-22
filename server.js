@@ -456,6 +456,27 @@ await db.exec(`
     expires_at BIGINT NOT NULL
   );
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS media TEXT;
+  -- Item 2: per-post visibility. 'friends' (default) = friends only; 'public' = friends + followers.
+  ALTER TABLE moments ADD COLUMN IF NOT EXISTS visibility TEXT DEFAULT 'friends';
+
+  -- Item 1: one-directional following (no approval). follower_id follows followee_id.
+  CREATE TABLE IF NOT EXISTS follows (
+    follower_id TEXT NOT NULL,
+    followee_id TEXT NOT NULL,
+    created_at  BIGINT NOT NULL,
+    PRIMARY KEY (follower_id, followee_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
+  CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
+
+  -- Item 2: reactions on Daily Updates (moments). One reaction per viewer per moment.
+  CREATE TABLE IF NOT EXISTS moment_reactions (
+    moment_id  TEXT NOT NULL,
+    reactor_id TEXT NOT NULL,
+    reaction   TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (moment_id, reactor_id)
+  );
 
   -- Who has seen a Daily Update (moment). One row per (moment, viewer) so repeat
   -- opens don't inflate the count; powers the owner-only "seen by" list.
@@ -1551,6 +1572,10 @@ app.post('/api/me/delete', requireAuth, async (req, res) => {
 async function areFriends(a, b) {
   return !!(await db.prepare('SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b));
 }
+// Item 1: does `a` follow `b`?
+async function isFollowing(a, b) {
+  return !!(await db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(a, b));
+}
 async function isBlocked(a, b) { // has a blocked b OR b blocked a
   return !!(await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(a, b, b, a));
 }
@@ -2388,9 +2413,10 @@ app.post('/api/moments', requireAuth, async (req, res) => {
     id: id(), user_id: req.user.id, text: cleanText,
     photo: firstPhoto ? firstPhoto.data : null,
     media: JSON.stringify(cleanMedia),
+    visibility: ((req.body && req.body.visibility) === 'public') ? 'public' : 'friends',
     created_at: now(), expires_at: now() + MOMENT_TTL
   };
-  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@created_at,@expires_at)').run(m);
+  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,visibility,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@visibility,@created_at,@expires_at)').run(m);
   const remaining = MOMENT_DAILY_MAX - (count + 1);
   res.json({ moment: m, remaining });
 });
@@ -2407,28 +2433,74 @@ app.get('/api/moments/mine', requireAuth, async (req, res) => {
 // Powers the "Daily Updates" tab under Circles > Friends.
 app.get('/api/friends/moments', requireAuth, async (req, res) => {
   await pruneMoments();
+  // Friends: see all their posts. People I follow: see their 'public' posts.
   const friendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id);
+  const followRows = await db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(req.user.id);
+  const friendIds = new Set(friendRows.map(r => r.friend_id));
+  const seenUsers = new Set();
+  const sources = [];
+  friendIds.forEach(fid => { seenUsers.add(fid); sources.push({ id: fid, friend: true }); });
+  followRows.forEach(fr => { if (!seenUsers.has(fr.followee_id)) { seenUsers.add(fr.followee_id); sources.push({ id: fr.followee_id, friend: false }); } });
   const out = [];
-  for (const fr of friendRows) {
-    const u = await db.prepare('SELECT id,name,username,avatar FROM users WHERE id = ?').get(fr.friend_id);
+  for (const src of sources) {
+    if (await isBlocked(req.user.id, src.id)) continue;
+    const u = await db.prepare('SELECT id,name,username,avatar FROM users WHERE id = ?').get(src.id);
     if (!u) continue;
-    const moments = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC').all(fr.friend_id, now());
+    // Friends see everything; followers see only 'public' posts.
+    const moments = src.friend
+      ? await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC').all(src.id, now())
+      : await db.prepare("SELECT * FROM moments WHERE user_id = ? AND expires_at > ? AND visibility = 'public' ORDER BY created_at ASC").all(src.id, now());
     if (moments.length) {
-      out.push({ user: u, moments, latest: moments[moments.length - 1].created_at });
+      // Attach the current user's reaction + total counts per moment.
+      for (const mm of moments) {
+        const mine = await db.prepare('SELECT reaction FROM moment_reactions WHERE moment_id = ? AND reactor_id = ?').get(mm.id, req.user.id);
+        mm.my_reaction = mine ? mine.reaction : null;
+        mm.reaction_count = Number((await db.prepare('SELECT COUNT(*) c FROM moment_reactions WHERE moment_id = ?').get(mm.id)).c) || 0;
+      }
+      out.push({ user: u, moments, latest: moments[moments.length - 1].created_at, relation: src.friend ? 'friend' : 'following' });
     }
   }
-  // Most recently updated friends first
   out.sort((a, b) => b.latest - a.latest);
   res.json({ feed: out });
+});
+// Item 2: react to a Daily Update (moment). Allowed for friends and followers of the poster.
+app.post('/api/moments/:id/react', requireAuth, async (req, res) => {
+  const mm = await db.prepare('SELECT * FROM moments WHERE id = ? AND expires_at > ?').get(req.params.id, now());
+  if (!mm) return res.status(404).json({ error: 'Post not found or expired.' });
+  if (mm.user_id !== req.user.id) {
+    const allowed = (await areFriends(req.user.id, mm.user_id)) || ((mm.visibility === 'public') && await isFollowing(req.user.id, mm.user_id));
+    if (!allowed) return res.status(403).json({ error: 'You can only react to posts from friends or people you follow.' });
+  }
+  const reaction = String((req.body && req.body.reaction) || '').slice(0, 8);
+  if (!reaction) { // toggle off
+    await db.prepare('DELETE FROM moment_reactions WHERE moment_id = ? AND reactor_id = ?').run(req.params.id, req.user.id);
+  } else {
+    await db.prepare('INSERT INTO moment_reactions (moment_id,reactor_id,reaction,created_at) VALUES (?,?,?,?) ON CONFLICT (moment_id,reactor_id) DO UPDATE SET reaction = excluded.reaction, created_at = excluded.created_at').run(req.params.id, req.user.id, reaction, now());
+    // Notify the poster (skip self).
+    if (mm.user_id !== req.user.id) { try { await pushNotif(mm.user_id, 'moment_react', 'Reaction to your update', (req.user.name || 'Someone') + ' reacted ' + reaction, 'chats:updates'); } catch (e) {} }
+  }
+  const count = Number((await db.prepare('SELECT COUNT(*) c FROM moment_reactions WHERE moment_id = ?').get(req.params.id)).c) || 0;
+  res.json({ ok: true, count, my_reaction: reaction || null });
 });
 
 app.get('/api/users/:id/moments', requireAuth, async (req, res) => {
   await pruneMoments();
   const targetId = req.params.id;
-  if (targetId !== req.user.id && !await areFriends(req.user.id, targetId)) {
-    return res.status(403).json({ error: 'Only friends can see these posts.' });
+  const isFriend = (targetId === req.user.id) || await areFriends(req.user.id, targetId);
+  const isFollower = await isFollowing(req.user.id, targetId);
+  if (!isFriend && !isFollower) {
+    return res.status(403).json({ error: 'Follow or friend this person to see their posts.' });
   }
-  const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now());
+  // Friends/self see everything; followers see only public posts.
+  const rows = isFriend
+    ? await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now())
+    : await db.prepare("SELECT * FROM moments WHERE user_id = ? AND expires_at > ? AND visibility = 'public' ORDER BY created_at DESC").all(targetId, now());
+  // Attach reaction info for the viewer.
+  for (const mm of rows) {
+    const mine = await db.prepare('SELECT reaction FROM moment_reactions WHERE moment_id = ? AND reactor_id = ?').get(mm.id, req.user.id);
+    mm.my_reaction = mine ? mine.reaction : null;
+    mm.reaction_count = Number((await db.prepare('SELECT COUNT(*) c FROM moment_reactions WHERE moment_id = ?').get(mm.id)).c) || 0;
+  }
   res.json({ moments: rows });
 });
 // Delete a moment (own only)
@@ -2501,6 +2573,45 @@ app.get('/api/users/search', requireAuth, async (req, res) => {
 });
 
 // Send a friend request
+// ===== Item 1: Follow system (one-directional, no approval) =====
+app.post('/api/follow', requireAuth, async (req, res) => {
+  const targetId = (req.body && req.body.userId) || '';
+  if (!targetId || targetId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
+  if (await isBlocked(req.user.id, targetId)) return res.status(403).json({ error: 'Not available.' });
+  const follow = !(req.body && req.body.unfollow);
+  if (follow) {
+    await db.prepare('INSERT INTO follows (follower_id,followee_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.user.id, targetId, now());
+    // Friendly heads-up to the followee (non-blocking).
+    try { await pushNotif(targetId, 'follow', 'New follower', (req.user.name || 'Someone') + ' started following you', 'profile:' + req.user.id); } catch (e) {}
+  } else {
+    await db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(req.user.id, targetId);
+  }
+  const followers = Number((await db.prepare('SELECT COUNT(*) AS c FROM follows WHERE followee_id = ?').get(targetId)).c) || 0;
+  res.json({ ok: true, following: follow, followers });
+});
+// Follower / following counts + my relationship to a user.
+app.get('/api/users/:id/follow-info', requireAuth, async (req, res) => {
+  const targetId = req.params.id;
+  const followers = Number((await db.prepare('SELECT COUNT(*) AS c FROM follows WHERE followee_id = ?').get(targetId)).c) || 0;
+  const following = Number((await db.prepare('SELECT COUNT(*) AS c FROM follows WHERE follower_id = ?').get(targetId)).c) || 0;
+  const iFollow = await isFollowing(req.user.id, targetId);
+  const followsMe = await isFollowing(targetId, req.user.id);
+  res.json({ followers, following, iFollow, followsMe });
+});
+// Lists of a user's followers / who they follow.
+app.get('/api/users/:id/followers', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,u.city FROM follows f JOIN users u ON u.id = f.follower_id WHERE f.followee_id = ? ORDER BY f.created_at DESC LIMIT 500`).all(req.params.id);
+  const out = [];
+  for (const u of rows) { out.push({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: await isFollowing(req.user.id, u.id) }); }
+  res.json({ users: out });
+});
+app.get('/api/users/:id/following', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,u.city FROM follows f JOIN users u ON u.id = f.followee_id WHERE f.follower_id = ? ORDER BY f.created_at DESC LIMIT 500`).all(req.params.id);
+  const out = [];
+  for (const u of rows) { out.push({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: await isFollowing(req.user.id, u.id) }); }
+  res.json({ users: out });
+});
+
 app.post('/api/friends/request', requireAuth, async (req, res) => {
   const { toId, message } = req.body || {};
   if (!toId || toId === req.user.id) return res.status(400).json({ error: 'Invalid user.' });
