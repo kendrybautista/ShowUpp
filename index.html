@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.27';
+const APP_VERSION='1.28';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -4486,9 +4486,17 @@ function renderUpdatesRail(){
     return;
   }
   const cells=feed.map(f=>railAvatarHTML(f)).join('');
-  // Item 4: always the right-to-left moving marquee (duplicated track for a seamless loop),
-  // exactly as it was — regardless of how many people have posted.
-  rail.innerHTML='<div class="sc-rail-track">'+cells+cells+'</div>';
+  // The scrolling marquee needs its track duplicated (cells+cells) so the loop is seamless
+  // — but only once there's enough content to actually scroll off-screen. Below that, the
+  // doubled track never exceeds the visible width, so both copies of every avatar sit
+  // side by side at once — i.e. everyone appears to have two avatars. Below the threshold,
+  // render ONE avatar per person, statically (no animation, no duplication).
+  const MARQUEE_MIN=7;
+  if(feed.length>=MARQUEE_MIN){
+    rail.innerHTML='<div class="sc-rail-track">'+cells+cells+'</div>';
+  }else{
+    rail.innerHTML='<div class="sc-rail-track sc-rail-static">'+cells+'</div>';
+  }
 }
 function railAvatarHTML(f){
   const u=f.user||{};
@@ -5483,13 +5491,51 @@ startMomentTimer(m,5000);
 }
 const footer=document.getElementById('mvFooter');
 const _rname=((document.getElementById('mvName')&&document.getElementById('mvName').textContent)||'').split(' ')[0]||'them';
+// Item: view tracking. Someone else's post gets recorded as viewed once per session per
+// post (server also dedupes per viewer, so this is just to avoid redundant calls while
+// scrubbing back and forth); the owner viewing their own post never counts.
+if(!mvMine)recordMomentView(m.momentId);
+const viewCountRow=mvMine?momentViewCountRowHTML(m.momentId):'';
 footer.innerHTML=(m.caption?'<div style="color:#fff;font-size:15px;text-align:center;margin-bottom:6px;font-weight:600">'+esc(m.caption)+'</div>':'')
 +((m.type!=='text'&&m.text)?'<div style="color:rgba(255,255,255,.85);font-size:14px;text-align:center;margin-bottom:8px">'+esc(m.text)+'</div>':'')
++viewCountRow
 +(mvMine
   ?'<div style="display:flex;gap:16px;justify-content:center;align-items:center"><button onclick="editMoment(\''+m.momentId+'\')" style="background:none;border:none;color:#fff;font-size:13px;font-weight:700;cursor:pointer">✏️ Edit</button><button onclick="deleteMoment(\''+m.momentId+'\')" style="background:none;border:none;color:#ff6b6b;font-size:13px;font-weight:700;cursor:pointer">Delete this post</button></div>'
   :'<div style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto"><input id="mvReplyInput" placeholder="Reply to '+esc(_rname)+'…" onfocus="mvPauseTimer()" onkeydown="if(event.key===&quot;Enter&quot;)sendMomentReply()" style="flex:1;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:22px;padding:11px 16px;font-size:14px;font-family:Instrument Sans;outline:none"><button onclick="sendMomentReply()" style="flex:none;background:var(--coral);border:none;color:#fff;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:17px">➤</button></div>');
 const when=new Date(m.created_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 document.getElementById('mvTime').textContent=when;
+}
+// Tracks which of the current viewer's own moment IDs we've already asked the server about
+// this session, so we don't refire on every scrub back and forth through the story.
+let _momentViewsSent=new Set();
+function recordMomentView(momentId){
+  if(!momentId||_momentViewsSent.has(momentId))return;
+  _momentViewsSent.add(momentId);
+  api('/api/moments/'+momentId+'/view','POST',{}).catch(()=>{});
+}
+// Builds the "👁 12 · Seen by" row shown only to the poster, using the view_count that
+// came back with /api/moments/mine (momentsCache), so this needs no extra network call
+// just to show a number — only tapping "Seen by" fetches the actual list.
+function momentViewCountRowHTML(momentId){
+  const mo=momentsCache[momentId];
+  const n=(mo&&typeof mo.view_count==='number')?mo.view_count:0;
+  const label=n===0?'No views yet':(n+' view'+(n===1?'':'s'));
+  return '<div onclick="openMomentViewers(\''+esc(momentId)+'\')" style="text-align:center;margin-bottom:8px;cursor:pointer;color:rgba(255,255,255,.85);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:5px"><span>👁️</span><span>'+esc(label)+'</span>'+(n>0?'<span style="color:rgba(255,255,255,.55);font-weight:400">· Seen by</span>':'')+'</div>';
+}
+// "Seen by" list — reuses the attendeesSheet (same one Round RSVPs use) rather than adding
+// a new sheet, since it's the same "list of people, tap to view profile" shape.
+async function openMomentViewers(momentId){
+  if(!momentId)return;
+  document.getElementById('attendeesSheet').classList.add('open');
+  document.getElementById('attendeesTitle').textContent='Seen by';
+  const box=document.getElementById('attendeesList');
+  box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+t('Loading…')+'</p>';
+  try{
+    const r=await api('/api/moments/'+momentId+'/viewers');
+    const viewers=r.viewers||[];
+    if(!viewers.length){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">No one has seen this post yet.</p>';return;}
+    box.innerHTML=viewers.map(u=>'<div class="friend-row" onclick="viewProfile(\''+esc(u.id)+'\')" style="cursor:pointer">'+friendAvatar(u)+'<div class="fi"><b>'+esc(u.name)+'</b><span>@'+esc(u.username||'')+' · '+timeAgo(u.viewed_at)+'</span></div></div>').join('');
+  }catch(e){box.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px">'+esc(e.message)+'</p>';}
 }
 function startMomentTimer(m,dur){
 clearTimeout(mvTimer);cancelAnimationFrame(mvRaf);
