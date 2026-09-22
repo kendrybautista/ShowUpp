@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.25';
+const APP_VERSION='1.26';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -1320,7 +1320,7 @@ body:JSON.stringify({action,targetKind,targetId,category})}).catch(function(){})
 }
 function go(id){
 document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
-if(id!=='s-home')pendingMapRestore=null; // only the Round-detail back button consumes this
+if(id!=='s-home'&&id!=='s-detail')pendingMapRestore=null; // only the Round-detail back button consumes this
 if(typeof collapseMapAndDock==='function')collapseMapAndDock();
 document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
 document.getElementById(id).classList.add('active');
