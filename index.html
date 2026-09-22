@@ -1273,7 +1273,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.19';
+const APP_VERSION='1.20';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2255,7 +2255,10 @@ setListPickerItems('filterCityPick',cities,{disabled:false,value:currentCityFilt
 // are in) simply refines the view from there.
 async function focusMapOnCountryImmediate(name){
 if(!leafletMap||!name||typeof geocodeAddress!=='function')return;
-try{ const loc=await geocodeAddress(name); if(loc)leafletMap.setView([loc.lat,loc.lng],5); }catch(e){}
+// Bias the lookup to the country being searched for (not the user's own country —
+// see geocodeAddress()), otherwise e.g. picking France while the user's own country is
+// the US restricts the search to the US and can return a bogus, unrelated location.
+try{ const loc=await geocodeAddress(name,name); if(loc)leafletMap.setView([loc.lat,loc.lng],5); }catch(e){}
 }
 async function focusMapOnFilter(){
 if(!leafletMap)return;
@@ -2266,7 +2269,7 @@ if(pts.length===1){ leafletMap.setView(pts[0],12); return; }
 if(pts.length>1){ try{ leafletMap.fitBounds(pts,{padding:[40,40],maxZoom:13}); return; }catch(e){} }
 const q=[currentCityFilter,currentStateFilter,currentCountryFilter].filter(Boolean).join(', ');
 if(q&&typeof geocodeAddress==='function'){
-try{ const loc=await geocodeAddress(q); if(loc){ leafletMap.setView([loc.lat,loc.lng], currentCityFilter?12:(currentStateFilter?8:5)); } }catch(e){}
+try{ const loc=await geocodeAddress(q,currentCountryFilter||undefined); if(loc){ leafletMap.setView([loc.lat,loc.lng], currentCityFilter?12:(currentStateFilter?8:5)); } }catch(e){}
 }
 }
 function collectStatesCities(){ return {}; }
@@ -7187,9 +7190,15 @@ box.innerHTML='<div style="border-radius:18px;overflow:hidden;background:var(--c
 box.style.display='block';
 }catch(e){box.style.display='none';}
 }
-async function geocodeAddress(addr){
+async function geocodeAddress(addr,biasCountry){
 try{
-const r=await api('/api/geocode?q='+encodeURIComponent(addr)+'&country='+encodeURIComponent(userCountry()));
+// Default: bias to the user's own country (correct for Round/event address entry,
+// where "addr" is a street/place expected to be near the user). Callers geocoding a
+// place in some OTHER country (e.g. focusing the map on a picked filter country) must
+// pass biasCountry explicitly, or the search gets wrongly restricted to the user's
+// home country and can return a bogus/unrelated match.
+const c=(biasCountry!==undefined)?biasCountry:userCountry();
+const r=await api('/api/geocode?q='+encodeURIComponent(addr)+(c?('&country='+encodeURIComponent(c)):''));
 if(r&&r.found)return {lat:r.lat,lng:r.lng,name:r.name||''};
 }catch(e){}
 return null;
