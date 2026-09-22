@@ -2503,6 +2503,30 @@ app.get('/api/users/:id/moments', requireAuth, async (req, res) => {
   }
   res.json({ moments: rows });
 });
+// Lightweight single-post lookup for reply cards: just enough to render a thumbnail
+// (photo/first frame) without pulling the poster's whole moments list. Same visibility
+// rule as GET /api/users/:id/moments. If the post is gone, expired, or no longer visible
+// to this viewer, this returns {expired:true} rather than an error, so the reply card can
+// fall back to a graceful placeholder instead of breaking.
+app.get('/api/moments/:id/preview', requireAuth, async (req, res) => {
+  await pruneMoments();
+  const mo = await db.prepare('SELECT id,user_id,text,photo,media,visibility,expires_at FROM moments WHERE id = ?').get(req.params.id);
+  if (!mo || mo.expires_at <= now()) return res.json({ expired: true });
+  const isOwner = mo.user_id === req.user.id;
+  const isFriend = isOwner || await areFriends(req.user.id, mo.user_id);
+  const isFollower = isOwner || await isFollowing(req.user.id, mo.user_id);
+  if (!isFriend && !isFollower) return res.json({ expired: true }); // don't leak existence via a 403
+  if (!isFriend && mo.visibility !== 'public') return res.json({ expired: true });
+  let media = [];
+  try { media = mo.media ? JSON.parse(mo.media) : []; } catch (e) {}
+  const first = media[0] || (mo.photo ? { type: 'image', data: mo.photo } : null);
+  res.json({
+    expired: false,
+    type: first ? (first.type || 'image') : 'text',
+    photo: first ? first.data : null,
+    text: mo.text || '',
+  });
+});
 // Delete a moment (own only)
 app.post('/api/moments/:id/delete', requireAuth, async (req, res) => {
   const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(req.params.id);

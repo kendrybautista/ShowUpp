@@ -1276,7 +1276,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.26';
+const APP_VERSION='1.27';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -5029,8 +5029,11 @@ if(ws&&ws.readyState===1&&activeConv){ws.send(JSON.stringify({type:'dm',convId:a
 else toast('Reconnecting…');
 }
 }
-// Item 1: render a daily-update reference as a tappable card (openable while active),
-// otherwise render the plain message body.
+// Item 1: render a daily-update reference as a tappable card with an actual visual
+// preview of the post (not just text), so people are more likely to tap it open.
+let _momRefSeq=0;
+const _momRefPreviewCache={}; // momId -> resolved preview ({expired}|{type,photo,text}), so a
+// post referenced by several messages only gets fetched once per session.
 function momentRefHTML(body){
   body=body||'';
   // Item 4: location/contact cards.
@@ -5039,8 +5042,47 @@ function momentRefHTML(body){
   const m=body.match(/^\[\[moment:([^\|]*)\|([^\]]*)\]\]\s*([\s\S]*)$/);
   if(!m){ return '<span class="msg-body">'+esc(body)+'</span>'; }
   const momId=m[1], ownerId=m[2], rest=m[3];
-  const card='<div onclick="openMomentRef(\''+esc(ownerId)+'\',\''+esc(momId)+'\')" style="display:flex;align-items:center;gap:8px;background:rgba(124,131,255,.12);border:1px solid rgba(124,131,255,.3);border-radius:12px;padding:8px 10px;margin-bottom:6px;cursor:pointer"><span style="font-size:18px">☀️</span><span style="font-size:12.5px;font-weight:700;color:#5B5FEF">Replying to a daily update · tap to view</span></div>';
+  const domId='momRef'+(_momRefSeq++);
+  // If we already have this post's media (from viewing it, or an earlier resolved card),
+  // render the real thumbnail immediately — no loading flicker, no extra network call.
+  const cached=_momRefPreviewCache[momId]||momentToPreview(momentsCache[momId]);
+  const card=momentRefCardHTML(domId,ownerId,momId,cached);
+  if(!cached)resolveMomentRefPreview(momId,domId); // fetch once, then patch the DOM in place
   return card+(rest?'<span class="msg-body">'+esc(rest)+'</span>':'');
+}
+// Reduces a full moment row (from momentsCache, if we happen to already have it loaded)
+// down to the same {type,photo,text} shape the /preview endpoint returns.
+function momentToPreview(mo){
+  if(!mo)return null;
+  let media=[];
+  try{media=mo.media?JSON.parse(mo.media):[];}catch(e){media=[];}
+  const first=media[0]||(mo.photo?{type:'image',data:mo.photo}:null);
+  return {expired:false,type:first?(first.type||'image'):'text',photo:first?first.data:null,text:mo.text||''};
+}
+async function resolveMomentRefPreview(momId,domId){
+  let preview;
+  try{ preview=await api('/api/moments/'+momId+'/preview'); }
+  catch(e){ preview={expired:true}; }
+  _momRefPreviewCache[momId]=preview;
+  const el=document.getElementById(domId);
+  if(!el)return; // card scrolled out / message list re-rendered since — nothing to patch
+  el.outerHTML=momentRefCardHTML(domId,el.dataset.owner,momId,preview);
+}
+function momentRefCardHTML(domId,ownerId,momId,preview){
+  const openAttr='onclick="openMomentRef(\''+esc(ownerId)+'\',\''+esc(momId)+'\')" data-owner="'+esc(ownerId)+'"';
+  const hasPhoto=preview&&!preview.expired&&preview.photo;
+  const isVideo=preview&&preview.type==='video';
+  const thumb=hasPhoto
+    ?(isVideo
+      ?'<video src="'+esc(preview.photo)+'" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover"></video><span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;text-shadow:0 1px 3px rgba(0,0,0,.5)">▶️</span>'
+      :'<img src="'+esc(preview.photo)+'" style="width:100%;height:100%;object-fit:cover" loading="lazy">')
+    :'<span style="font-size:18px">☀️</span>';
+  const label=(preview&&preview.expired)?'This daily update is no longer available'
+    :(hasPhoto?'Replying to a daily update · tap to view'
+    :(preview&&preview.text?('"'+esc(preview.text).slice(0,60)+'"'):'Replying to a daily update · tap to view'));
+  return '<div id="'+domId+'" '+openAttr+' style="display:flex;align-items:center;gap:9px;background:rgba(124,131,255,.12);border:1px solid rgba(124,131,255,.3);border-radius:12px;padding:7px 10px 7px 7px;margin-bottom:6px;cursor:pointer">'
+    +'<div style="position:relative;flex:none;width:38px;height:38px;border-radius:9px;overflow:hidden;background:linear-gradient(135deg,var(--coral),var(--mango));display:flex;align-items:center;justify-content:center">'+thumb+'</div>'
+    +'<span style="font-size:12.5px;font-weight:700;color:#5B5FEF;line-height:1.3">'+label+'</span></div>';
 }
 // Open the referenced daily update (if still active).
 function openMomentRef(ownerId,momId){
