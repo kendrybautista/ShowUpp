@@ -2247,6 +2247,16 @@ cities.sort((a,b)=>a.localeCompare(b));
 setListPickerItems('filterCityPick',cities,{disabled:false,value:currentCityFilter});
 }catch(e){ setListPickerItems('filterCityPick',[],{disabled:false,value:''}); }
 }
+// Item: focus the map to a just-picked country right away, rather than waiting on
+// Rounds/events for the new filter to finish (re)loading. focusMapOnFilter() below can
+// still be stale for a moment after a country change, since window._eventsForMap is
+// only refreshed once the async loadEvents() call completes — this jumps the map to
+// the country's center immediately, and the later fitBounds() call (once fresh points
+// are in) simply refines the view from there.
+async function focusMapOnCountryImmediate(name){
+if(!leafletMap||!name||typeof geocodeAddress!=='function')return;
+try{ const loc=await geocodeAddress(name); if(loc)leafletMap.setView([loc.lat,loc.lng],5); }catch(e){}
+}
 async function focusMapOnFilter(){
 if(!leafletMap)return;
 const pts=[];
@@ -2291,9 +2301,10 @@ if(tog && !currentCountryFilter) tog.checked=false;
 currentStateFilter='';currentCityFilter='';
 loadStateOptions();
 updateFilterActiveDot();
+if(currentCountryFilter)focusMapOnCountryImmediate(currentCountryFilter); // focus right away
 renderRoundsList();
-if(homeSection==='events'||homeSection==='both')loadEvents();
-focusMapOnFilter();
+if(homeSection==='events'||homeSection==='both'){ loadEvents().then(focusMapOnFilter); }
+else focusMapOnFilter();
 }
 function myCountryName(){
 try{
@@ -2309,9 +2320,11 @@ if(!nm){ toast('Set your city/country in your profile to use this.'); const t=do
 initCountryPicker('filterCountry',nm);
 currentCountryFilter=nm; currentStateFilter=''; currentCityFilter='';
 const t=document.getElementById('filterCountryMine'); if(t)t.checked=true;
-loadStateOptions(); updateFilterActiveDot(); renderRoundsList();
-if(homeSection==='events'||homeSection==='both')loadEvents();
-focusMapOnFilter();
+loadStateOptions(); updateFilterActiveDot();
+focusMapOnCountryImmediate(currentCountryFilter); // focus right away
+renderRoundsList();
+if(homeSection==='events'||homeSection==='both'){ loadEvents().then(focusMapOnFilter); }
+else focusMapOnFilter();
 }else{
 clearCountryFilter();
 }
@@ -4405,11 +4418,16 @@ function renderCatchupStrip(){
 function renderUpdatesRail(){
   const wrap=document.getElementById('scRailWrap');const rail=document.getElementById('scRail');
   if(!wrap||!rail)return;
+  // Keep the "Daily updates" bar fixed in place at all times — it stays present even
+  // when no friends/orgs currently have an update, rather than disappearing.
+  wrap.style.display='block';
   // One avatar per user, no matter how many moments they posted.
   const seen=new Set();
   const feed=(_scFeedCache||[]).filter(f=>{ const id=f.user&&f.user.id; if(!id||seen.has(id))return false; seen.add(id); return true; });
-  if(!feed.length){ wrap.style.display='none'; return; }
-  wrap.style.display='block';
+  if(!feed.length){
+    rail.innerHTML='<div class="sc-rail-empty" style="padding:2px 16px 6px;font-size:12.5px;color:var(--muted)">No updates yet — be the first to share one ☀️</div>';
+    return;
+  }
   const cells=feed.map(f=>railAvatarHTML(f)).join('');
   // Item 4: always the right-to-left moving marquee (duplicated track for a seamless loop),
   // exactly as it was — regardless of how many people have posted.
