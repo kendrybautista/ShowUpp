@@ -1276,7 +1276,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.27';
+const APP_VERSION='1.28';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -4449,9 +4449,17 @@ function renderUpdatesRail(){
     return;
   }
   const cells=feed.map(f=>railAvatarHTML(f)).join('');
-  // Item 4: always the right-to-left moving marquee (duplicated track for a seamless loop),
-  // exactly as it was — regardless of how many people have posted.
-  rail.innerHTML='<div class="sc-rail-track">'+cells+cells+'</div>';
+  // The scrolling marquee needs its track doubled (cells+cells) so the loop is seamless
+  // — but only once there's enough content to actually scroll off-screen. Below that, the
+  // doubled track never exceeds the visible width, so both copies of every avatar sit
+  // side by side at once — i.e. every poster appears to have two avatars. Below the
+  // threshold, render ONE avatar per person, statically (no animation, no duplication).
+  const MARQUEE_MIN=7;
+  if(feed.length>=MARQUEE_MIN){
+    rail.innerHTML='<div class="sc-rail-track">'+cells+cells+'</div>';
+  }else{
+    rail.innerHTML='<div class="sc-rail-track sc-rail-static">'+cells+'</div>';
+  }
 }
 function railAvatarHTML(f){
   const u=f.user||{};
