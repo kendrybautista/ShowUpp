@@ -1276,7 +1276,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.29';
+const APP_VERSION='1.30';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -5423,6 +5423,7 @@ return '<div onclick="openMomentStory(\''+(m.user_id||'')+'\',\''+m.id+'\','+(mi
 }
 let momentsCache={};
 let mvList=[],mvIdx=0,mvTimer=null,mvStart=0,mvMine=false,mvOwner=null,mvRaf=null;
+let mvDur=5000,mvHeld=false,mvHoldTimer=null,mvElapsedAtPause=0,mvSuppressNextClick=false;
 async function openMomentStory(ownerId,startId,mine,ownerNameArg,ownerAvatarArg){
 mvMine=(mine===true||mine==='true');
 mvOwner=ownerId||(me&&me.id);
@@ -5465,6 +5466,7 @@ else{av.style.backgroundImage='';av.textContent=(ownerName||'?')[0].toUpperCase(
 document.getElementById('mvName').textContent=ownerName||'';
 document.getElementById('momentViewSheet').style.display='block';
 buildProgressBars();
+wireMomentHold();
 showMoment(mvIdx);
 }
 function buildProgressBars(){
@@ -5538,6 +5540,7 @@ async function loadMomentViewCount(momentId){
 function startMomentTimer(m,dur){
 clearTimeout(mvTimer);cancelAnimationFrame(mvRaf);
 dur=dur||5000;
+mvDur=dur;
 const vid=document.getElementById('mvVideo');
 if(vid)vid._timerStarted=true;
 mvStart=Date.now();
@@ -5550,6 +5553,66 @@ if(pct<100)mvRaf=requestAnimationFrame(tick);
 }
 mvRaf=requestAnimationFrame(tick);
 mvTimer=setTimeout(()=>mvNext(),dur);
+}
+// Hold-to-pause: press and hold anywhere on the story to pause; release to resume
+// from where it left off (not restart). Mirrors the common daily-update/story pattern.
+function mvPauseHold(){
+if(mvHeld)return;
+mvHeld=true;
+const elapsed=Date.now()-mvStart;
+mvElapsedAtPause=Math.min(elapsed,mvDur);
+clearTimeout(mvTimer);cancelAnimationFrame(mvRaf);
+const vid=document.getElementById('mvVideo');
+if(vid&&!vid.paused)vid.pause();
+}
+function mvResumeHold(){
+if(!mvHeld)return;
+mvHeld=false;
+const remaining=Math.max(300,mvDur-mvElapsedAtPause);
+const vid=document.getElementById('mvVideo');
+if(vid&&vid.paused)vid.play().catch(()=>{});
+mvStart=Date.now()-mvElapsedAtPause;
+const bar=document.getElementById('mvbar'+mvIdx);
+function tick(){
+const elapsed=Date.now()-mvStart;
+const pct=Math.min(100,elapsed/mvDur*100);
+if(bar)bar.style.width=pct+'%';
+if(pct<100)mvRaf=requestAnimationFrame(tick);
+}
+mvRaf=requestAnimationFrame(tick);
+mvTimer=setTimeout(()=>mvNext(),remaining);
+}
+// Wires the hold-to-pause pointer handling once per element (mvBody is a static,
+// reused node, so guard against attaching duplicate listeners on repeated opens).
+function wireMomentHold(){
+const body=document.getElementById('mvBody');
+if(!body||body._holdWired)return;
+body._holdWired=true;
+const HOLD_DELAY=180; // ms — long enough to not fire on a normal quick tap
+const start=()=>{
+clearTimeout(mvHoldTimer);
+mvHoldTimer=setTimeout(()=>{
+mvPauseHold();
+mvSuppressNextClick=true; // the eventual release shouldn't also navigate
+},HOLD_DELAY);
+};
+const cancel=()=>{
+clearTimeout(mvHoldTimer);
+if(mvHeld)mvResumeHold();
+};
+body.addEventListener('pointerdown',start);
+body.addEventListener('pointerup',cancel);
+body.addEventListener('pointercancel',cancel);
+body.addEventListener('pointerleave',cancel);
+// Capture-phase: swallow the click that follows a genuine hold+release so it
+// doesn't also trigger mvPrev()/mvNext() or the image zoom-in handler.
+body.addEventListener('click',(e)=>{
+if(mvSuppressNextClick){
+mvSuppressNextClick=false;
+e.stopPropagation();
+e.preventDefault();
+}
+},true);
 }
 function mvNext(){clearTimeout(mvTimer);cancelAnimationFrame(mvRaf);showMoment(mvIdx+1);}
 function mvPrev(){clearTimeout(mvTimer);cancelAnimationFrame(mvRaf);showMoment(mvIdx-1);}
@@ -8762,7 +8825,8 @@ const box=document.getElementById('adminRoundsList');
 if(!data.rounds.length){box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">No Rounds found.</p>';return;}
 box.innerHTML=data.rounds.map(r=>{
 const host=r.host_name?(esc(r.host_name)+(r.host_username?' (@'+esc(r.host_username)+')':'')):'—';
-return '<div class="friend-row" style="align-items:flex-start"><div style="width:44px;height:44px;border-radius:14px;flex-shrink:0;background:#EEF0FF;display:flex;align-items:center;justify-content:center;font-size:22px">'+(r.emoji||'✨')+'</div><div class="fi"><b>'+esc(r.title)+'</b><span>Hosted by '+host+' · '+r.member_count+' member'+(r.member_count===1?'':'s')+'</span></div><button class="friend-btn" style="background:#FDECEA;color:#d94b3b;flex-shrink:0" onclick="admDeleteRound(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</button></div>';
+const av=r.photo?'<div style="width:44px;height:44px;border-radius:14px;flex-shrink:0;position:relative;overflow:visible;box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)"><img src="'+esc(r.photo)+'" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:14px;display:block"><span style="position:absolute;bottom:-5px;right:-5px;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.75);backdrop-filter:blur(10px) saturate(180%);-webkit-backdrop-filter:blur(10px) saturate(180%);border:1.5px solid rgba(255,255,255,.9);box-shadow:0 2px 8px rgba(40,40,90,.22);display:flex;align-items:center;justify-content:center;font-size:11px;line-height:1">'+(r.emoji||'✨')+'</span></div>':'<div style="width:44px;height:44px;border-radius:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;background:linear-gradient(160deg,#F4F5FF,#E4E6FB);box-shadow:0 3px 10px rgba(70,70,160,.12),inset 0 1px 0 rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.6)">'+(r.emoji||'✨')+'</div>';
+return '<div class="friend-row" style="align-items:flex-start">'+av+'<div class="fi"><b>'+esc(r.title)+'</b><span>Hosted by '+host+' · '+r.member_count+' member'+(r.member_count===1?'':'s')+'</span></div><button class="friend-btn" style="background:#FDECEA;color:#d94b3b;flex-shrink:0" onclick="admDeleteRound(\''+r.id+'\',\''+esc(r.title).replace(/'/g,"")+'\')">Delete</button></div>';
 }).join('');
 }catch(e){toast(e.message);}
 },250);
