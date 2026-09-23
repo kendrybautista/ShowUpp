@@ -85,6 +85,18 @@ await db.exec(`
     PRIMARY KEY (round_id, user_id)
   );
 
+  -- Item 2: reminders for a Round's meeting time. One active reminder per (round,user) —
+  -- setting a new one replaces the old, same as how the app treats RSVP as a single value.
+  CREATE TABLE IF NOT EXISTS round_reminders (
+    id            TEXT PRIMARY KEY,
+    round_id      TEXT NOT NULL,
+    user_id       TEXT NOT NULL,
+    offset_minutes INTEGER NOT NULL,
+    remind_at     BIGINT NOT NULL,
+    sent          INTEGER DEFAULT 0,
+    created_at    BIGINT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS messages (
     id        TEXT PRIMARY KEY,
     round_id  TEXT NOT NULL,
@@ -174,6 +186,9 @@ await db.exec(`
     read       INTEGER DEFAULT 0,
     created_at BIGINT NOT NULL
   );
+  -- Optional small thumbnail (e.g. the actual daily-update photo a reply notification
+  -- refers to) so the notifications panel can show a real preview instead of a generic icon.
+  ALTER TABLE notifications ADD COLUMN IF NOT EXISTS image TEXT;
 
   -- Item 4: Web Push (PWA) subscriptions. One row per device/browser a user opted in on.
   CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -2799,16 +2814,41 @@ function isUserOnline(userId) {
   wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) online = true; });
   return online;
 }
-async function pushNotif(userId, type, title, body, link) {
+async function pushNotif(userId, type, title, body, link, image) {
   try {
-    await db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
-      .run(id(), userId, type, title || '', body || '', link || '', now());
+    await db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,image,read,created_at) VALUES (?,?,?,?,?,?,?,0,?)')
+      .run(id(), userId, type, title || '', body || '', link || '', image || null, now());
     // live ping over WS if they're connected
     const payload = JSON.stringify({ type: 'notify' });
     wss.clients.forEach(c => { if (c.readyState === 1 && c.user && c.user.id === userId) c.send(payload); });
     // Item 4: also fire a Web Push so the device shows a notification + updates the app badge,
     // even when the app is closed or backgrounded.
     sendPush(userId, { title: title || 'ShowUpp', body: body || '', link: link || '', type: type || 'notify' });
+  } catch (e) { /* ignore */ }
+}
+
+// Item 2: fire the "upcoming meeting" push notification once a reminder's remind_at is
+// reached, then mark it sent so it doesn't fire again. Runs every minute — reminders are
+// minute-granular, so this cadence is fine without being wasteful.
+async function checkRoundReminders() {
+  try {
+    const due = await db.prepare(`
+      SELECT rr.id, rr.user_id, rr.round_id, r.title, r.photo, r.event_at
+      FROM round_reminders rr JOIN rounds r ON r.id = rr.round_id
+      WHERE rr.sent = 0 AND rr.remind_at <= ?
+    `).all(now());
+    for (const d of due) {
+      try {
+        const whenStr = d.event_at ? new Date(d.event_at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+        await pushNotif(
+          d.user_id, 'round_reminder',
+          '⏰ ' + (d.title || 'Your Round') + ' is coming up',
+          whenStr ? 'Starts ' + whenStr : "It's almost time to meet up!",
+          'round:' + d.round_id, d.photo || null
+        );
+      } catch (e) {}
+      await db.prepare('UPDATE round_reminders SET sent = 1 WHERE id = ?').run(d.id);
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -4229,6 +4269,35 @@ app.post('/api/rounds/:id/rsvp', requireAuth, async (req, res) => {
   await db.prepare('UPDATE memberships SET rsvp = ? WHERE round_id = ? AND user_id = ?').run(rsvp, req.params.id, req.user.id);
   const counts = await db.prepare(`SELECT rsvp, COUNT(*) AS c FROM memberships WHERE round_id=? AND rsvp IS NOT NULL GROUP BY rsvp`).all(req.params.id);
   res.json({ ok: true, counts });
+});
+
+// Item 2: meeting-time reminders. Only members of the Round may set one, and it's computed
+// as an offset before the Round's event_at, e.g. 60 = "1 hour before". A background job
+// (see checkRoundReminders near boot) fires a push notification once remind_at is reached.
+app.get('/api/rounds/:id/reminder', requireAuth, async (req, res) => {
+  const row = await db.prepare('SELECT id, offset_minutes, remind_at, sent FROM round_reminders WHERE round_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1')
+    .get(req.params.id, req.user.id);
+  res.json({ reminder: row || null });
+});
+app.post('/api/rounds/:id/reminder', requireAuth, async (req, res) => {
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Join the Round first.' });
+  const round = await db.prepare('SELECT event_at FROM rounds WHERE id=?').get(req.params.id);
+  if (!round || !round.event_at) return res.status(400).json({ error: "This Round doesn't have a meeting time set yet." });
+  let offsetMinutes = Number(req.body && req.body.offsetMinutes);
+  if (!Number.isFinite(offsetMinutes) || offsetMinutes < 0) return res.status(400).json({ error: 'Pick a valid reminder time.' });
+  offsetMinutes = Math.min(offsetMinutes, 60 * 24 * 90); // cap at 90 days out, sanity check
+  const remindAt = round.event_at - offsetMinutes * 60000;
+  if (remindAt <= now()) return res.status(400).json({ error: "That reminder time has already passed — pick something closer to now, or sooner than the meeting." });
+  await db.prepare('DELETE FROM round_reminders WHERE round_id=? AND user_id=?').run(req.params.id, req.user.id);
+  const rid = id();
+  await db.prepare('INSERT INTO round_reminders (id,round_id,user_id,offset_minutes,remind_at,sent,created_at) VALUES (?,?,?,?,?,0,?)')
+    .run(rid, req.params.id, req.user.id, offsetMinutes, remindAt, now());
+  res.json({ ok: true, reminder: { id: rid, offset_minutes: offsetMinutes, remind_at: remindAt, sent: 0 } });
+});
+app.delete('/api/rounds/:id/reminder', requireAuth, async (req, res) => {
+  await db.prepare('DELETE FROM round_reminders WHERE round_id=? AND user_id=?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
 });
 
 // ---- Custom categories (user-suggested, moderated) ----
@@ -6274,10 +6343,35 @@ wss.on('connection', (ws) => {
         }
       });
       // notification for members not currently viewing the conversation
+      // Item 1: a reply to a daily update is sent as a DM whose body is prefixed with a
+      // hidden reference token, e.g. "[[moment:ID|OWNERID]] actual text". That token's two
+      // UUIDs alone run ~80 chars, so slicing the raw body to 80 chars for the notification
+      // (as done below for ordinary messages) cut it off mid-UUID and left a garbled,
+      // unreadable fragment in the notifications panel instead of the reply. Detect it here,
+      // against the full untruncated body, and build a clean notification with the actual
+      // reply text plus a thumbnail of the daily update it refers to.
+      let notifBody = kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80);
+      let notifImage = null;
+      if (kind === 'text') {
+        const momentRefMatch = body.match(/^\[\[moment:([^\|]*)\|[^\]]*\]\]\s*([\s\S]*)$/);
+        if (momentRefMatch) {
+          const refMomentId = momentRefMatch[1];
+          const replyText = momentRefMatch[2] || '';
+          notifBody = '☀️ Replied to your daily update' + (replyText ? ': ' + replyText.slice(0, 80) : '');
+          try {
+            const mo = await db.prepare('SELECT photo, media FROM moments WHERE id=?').get(refMomentId);
+            if (mo) {
+              let media = [];
+              try { media = mo.media ? JSON.parse(mo.media) : []; } catch (e) {}
+              notifImage = (media[0] && media[0].data) || mo.photo || null;
+            }
+          } catch (e) {}
+        }
+      }
       for (const uid of members) {
         if (uid === ws.user.id) continue;
         if (!connectedUserIds.has(uid)) {
-          await pushNotif(uid, 'dm', ws.user.name || 'New message', kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80), 'dm:' + msg.convId);
+          await pushNotif(uid, 'dm', ws.user.name || 'New message', notifBody, 'dm:' + msg.convId, notifImage);
         }
       }
     }
@@ -6739,6 +6833,9 @@ initDb()
     // Birthday notifications: check shortly after boot, then once every 24 hours.
     setTimeout(() => { checkBirthdays(); }, 15000);
     setInterval(() => { checkBirthdays(); }, 24 * 60 * 60 * 1000);
+    // Item 2: Round meeting reminders — minute-granular, so check every minute.
+    setTimeout(() => { checkRoundReminders(); }, 10000);
+    setInterval(() => { checkRoundReminders(); }, 60 * 1000);
     // Housekeeping: clear out event-provider cache rows once they're well past their TTL,
     // so the table doesn't grow forever as people search from new locations. (The live
     // event feed itself no longer uses this cache — see the daily ingest job below —
