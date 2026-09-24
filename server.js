@@ -1742,6 +1742,15 @@ async function exportChatToArchive(chatType, chatId) {
   }
 }
 
+// Archived chats are read-only (stage 1 of the retention pipeline). Returns a
+// user-facing error string if the chat can't accept new messages, else null.
+async function archivedReadOnlyError(chatType, chatId) {
+  const table = chatTable(chatType);
+  const row = await db.prepare(`SELECT archived_at FROM ${table} WHERE id = ?`).get(chatId);
+  if (row && row.archived_at) return 'This chat has been archived and is read-only.';
+  return null;
+}
+
 async function hasVerifiedExport(chatType, chatId) {
   const row = await db.prepare(
     "SELECT 1 FROM chat_exports WHERE chat_type = ? AND chat_id = ? AND status = 'ok' LIMIT 1"
@@ -3340,10 +3349,12 @@ app.get('/api/search/messages', requireAuth, async (req, res) => {
 });
 
 app.get('/api/conversations', requireAuth, async (req, res) => {
+  // Archived (stage-1 retention) conversations drop out of the active list — the
+  // chat becomes read-only and reachable only via its direct link, not this feed.
   const convs = await db.prepare(`
     SELECT c.*, cm.last_read FROM conversations c
     JOIN conversation_members cm ON cm.conv_id = c.id
-    WHERE cm.user_id = ? ORDER BY c.created_at DESC
+    WHERE cm.user_id = ? AND c.archived_at IS NULL ORDER BY c.created_at DESC
   `).all(req.user.id);
   const out = [];
   for (const c of convs) {
@@ -3483,6 +3494,8 @@ app.post('/api/conversations/:id/poll', requireAuth, async (req, res) => {
   const convId = req.params.id;
   const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(convId, req.user.id);
   if (!member) return res.status(403).json({ error: 'Not in this conversation.' });
+  const roErr = await archivedReadOnlyError('conversation', convId);
+  if (roErr) return res.status(403).json({ error: roErr });
   const question = String((req.body && req.body.question) || '').trim().slice(0, 200);
   let options = Array.isArray(req.body && req.body.options) ? req.body.options : [];
   // Normalize options: each { text, url? }. Cap count + lengths. Drop blanks.
@@ -4478,6 +4491,7 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
     FROM rounds r LEFT JOIN users u ON u.id = r.host_id
     WHERE COALESCE(r.hidden_from_discovery, 0) = 0
       AND COALESCE(r.on_hold, 0) = 0
+      AND r.archived_at IS NULL
       AND (r.event_at IS NULL OR r.event_at >= ?)
       ${withCountry ? countryClause : ''}
       ${distClause}
@@ -4545,7 +4559,7 @@ app.get('/api/saved-rounds', requireAuth, async (req, res) => {
       EXISTS(SELECT 1 FROM memberships m WHERE m.round_id = r.id AND m.user_id = ?) AS joined,
       1 AS i_saved
     FROM rounds r JOIN saved_rounds sr ON sr.round_id = r.id
-    WHERE sr.user_id = ? ORDER BY sr.created_at DESC
+    WHERE sr.user_id = ? AND r.archived_at IS NULL ORDER BY sr.created_at DESC
   `).all(req.user.id, req.user.id);
   res.json({ rounds });
 });
@@ -6608,6 +6622,8 @@ app.post('/api/rounds/:id/poll', requireAuth, async (req, res) => {
   const rid = req.params.id;
   const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id=? AND user_id=?').get(rid, req.user.id);
   if (!member) return res.status(403).json({ error: 'Join this Round to post a poll.' });
+  const roErr = await archivedReadOnlyError('round', rid);
+  if (roErr) return res.status(403).json({ error: roErr });
   const question = String((req.body && req.body.question) || '').trim().slice(0, 200);
   let options = Array.isArray(req.body && req.body.options) ? req.body.options : [];
   options = options.map(o => (typeof o === 'string') ? { text: o } : (o || {}))
@@ -6748,6 +6764,8 @@ wss.on('connection', (ws) => {
       const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?')
         .get(msg.roundId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not a member' })); return; }
+      const roErr = await archivedReadOnlyError('round', msg.roundId);
+      if (roErr) { ws.send(JSON.stringify({ type: 'error', error: roErr })); return; }
 
       const replyTo = msg.replyTo ? String(msg.replyTo) : null;
       const replyPreview = msg.replyPreview ? String(msg.replyPreview).slice(0, 120) : null;
@@ -6790,6 +6808,8 @@ wss.on('connection', (ws) => {
       if (kind !== 'text' && kind !== 'eventcard' && !mediaUrl) return;
       const member = await db.prepare('SELECT 1 FROM conversation_members WHERE conv_id=? AND user_id=?').get(msg.convId, ws.user.id);
       if (!member) { ws.send(JSON.stringify({ type: 'error', error: 'not in conversation' })); return; }
+      const roErr = await archivedReadOnlyError('conversation', msg.convId);
+      if (roErr) { ws.send(JSON.stringify({ type: 'error', error: roErr })); return; }
 
       const record = { id: id(), conv_id: msg.convId, user_id: ws.user.id, body, kind, media_url: mediaUrl, poll_data: cardData, created_at: now(),
         reply_to: msg.replyTo ? String(msg.replyTo) : null,
