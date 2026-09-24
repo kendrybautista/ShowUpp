@@ -5221,13 +5221,103 @@ function normalizePredictHQEvent(e, label) {
     country: (addr.country_code || '').toUpperCase() || null
   };
 }
+// ---- Generic "bring your own API" provider (item 1) -----------------------------
+// A manager may have an events API that isn't one of the providers above. Rather than
+// asking them to describe its schema, this fetcher tries to make sense of whatever
+// reasonably-shaped JSON comes back: it looks for an events array under a handful of
+// common wrapper keys, then reads each event's fields under a handful of common names.
+// Setup is identical to Ticketmaster from the manager's side: account label + endpoint
+// URL (+ a key, only if their API requires one) — nothing else to configure.
+const GENERIC_API_ARRAY_KEYS = ['events', 'data', 'items', 'results', 'records', 'entries'];
+function findGenericEventArray(json) {
+  if (Array.isArray(json)) return json;
+  if (!json || typeof json !== 'object') return [];
+  for (const k of GENERIC_API_ARRAY_KEYS) {
+    if (Array.isArray(json[k])) return json[k];
+    if (json[k] && typeof json[k] === 'object') {
+      for (const k2 of GENERIC_API_ARRAY_KEYS) { if (Array.isArray(json[k][k2])) return json[k][k2]; }
+    }
+  }
+  for (const k of Object.keys(json)) { if (Array.isArray(json[k])) return json[k]; } // last resort
+  return [];
+}
+function pickField(obj, keys) {
+  for (const k of keys) { if (obj[k] != null && obj[k] !== '') return obj[k]; }
+  return null;
+}
+function parseGenericDate(raw) {
+  if (raw == null) return null;
+  const ms = (typeof raw === 'number') ? (raw > 2e10 ? raw : raw * 1000) : Date.parse(raw);
+  return isNaN(ms) ? null : ms;
+}
+function normalizeGenericApiEvent(e, s) {
+  if (!e || typeof e !== 'object') return null;
+  const name = decodeEntities(String(pickField(e, ['title', 'name', 'event_name', 'headline', 'summary']) || '').trim());
+  if (!name) return null;
+  const starts = parseGenericDate(pickField(e, ['starts_at', 'start_date', 'startDate', 'start_time', 'startTime', 'start', 'date', 'datetime', 'when']));
+  const ends = parseGenericDate(pickField(e, ['ends_at', 'end_date', 'endDate', 'end_time', 'endTime', 'end']));
+  const desc = decodeEntities(stripTags(String(pickField(e, ['description', 'details', 'desc', 'about', 'summary_long']) || '')));
+  const link = pickField(e, ['url', 'link', 'event_url', 'permalink', 'website']);
+  const photo = pickField(e, ['image', 'photo', 'image_url', 'thumbnail', 'cover', 'picture']);
+  const place = pickField(e, ['venue', 'location', 'place', 'venue_name', 'location_name']);
+  const city = pickField(e, ['city', 'locality']);
+  const state = pickField(e, ['state', 'region']);
+  const country = pickField(e, ['country', 'country_code']);
+  const lat = parseFloat(pickField(e, ['lat', 'latitude']));
+  const lng = parseFloat(pickField(e, ['lng', 'lon', 'longitude']));
+  const idSrc = pickField(e, ['id', 'event_id', 'uuid', 'slug']) || (name + '|' + (starts || ''));
+  const hash = require('crypto').createHash('md5').update(String(idSrc)).digest('hex').slice(0, 16);
+  const { category, emoji } = classifyByText(name + ' ' + desc);
+  return {
+    id: 'api_' + s.id + '_' + hash, source: 'custom_api', source_id: hash,
+    title: name.slice(0, 200), description: desc.slice(0, 1000), category, emoji,
+    photo: (typeof photo === 'string') ? photo : null,
+    link: (typeof link === 'string') ? link : null,
+    place: String(place || '').slice(0, 200), city: String(city || '').slice(0, 100), state: String(state || '').slice(0, 100),
+    lat: (!isNaN(lat) ? lat : null), lng: (!isNaN(lng) ? lng : null),
+    starts_at: starts, ends_at: ends,
+    source_label: s.label || 'Custom API',
+    country: normalizeCountryCode(typeof country === 'string' ? country : null)
+  };
+}
+async function fetchGenericApiEvents(s) {
+  const url = (s.url || '').trim();
+  if (!url) return { events: [], error: 'No API endpoint URL set.' };
+  const headers = { 'Accept': 'application/json' };
+  if (s.api_key && String(s.api_key).trim()) {
+    // Send the key under the two most common auth conventions so most APIs "just work"
+    // without the manager needing to know or specify which scheme theirs expects.
+    headers['Authorization'] = 'Bearer ' + String(s.api_key).trim();
+    headers['x-api-key'] = String(s.api_key).trim();
+  }
+  let r;
+  try { r = await fetch(url, { headers }); }
+  catch (err) { return { events: [], error: 'Could not reach the API: ' + err.message }; }
+  if (!r.ok) {
+    let d = r.statusText; try { const b = await r.json(); d = (b && (b.error || b.message)) || d; } catch (e) {}
+    return { events: [], error: `API returned HTTP ${r.status}${d ? ' — ' + d : ''}` };
+  }
+  let json;
+  try { json = await r.json(); }
+  catch (err) { return { events: [], error: 'API did not return valid JSON.' }; }
+  const arr = findGenericEventArray(json);
+  if (!arr.length) return { events: [], error: 'No recognizable list of events in the API response.' };
+  const events = arr.map(e => normalizeGenericApiEvent(e, s)).filter(Boolean);
+  return { events, error: events.length ? null : 'Found an events list, but could not read any titles from it.' };
+}
 const EVENT_PROVIDERS = {
   ticketmaster: async (s) => fetchTicketmaster(s.api_key, s.label),
   // Paste-a-key location-based providers. Each takes the key the manager enters and
   // returns normalized events. See the fetchers below.
   seatgeek: async (s) => fetchSeatGeek(s.api_key, s.label),
   eventbrite: async (s) => fetchEventbrite(s.api_key, s.label),
-  predicthq: async (s) => fetchPredictHQ(s.api_key, s.label)
+  predicthq: async (s) => fetchPredictHQ(s.api_key, s.label),
+  // Item 1 — a manager's own/arbitrary event API. Works the same as the providers above
+  // from the manager's side: paste an account label + the API's endpoint URL (and a key,
+  // only if that API needs one) and it pulls automatically from then on. See
+  // fetchGenericApiEvents below for how it makes sense of whatever JSON shape comes back
+  // without requiring the manager to describe the schema.
+  custom_api: async (s) => fetchGenericApiEvents(s)
 };
 // Providers that read a plain website (no API). Kept separate because they take a URL
 // instead of an API key and share one scraping implementation.
@@ -6284,6 +6374,7 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
   for (const r of rows) {
     const isWebsite = (r.provider === WEBSITE_PROVIDER);
+    const isCustomApi = (r.provider === 'custom_api');
     const isManual = !EVENT_PROVIDERS[r.provider] && !isWebsite;
     // Website events are namespaced per source ('website:<id>'); API providers use the
     // provider key as the event source. Count against the right key.
@@ -6295,7 +6386,7 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
     masked.push({
       ...r,
       api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
-      isManual, isWebsite,
+      isManual, isWebsite, isCustomApi,
       live_events: evRow ? Number(evRow.n) || 0 : 0,
       last_event_added: evRow && evRow.latest ? Number(evRow.latest) : null
     });
@@ -6311,14 +6402,18 @@ app.post('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res)
   if (!provider || !String(provider).trim()) return res.status(400).json({ error: 'Give the source a provider name.' });
   const providerKey = String(provider).trim().slice(0, 60);
   const isWebsite = (providerKey === WEBSITE_PROVIDER);
+  // Item 1 — a manager's own API is registered (has an auto-fetcher) but, unlike
+  // Ticketmaster/SeatGeek/etc., takes an endpoint URL instead of being purely key-based,
+  // and the key itself is optional (only some APIs require one).
+  const isCustomApi = (providerKey === 'custom_api');
   const isRegistered = !!EVENT_PROVIDERS[providerKey];
-  if (isRegistered && (!apiKey || !String(apiKey).trim())) {
+  if (isRegistered && !isCustomApi && (!apiKey || !String(apiKey).trim())) {
     return res.status(400).json({ error: 'An API key is required for this provider.' });
   }
   let cleanUrl = null;
-  if (isWebsite) {
+  if (isWebsite || isCustomApi) {
     cleanUrl = String(url || '').trim();
-    if (!/^https?:\/\/.+/i.test(cleanUrl)) return res.status(400).json({ error: 'Enter the full events-page URL (starting with https://).' });
+    if (!/^https?:\/\/.+/i.test(cleanUrl)) return res.status(400).json({ error: isCustomApi ? 'Enter the full API endpoint URL (starting with https://).' : 'Enter the full events-page URL (starting with https://).' });
     cleanUrl = cleanUrl.slice(0, 500);
   }
   const row = {
@@ -6352,8 +6447,8 @@ app.post('/api/admin/event-sources/:id/update', requireAuth, requireAdmin, async
   } else {
     await db.prepare('UPDATE event_sources SET label = ? WHERE id = ?').run(newLabel, req.params.id);
   }
-  // Website sources can update their events-page URL.
-  if (src.provider === WEBSITE_PROVIDER && url !== undefined) {
+  // Website and custom-API sources can update their URL (events page / endpoint).
+  if ((src.provider === WEBSITE_PROVIDER || src.provider === 'custom_api') && url !== undefined) {
     const cleanUrl = String(url || '').trim();
     if (cleanUrl && !/^https?:\/\/.+/i.test(cleanUrl)) return res.status(400).json({ error: 'Enter a full URL starting with https://.' });
     await db.prepare('UPDATE event_sources SET url = ? WHERE id = ?').run(cleanUrl.slice(0, 500) || null, req.params.id);
