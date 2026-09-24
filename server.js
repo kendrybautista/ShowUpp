@@ -2065,7 +2065,10 @@ app.post('/api/users/:id/gallery-reactions', requireAuth, async (req, res) => {
       // Notify the owner that a friend reacted (best-effort)
       try {
         const me2 = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
-        await pushNotif(ownerId, 'gallery', (me2 ? me2.name : 'A friend') + (reaction === 'love' ? ' loved' : ' liked') + ' one of your pictures 💛');
+        const reactedPic = gallery[picIndex];
+        const picPreview = reactedPic ? (reactedPic.data || reactedPic.url || reactedPic) : null;
+        await pushNotif(ownerId, 'gallery', (me2 ? me2.name : 'A friend') + (reaction === 'love' ? ' loved' : ' liked') + ' one of your pictures 💛',
+          'Tap to see which one', 'profile:' + req.user.id, (typeof picPreview === 'string' ? picPreview : null));
       } catch (e) {}
     }
   }
@@ -6882,11 +6885,32 @@ wss.on('connection', (ws) => {
           reply_to: replyTo, reply_preview: replyPreview, kind, media_url: mediaUrl, ephemeral: !!ephemeral, reactions: {}
         }
       });
+      const connectedRoundUserIds = new Set();
       wss.clients.forEach((client) => {
         if (client.readyState === 1 && client.rooms && client.rooms.has(msg.roundId)) {
           client.send(outbound);
+          if (client.user) connectedRoundUserIds.add(client.user.id);
         }
       });
+      // Round chat messages previously sent no notification at all to members who
+      // weren't already looking at the chat — fixed to match the DM behavior above,
+      // including a real preview rather than a bare "New message".
+      let roundNotifBody;
+      if (kind === 'gif') roundNotifBody = 'Sent a GIF';
+      else if (kind === 'image') roundNotifBody = body ? ('📷 ' + body.slice(0, 80)) : '📷 Photo';
+      else if (kind === 'video') roundNotifBody = body ? ('🎥 ' + body.slice(0, 80)) : '🎥 Video';
+      else roundNotifBody = body.slice(0, 80);
+      try {
+        const roundMembers = (await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(msg.roundId)).map(r => r.user_id);
+        const roundInfo = await db.prepare('SELECT title, photo FROM rounds WHERE id = ?').get(msg.roundId);
+        for (const uid of roundMembers) {
+          if (uid === ws.user.id) continue;
+          if (!connectedRoundUserIds.has(uid)) {
+            await pushNotif(uid, 'round', (ws.user.name || 'New message') + ' · ' + (roundInfo ? roundInfo.title : 'Round'),
+              roundNotifBody, 'round:' + msg.roundId, (roundInfo && roundInfo.photo) || null);
+          }
+        }
+      } catch (e) {}
     }
 
     // Direct / group conversation messages
@@ -6934,7 +6958,14 @@ wss.on('connection', (ws) => {
       // unreadable fragment in the notifications panel instead of the reply. Detect it here,
       // against the full untruncated body, and build a clean notification with the actual
       // reply text plus a thumbnail of the daily update it refers to.
-      let notifBody = kind === 'gif' ? 'Sent a GIF' : body.slice(0, 80);
+      // Every notification needs a real preview — a bare "New message" with an empty
+      // body isn't one. Text messages preview their own text; media messages fall
+      // back to a labeled icon when there's no caption to show instead.
+      let notifBody;
+      if (kind === 'gif') notifBody = 'Sent a GIF';
+      else if (kind === 'image') notifBody = body ? ('📷 ' + body.slice(0, 80)) : '📷 Photo';
+      else if (kind === 'video') notifBody = body ? ('🎥 ' + body.slice(0, 80)) : '🎥 Video';
+      else notifBody = body.slice(0, 80);
       let notifImage = null;
       if (kind === 'text') {
         const momentRefMatch = body.match(/^\[\[moment:([^\|]*)\|[^\]]*\]\]\s*([\s\S]*)$/);
