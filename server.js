@@ -4328,7 +4328,7 @@ app.get('/api/admin/rounds', requireAuth, requireAdmin, async (req, res) => {
   let rows;
   if (q) {
     rows = await db.prepare(`
-      SELECT r.id, r.title, r.emoji, r.photo, r.created_at, host.name AS host_name, host.username AS host_username,
+      SELECT r.id, r.title, r.emoji, r.photo, r.created_at, r.archived_at, host.name AS host_name, host.username AS host_username,
         (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count
       FROM rounds r LEFT JOIN users host ON host.id = r.host_id
       WHERE LOWER(r.title) LIKE ? OR LOWER(host.name) LIKE ? OR LOWER(host.username) LIKE ?
@@ -4336,7 +4336,7 @@ app.get('/api/admin/rounds', requireAuth, requireAdmin, async (req, res) => {
     `).all('%' + q + '%', '%' + q + '%', '%' + q + '%');
   } else {
     rows = await db.prepare(`
-      SELECT r.id, r.title, r.emoji, r.photo, r.created_at, host.name AS host_name, host.username AS host_username,
+      SELECT r.id, r.title, r.emoji, r.photo, r.created_at, r.archived_at, host.name AS host_name, host.username AS host_username,
         (SELECT COUNT(*) FROM memberships m WHERE m.round_id = r.id) AS member_count
       FROM rounds r LEFT JOIN users host ON host.id = r.host_id
       ORDER BY r.created_at DESC LIMIT 200
