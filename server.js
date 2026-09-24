@@ -594,6 +594,77 @@ await db.exec(`
   -- range and a lat/lng bounding box, so both need to be fast on a large table.
   CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
   CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(lat, lng);
+
+  -- ===== Chat data retention (archive -> export -> prune -> delete) =====
+  -- Every chat surface (event Rounds, ongoing Rounds, DMs/groups via conversations,
+  -- and daily updates/moments) gets archived out of the active list on its trigger,
+  -- exported to cold storage, later pruned of media, and finally deleted per-item
+  -- 5 years after creation — unless a legal hold is on the chat.
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS archived_at BIGINT;
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived_at BIGINT;
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+  ALTER TABLE moments ADD COLUMN IF NOT EXISTS archived_at BIGINT;
+
+  -- A flag/table a manager can set on any chat (round | conversation | moment). While
+  -- released_at IS NULL the hold is active: it blocks pruning and permanent deletion
+  -- for that chat, overriding the 5-year clock entirely. Export still happens
+  -- automatically regardless of hold status — the hold only affects what happens after.
+  CREATE TABLE IF NOT EXISTS legal_holds (
+    id          TEXT PRIMARY KEY,
+    chat_type   TEXT NOT NULL,       -- 'round' | 'conversation' | 'moment'
+    chat_id     TEXT NOT NULL,
+    reason      TEXT,
+    case_ref    TEXT,
+    set_by      TEXT NOT NULL,
+    created_at  BIGINT NOT NULL,
+    released_at BIGINT,
+    released_by TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_holds_chat ON legal_holds(chat_type, chat_id);
+
+  -- Job A: one row per export attempt. status is 'ok' once the cold-storage write is
+  -- verified, or 'failed' (the nightly sweep retries failed/missing exports).
+  CREATE TABLE IF NOT EXISTS chat_exports (
+    id           TEXT PRIMARY KEY,
+    chat_type    TEXT NOT NULL,
+    chat_id      TEXT NOT NULL,
+    exported_at  BIGINT NOT NULL,
+    storage_key  TEXT NOT NULL,
+    status       TEXT NOT NULL,      -- 'ok' | 'failed'
+    error        TEXT,
+    item_count   INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_exports_chat ON chat_exports(chat_type, chat_id);
+
+  -- Cold storage itself: the full transcript + media, copied as-is, separate from the
+  -- systems that power the live app. In place of a real object-storage bucket, this
+  -- table plays that role — access is restricted to the manager retrieval tool below.
+  CREATE TABLE IF NOT EXISTS chat_archive_cold (
+    id          TEXT PRIMARY KEY,
+    chat_type   TEXT NOT NULL,
+    chat_id     TEXT NOT NULL,
+    export_id   TEXT NOT NULL,
+    payload     TEXT NOT NULL,       -- JSON: { chat metadata, participants, items[] }
+    created_at  BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_archive_cold_chat ON chat_archive_cold(chat_type, chat_id);
+
+  -- Manager retrieval tool access log: every read of archived data, logged.
+  CREATE TABLE IF NOT EXISTS archive_access_log (
+    id          TEXT PRIMARY KEY,
+    manager_id  TEXT NOT NULL,
+    chat_type   TEXT,
+    chat_id     TEXT,
+    action      TEXT NOT NULL,       -- 'search' | 'export'
+    reason      TEXT,
+    accessed_at BIGINT NOT NULL
+  );
+
+  -- Account deletion (soft-delete): removes profile/access immediately, but content
+  -- already sent keeps its own 5-year clock, so we never cascade-delete messages here.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_notice TEXT;
 `);
 
   // Seed the admin/owner account
@@ -1563,24 +1634,316 @@ app.post('/api/me/avatar/remove', requireAuth, async (req, res) => {
   res.json({ user: publicUser(updated) });
 });
 
-// Permanently delete the current user's account and all their data
+// Delete the current user's account: removes their profile and access immediately.
+// Content they've already sent (messages, photos, videos) is NOT cascade-deleted —
+// it keeps its own 5-year retention clock per message/photo/video, same as if the
+// account were still active. Rounds they solely host are archived (not deleted) so
+// other members' chat history survives; membership/friendships are cleared since
+// those are the user's own connections, not shared content.
 app.post('/api/me/delete', requireAuth, async (req, res) => {
   const uid = req.user.id;
   const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
+  const notice = await computeAccountDeletionNotice(uid);
   await logAccountEvent('deleted_by_user', full);
-  await db.prepare('DELETE FROM messages WHERE user_id = ?').run(uid);
+
+  // Archive (don't delete) any Round this user solely hosts, so members' chat
+  // history and the 5-year clock on their messages are unaffected.
+  const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(uid);
+  for (const r of hosted) await archiveChat('round', r.id, 'host_deleted_account');
+
   await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(uid);
   await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(uid, uid);
-  // Rounds they host: remove the round and its data
-  const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(uid);
-  for (const r of hosted) {
-    await db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
-    await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
-    await db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
-  }
-  await db.prepare('DELETE FROM users WHERE id = ?').run(uid);
-  res.json({ ok: true });
+
+  // Scrub the profile/access; keep the row (and its id) so existing messages/rounds
+  // still reference a valid user_id, exactly as retained content requires.
+  await db.prepare(`UPDATE users SET
+      email = ?, pass_hash = ?, name = 'Deleted user', username = NULL, avatar = NULL,
+      bio = NULL, gallery = NULL, city = NULL, origin = NULL, interests = '[]',
+      phone = NULL, lat = NULL, lng = NULL, deleted_at = ?, deletion_notice = ?
+    WHERE id = ?`)
+    .run(`deleted-${uid}@showupp.invalid`, crypto.randomUUID(), now(), JSON.stringify(notice), uid);
+
+  res.json({ ok: true, deletionDate: notice.deletionDate, notice: notice.notice });
 });
+
+// ================================================================================
+// ---- Chat data retention: archive -> export -> prune -> delete ----
+// See the implementation brief. Three chat surfaces are covered generically via
+// chatType 'round' | 'conversation' | 'moment'; each has its own trigger + item
+// tables, but the archive/export/prune/delete + legal-hold machinery is shared.
+// ================================================================================
+const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+const RETENTION_YEARS = 5;
+const ROUND_GRACE_MS = 7 * 24 * 60 * 60 * 1000;      // event Rounds: 7 days after the event
+const INACTIVITY_MS = 90 * 24 * 60 * 60 * 1000;       // ongoing Rounds / DMs / groups: 90 days idle
+
+function chatTable(chatType) {
+  if (chatType === 'round') return 'rounds';
+  if (chatType === 'conversation') return 'conversations';
+  if (chatType === 'moment') return 'moments';
+  throw new Error('Unknown chatType: ' + chatType);
+}
+
+async function isUnderLegalHold(chatType, chatId) {
+  const row = await db.prepare(
+    'SELECT 1 FROM legal_holds WHERE chat_type = ? AND chat_id = ? AND released_at IS NULL'
+  ).get(chatType, chatId);
+  return !!row;
+}
+
+// Manager sets a hold on any chat. While active it blocks pruning + deletion for
+// that chat, overriding the 5-year clock entirely. Export is unaffected.
+async function setLegalHold(chatType, chatId, reason, caseRef, managerId) {
+  await db.prepare(
+    'INSERT INTO legal_holds (id,chat_type,chat_id,reason,case_ref,set_by,created_at) VALUES (?,?,?,?,?,?,?)'
+  ).run(id(), chatType, chatId, reason || '', caseRef || '', managerId, now());
+}
+async function releaseLegalHold(chatType, chatId, managerId) {
+  await db.prepare(
+    'UPDATE legal_holds SET released_at = ?, released_by = ? WHERE chat_type = ? AND chat_id = ? AND released_at IS NULL'
+  ).run(now(), managerId, chatType, chatId);
+}
+
+// Gathers the full transcript + media for a chat, as-is, and writes it to cold
+// storage. Verifies the write by reading it back. Logs the export either way.
+async function exportChatToArchive(chatType, chatId) {
+  const expId = id();
+  const storageKey = `${chatType}/${chatId}/${expId}`;
+  try {
+    let items = [];
+    let meta = {};
+    if (chatType === 'round') {
+      meta = await db.prepare('SELECT id,title,host_id,created_at,event_at FROM rounds WHERE id = ?').get(chatId) || {};
+      items = await db.prepare('SELECT id,user_id,body,kind,media_url,reactions,created_at,deleted,edited FROM messages WHERE round_id = ? ORDER BY created_at ASC').all(chatId);
+    } else if (chatType === 'conversation') {
+      meta = await db.prepare('SELECT id,is_group,title,created_by,created_at FROM conversations WHERE id = ?').get(chatId) || {};
+      const members = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id = ?').all(chatId);
+      meta.participants = members.map(m => m.user_id);
+      items = await db.prepare('SELECT id,user_id,body,kind,media_url,reactions,created_at,deleted,edited FROM dm_messages WHERE conv_id = ? ORDER BY created_at ASC').all(chatId);
+    } else if (chatType === 'moment') {
+      const m = await db.prepare('SELECT id,user_id,text,photo,media,visibility,created_at,expires_at FROM moments WHERE id = ?').get(chatId);
+      meta = m || {};
+      items = m ? [m] : [];
+    }
+    const payload = JSON.stringify({ chatType, chatId, meta, items, exportedAt: now() });
+    await db.prepare('INSERT INTO chat_archive_cold (id,chat_type,chat_id,export_id,payload,created_at) VALUES (?,?,?,?,?,?)')
+      .run(id(), chatType, chatId, expId, payload, now());
+    // Verify the write succeeded.
+    const check = await db.prepare('SELECT 1 FROM chat_archive_cold WHERE export_id = ?').get(expId);
+    if (!check) throw new Error('cold-storage write did not verify');
+    await db.prepare('INSERT INTO chat_exports (id,chat_type,chat_id,exported_at,storage_key,status,item_count) VALUES (?,?,?,?,?,?,?)')
+      .run(expId, chatType, chatId, now(), storageKey, 'ok', items.length);
+    return { ok: true, exportId: expId };
+  } catch (e) {
+    await db.prepare('INSERT INTO chat_exports (id,chat_type,chat_id,exported_at,storage_key,status,error) VALUES (?,?,?,?,?,?,?)')
+      .run(expId, chatType, chatId, now(), storageKey, 'failed', String(e.message || e));
+    console.error(`[retention] export failed for ${chatType}:${chatId}:`, e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+async function hasVerifiedExport(chatType, chatId) {
+  const row = await db.prepare(
+    "SELECT 1 FROM chat_exports WHERE chat_type = ? AND chat_id = ? AND status = 'ok' LIMIT 1"
+  ).get(chatType, chatId);
+  return !!row;
+}
+
+// Stage 1: flip status, drop from the active list, one notification, export
+// immediately. Idempotent — archiving an already-archived chat is a no-op.
+async function archiveChat(chatType, chatId, reason) {
+  const table = chatTable(chatType);
+  const idCol = 'id';
+  const row = await db.prepare(`SELECT archived_at FROM ${table} WHERE ${idCol} = ?`).get(chatId);
+  if (!row || row.archived_at) return;
+  if (chatType === 'moment') {
+    await db.prepare('UPDATE moments SET archived_at = ? WHERE id = ?').run(now(), chatId);
+  } else {
+    await db.prepare(`UPDATE ${table} SET archived_at = ?, archive_reason = ? WHERE id = ?`).run(now(), reason, chatId);
+  }
+  // Notify affected users, once.
+  try {
+    let userIds = [];
+    if (chatType === 'round') {
+      const members = await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(chatId);
+      userIds = members.map(m => m.user_id);
+    } else if (chatType === 'conversation') {
+      const members = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id = ?').all(chatId);
+      userIds = members.map(m => m.user_id);
+    } else if (chatType === 'moment') {
+      const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(chatId);
+      userIds = m ? [m.user_id] : [];
+    }
+    for (const uid of userIds) {
+      await db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
+        .run(id(), uid, 'chat_archived', 'A chat was archived',
+          'This chat has been moved to your archive — it stays readable but no longer active.', '', now());
+    }
+  } catch (e) { console.error('[retention] archive notification failed:', e.message); }
+  // Export immediately, per the brief ("nightly sweep, or immediately for explicit deletions" —
+  // exporting right away on archive keeps a chat's window of un-exported time minimal).
+  await exportChatToArchive(chatType, chatId);
+}
+
+// Job A (nightly sweep): find chats matching each type's archive trigger and
+// archive them; also retry any archived chat whose export never verified.
+async function runArchiveSweep() {
+  const t = now();
+  try {
+    // Event Rounds: event date passed + 7-day grace period.
+    const eventRounds = await db.prepare(
+      'SELECT id FROM rounds WHERE archived_at IS NULL AND event_at IS NOT NULL AND event_at < ?'
+    ).all(t - ROUND_GRACE_MS);
+    for (const r of eventRounds) await archiveChat('round', r.id, 'event_passed');
+
+    // Ongoing (non-dated) Rounds: 90 days of inactivity, or no members left.
+    const ongoingRounds = await db.prepare(
+      'SELECT id FROM rounds WHERE archived_at IS NULL AND event_at IS NULL'
+    ).all();
+    for (const r of ongoingRounds) {
+      const last = await db.prepare('SELECT MAX(created_at) AS m FROM messages WHERE round_id = ?').get(r.id);
+      const lastActivity = (last && last.m) ? Number(last.m) : null;
+      const memberCount = Number((await db.prepare('SELECT COUNT(*) c FROM memberships WHERE round_id = ?').get(r.id)).c) || 0;
+      const created = (await db.prepare('SELECT created_at FROM rounds WHERE id = ?').get(r.id)).created_at;
+      const idleSince = lastActivity || created;
+      if (memberCount === 0) await archiveChat('round', r.id, 'all_members_left');
+      else if (idleSince < t - INACTIVITY_MS) await archiveChat('round', r.id, 'inactive_90d');
+    }
+
+    // DMs / group chats: 90 days of inactivity (all participants), or empty.
+    const convos = await db.prepare('SELECT id FROM conversations WHERE archived_at IS NULL').all();
+    for (const c of convos) {
+      const last = await db.prepare('SELECT MAX(created_at) AS m FROM dm_messages WHERE conv_id = ?').get(c.id);
+      const lastActivity = (last && last.m) ? Number(last.m) : null;
+      const memberCount = Number((await db.prepare('SELECT COUNT(*) c FROM conversation_members WHERE conv_id = ?').get(c.id)).c) || 0;
+      const created = (await db.prepare('SELECT created_at FROM conversations WHERE id = ?').get(c.id)).created_at;
+      const idleSince = lastActivity || created;
+      if (memberCount === 0) await archiveChat('conversation', c.id, 'all_participants_left');
+      else if (idleSince < t - INACTIVITY_MS) await archiveChat('conversation', c.id, 'inactive_90d');
+    }
+
+    // Daily updates/moments: on their existing 24h expiry, export instead of purge.
+    const expiredMoments = await db.prepare('SELECT id FROM moments WHERE archived_at IS NULL AND expires_at < ?').all(t);
+    for (const m of expiredMoments) await archiveChat('moment', m.id, 'expired_24h');
+
+    // Retry exports that never verified.
+    const failed = await db.prepare(
+      "SELECT DISTINCT chat_type, chat_id FROM chat_exports e WHERE status = 'failed' AND NOT EXISTS (SELECT 1 FROM chat_exports ok WHERE ok.chat_type=e.chat_type AND ok.chat_id=e.chat_id AND ok.status='ok')"
+    ).all();
+    for (const f of failed) await exportChatToArchive(f.chat_type, f.chat_id);
+  } catch (e) { console.error('[retention] archive sweep failed:', e.message); }
+}
+
+// Job B (prune, run later + separately from export): for archived chats with a
+// confirmed export and no legal hold, strip media from the live database — keep
+// text so "Past Rounds" etc. stays readable in-app.
+async function runPruneSweep() {
+  try {
+    for (const [chatType, table, itemTable, fkCol, mediaCols] of [
+      ['round', 'rounds', 'messages', 'round_id', ['media_url']],
+      ['conversation', 'conversations', 'dm_messages', 'conv_id', ['media_url']],
+      ['moment', 'moments', null, null, null]
+    ]) {
+      if (chatType === 'moment') {
+        const rows = await db.prepare('SELECT id FROM moments WHERE archived_at IS NOT NULL AND (photo IS NOT NULL OR media IS NOT NULL)').all();
+        for (const r of rows) {
+          if (await isUnderLegalHold('moment', r.id)) continue;
+          if (!(await hasVerifiedExport('moment', r.id))) continue;
+          await db.prepare("UPDATE moments SET photo = NULL, media = '[]' WHERE id = ?").run(r.id);
+        }
+        continue;
+      }
+      const rows = await db.prepare(`SELECT id FROM ${table} WHERE archived_at IS NOT NULL`).all();
+      for (const r of rows) {
+        if (await isUnderLegalHold(chatType, r.id)) continue;
+        if (!(await hasVerifiedExport(chatType, r.id))) continue;
+        await db.prepare(`UPDATE ${itemTable} SET ${mediaCols[0]} = NULL WHERE ${fkCol} = ? AND ${mediaCols[0]} IS NOT NULL`).run(r.id);
+      }
+    }
+  } catch (e) { console.error('[retention] prune sweep failed:', e.message); }
+}
+
+// Job: permanent deletion. Each individual piece of content is deleted 5 years
+// after it was created (not 5 years after archiving), unless its chat is under
+// an active legal hold — which overrides the clock entirely.
+async function runDeletionSweep() {
+  const cutoff = now() - RETENTION_YEARS * YEAR_MS;
+  try {
+    const oldMsgs = await db.prepare('SELECT id, round_id FROM messages WHERE created_at < ?').all(cutoff);
+    for (const m of oldMsgs) {
+      if (await isUnderLegalHold('round', m.round_id)) continue;
+      await db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
+    }
+    const oldDms = await db.prepare('SELECT id, conv_id FROM dm_messages WHERE created_at < ?').all(cutoff);
+    for (const m of oldDms) {
+      if (await isUnderLegalHold('conversation', m.conv_id)) continue;
+      await db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
+    }
+    const oldMoments = await db.prepare('SELECT id FROM moments WHERE created_at < ?').all(cutoff);
+    for (const m of oldMoments) {
+      if (await isUnderLegalHold('moment', m.id)) continue;
+      await db.prepare('DELETE FROM moments WHERE id = ?').run(m.id);
+    }
+    // Cold-storage copies follow the same per-item clock, chat by chat: once every
+    // live item under a chat's archive is gone, and it's not on hold, drop the copy.
+    const coldChats = await db.prepare('SELECT DISTINCT chat_type, chat_id FROM chat_archive_cold').all();
+    for (const c of coldChats) {
+      if (await isUnderLegalHold(c.chat_type, c.chat_id)) continue;
+      const oldestStillLive = c.chat_type === 'round'
+        ? await db.prepare('SELECT 1 FROM messages WHERE round_id = ? AND created_at >= ? LIMIT 1').get(c.chat_id, cutoff)
+        : c.chat_type === 'conversation'
+        ? await db.prepare('SELECT 1 FROM dm_messages WHERE conv_id = ? AND created_at >= ? LIMIT 1').get(c.chat_id, cutoff)
+        : await db.prepare('SELECT 1 FROM moments WHERE id = ? AND created_at >= ? LIMIT 1').get(c.chat_id, cutoff);
+      if (!oldestStillLive) {
+        await db.prepare('DELETE FROM chat_archive_cold WHERE chat_type = ? AND chat_id = ?').run(c.chat_type, c.chat_id);
+        await db.prepare('DELETE FROM chat_exports WHERE chat_type = ? AND chat_id = ?').run(c.chat_type, c.chat_id);
+      }
+    }
+  } catch (e) { console.error('[retention] deletion sweep failed:', e.message); }
+}
+
+// Explicit deletion (host deletes a Round, someone deletes a conversation, etc.)
+// triggers export immediately rather than waiting for the nightly sweep. Call this
+// from any "delete this Round / clear this chat" flow before the row is removed.
+async function archiveForExplicitDeletion(chatType, chatId) {
+  await archiveChat(chatType, chatId, 'explicit_deletion');
+}
+
+// Account deletion: the user's profile/access is removed immediately, but content
+// they've already sent keeps its own 5-year clock (deletion does not shorten it).
+// Returns the notice text plus the computed date, so the caller can show/return it
+// before the account row is scrubbed.
+async function computeAccountDeletionNotice(userId) {
+  const lastMsg = await db.prepare('SELECT MAX(created_at) m FROM messages WHERE user_id = ?').get(userId);
+  const lastDm = await db.prepare('SELECT MAX(created_at) m FROM dm_messages WHERE user_id = ?').get(userId);
+  const lastMoment = await db.prepare('SELECT MAX(created_at) m FROM moments WHERE user_id = ?').get(userId);
+  const timestamps = [lastMsg, lastDm, lastMoment].map(r => r && r.m ? Number(r.m) : 0).filter(Boolean);
+  const lastActivity = timestamps.length ? Math.max(...timestamps) : now();
+  const deletionDate = lastActivity + RETENTION_YEARS * YEAR_MS;
+
+  // Does any of this user's content sit under an active legal hold? Check the chats
+  // they've participated in.
+  let underHold = false;
+  const myRoundMsgs = await db.prepare('SELECT DISTINCT round_id FROM messages WHERE user_id = ?').all(userId);
+  for (const r of myRoundMsgs) { if (await isUnderLegalHold('round', r.round_id)) { underHold = true; break; } }
+  if (!underHold) {
+    const myConvos = await db.prepare('SELECT DISTINCT conv_id FROM dm_messages WHERE user_id = ?').all(userId);
+    for (const c of myConvos) { if (await isUnderLegalHold('conversation', c.conv_id)) { underHold = true; break; } }
+  }
+  if (!underHold) {
+    const myMoments = await db.prepare('SELECT id FROM moments WHERE user_id = ?').all(userId);
+    for (const m of myMoments) { if (await isUnderLegalHold('moment', m.id)) { underHold = true; break; } }
+  }
+
+  const deletionDateStr = new Date(deletionDate).toISOString().slice(0, 10);
+  let notice = timestamps.length
+    ? `You sent your most recent message or post on ${new Date(lastActivity).toISOString().slice(0, 10)}; under our data retention policy, the last of your data will be permanently deleted by ${deletionDateStr}.`
+    : `You don't have any retained messages or posts, so there's nothing left on our 5-year retention clock.`;
+  if (underHold) {
+    notice += ' Some of your content is part of an active legal hold, which may delay its deletion beyond that date.';
+  }
+  return { lastActivity: timestamps.length ? lastActivity : null, deletionDate: timestamps.length ? deletionDate : null, underHold, notice };
+}
 
 // ---- Friends, requests, blocks, reports ----
 // Helper: are two users friends (either direction stored both ways on accept)
@@ -2394,7 +2757,12 @@ app.post('/api/crew/create', requireAuth, async (req, res) => {
 const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
 const MOMENT_DAILY_MAX = 10;
 async function pruneMoments() {
-  await db.prepare('DELETE FROM moments WHERE expires_at < ?').run(now());
+  // Moments now feed into the retention pipeline instead of being purged outright
+  // at expiry: archive (export to cold storage) any that just expired. The actual
+  // row stays — readable via its owner's history — until the prune/deletion sweeps
+  // strip its media and, 5 years on, remove it entirely.
+  const expired = await db.prepare('SELECT id FROM moments WHERE archived_at IS NULL AND expires_at < ?').all(now());
+  for (const m of expired) await archiveChat('moment', m.id, 'expired_24h');
 }
 // Create a moment
 app.post('/api/moments', requireAuth, async (req, res) => {
@@ -3276,6 +3644,8 @@ app.post('/api/conversations/:id/delete', requireAuth, async (req, res) => {
   // If nobody is left in the conversation, delete it and its messages entirely
   const remaining = Number((await db.prepare('SELECT COUNT(*) AS c FROM conversation_members WHERE conv_id=?').get(convId)).c) || 0;
   if (remaining === 0) {
+    // Explicit deletion (last participant gone): export to cold storage immediately.
+    await archiveForExplicitDeletion('conversation', convId);
     await db.prepare('DELETE FROM dm_messages WHERE conv_id=?').run(convId);
     await db.prepare('DELETE FROM conversations WHERE id=?').run(convId);
   }
@@ -3646,22 +4016,116 @@ app.post('/api/admin/delete', requireAuth, requireAdmin, async (req, res) => {
   const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_admin) return res.status(400).json({ error: 'You cannot delete an admin account.' });
+  const notice = await computeAccountDeletionNotice(userId);
   await logAccountEvent('deleted_by_admin', target);
-  await db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
+  // Same retention-preserving soft delete as self-service deletion: content already
+  // sent keeps its own 5-year clock rather than being cascade-deleted here.
+  const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(userId);
+  for (const r of hosted) await archiveChat('round', r.id, 'host_deleted_by_admin');
   await db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
   await db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
   await db.prepare('DELETE FROM friend_requests WHERE from_id = ? OR to_id = ?').run(userId, userId);
   await db.prepare('DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?').run(userId, userId);
-  {
-    const hosted = await db.prepare('SELECT id FROM rounds WHERE host_id = ?').all(userId);
-    for (const r of hosted) {
-      await db.prepare('DELETE FROM messages WHERE round_id = ?').run(r.id);
-      await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(r.id);
-      await db.prepare('DELETE FROM rounds WHERE id = ?').run(r.id);
-    }
+  await db.prepare(`UPDATE users SET
+      email = ?, pass_hash = ?, name = 'Deleted user', username = NULL, avatar = NULL,
+      bio = NULL, gallery = NULL, city = NULL, origin = NULL, interests = '[]',
+      phone = NULL, lat = NULL, lng = NULL, deleted_at = ?, deletion_notice = ?
+    WHERE id = ?`)
+    .run(`deleted-${userId}@showupp.invalid`, crypto.randomUUID(), now(), JSON.stringify(notice), userId);
+  res.json({ ok: true, deletionDate: notice.deletionDate });
+});
+
+// ---- Retention: legal holds + manager archive retrieval tool ----
+// Set/release a legal hold on any chat (round | conversation | moment). While
+// active, it blocks pruning and permanent deletion for that chat.
+app.post('/api/admin/legal-hold', requireAuth, requireAdmin, async (req, res) => {
+  const { chatType, chatId, reason, caseRef } = req.body || {};
+  if (!['round', 'conversation', 'moment'].includes(chatType) || !chatId) {
+    return res.status(400).json({ error: 'chatType and chatId are required.' });
   }
-  await db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  await setLegalHold(chatType, chatId, reason, caseRef, req.user.id);
   res.json({ ok: true });
+});
+app.post('/api/admin/legal-hold/release', requireAuth, requireAdmin, async (req, res) => {
+  const { chatType, chatId } = req.body || {};
+  if (!['round', 'conversation', 'moment'].includes(chatType) || !chatId) {
+    return res.status(400).json({ error: 'chatType and chatId are required.' });
+  }
+  await releaseLegalHold(chatType, chatId, req.user.id);
+  res.json({ ok: true });
+});
+app.get('/api/admin/legal-holds', requireAuth, requireAdmin, async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM legal_holds ORDER BY created_at DESC LIMIT 200').all();
+  res.json({ holds: rows });
+});
+
+// Manager retrieval tool: search archived transcripts by chat ID, date range, or
+// participant. Every access is logged (who, when, reason/case reference).
+app.get('/api/admin/archive/search', requireAuth, requireAdmin, async (req, res) => {
+  const { chatId, chatType, from, to, participant, reason } = req.query || {};
+  let rows;
+  if (chatId) {
+    rows = await db.prepare('SELECT * FROM chat_archive_cold WHERE chat_id = ? ORDER BY created_at DESC').all(chatId);
+  } else {
+    rows = await db.prepare(
+      'SELECT * FROM chat_archive_cold WHERE (? IS NULL OR chat_type = ?) ORDER BY created_at DESC LIMIT 500'
+    ).all(chatType || null, chatType || null);
+  }
+  const fromTs = from ? Date.parse(from) : null;
+  const toTs = to ? Date.parse(to) : null;
+  const results = [];
+  for (const row of rows) {
+    let parsed;
+    try { parsed = JSON.parse(row.payload); } catch { continue; }
+    if (fromTs && parsed.meta && parsed.meta.created_at && Number(parsed.meta.created_at) < fromTs) continue;
+    if (toTs && parsed.meta && parsed.meta.created_at && Number(parsed.meta.created_at) > toTs) continue;
+    if (participant) {
+      const inParticipants = (parsed.meta.participants || []).includes(participant);
+      const inItems = (parsed.items || []).some(it => it.user_id === participant);
+      const isHost = parsed.meta.host_id === participant || parsed.meta.created_by === participant || parsed.meta.user_id === participant;
+      if (!inParticipants && !inItems && !isHost) continue;
+    }
+    results.push({ chatType: row.chat_type, chatId: row.chat_id, exportId: row.export_id, createdAt: row.created_at, itemCount: (parsed.items || []).length });
+  }
+  await db.prepare('INSERT INTO archive_access_log (id,manager_id,chat_type,chat_id,action,reason,accessed_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id(), req.user.id, chatType || null, chatId || null, 'search', reason || '', now());
+  res.json({ results });
+});
+
+// Export one archived chat's full transcript, as JSON or a simple text/PDF-like
+// document. Every access is logged.
+app.get('/api/admin/archive/:chatType/:chatId/export', requireAuth, requireAdmin, async (req, res) => {
+  const { chatType, chatId } = req.params;
+  const format = (req.query.format || 'json').toLowerCase();
+  const reason = req.query.reason || '';
+  const row = await db.prepare('SELECT * FROM chat_archive_cold WHERE chat_type = ? AND chat_id = ? ORDER BY created_at DESC LIMIT 1').get(chatType, chatId);
+  if (!row) return res.status(404).json({ error: 'No archived export found for this chat.' });
+  await db.prepare('INSERT INTO archive_access_log (id,manager_id,chat_type,chat_id,action,reason,accessed_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id(), req.user.id, chatType, chatId, 'export', reason, now());
+  const parsed = JSON.parse(row.payload);
+  if (format === 'json') {
+    res.setHeader('Content-Disposition', `attachment; filename="${chatType}-${chatId}.json"`);
+    return res.json(parsed);
+  }
+  // Plain-text transcript export (readable, printable — stands in for a PDF here).
+  const lines = [];
+  lines.push(`ShowUpp archived chat export`);
+  lines.push(`Chat type: ${chatType}`);
+  lines.push(`Chat ID: ${chatId}`);
+  lines.push(`Exported: ${new Date(row.created_at).toISOString()}`);
+  lines.push('');
+  for (const it of (parsed.items || [])) {
+    const ts = it.created_at ? new Date(Number(it.created_at)).toISOString() : '';
+    lines.push(`[${ts}] ${it.user_id}: ${it.deleted ? '(deleted)' : (it.body || it.text || '')}`);
+  }
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${chatType}-${chatId}.txt"`);
+  res.send(lines.join('\n'));
+});
+
+app.get('/api/admin/archive/access-log', requireAuth, requireAdmin, async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM archive_access_log ORDER BY accessed_at DESC LIMIT 300').all();
+  res.json({ log: rows });
 });
 
 // View reports (admin only) — includes moderation status/verdict, an "incomplete for
@@ -3914,6 +4378,9 @@ app.post('/api/admin/rounds/:id/delete', requireAuth, requireAdmin, async (req, 
   const { reason } = req.body || {};
   const round = await db.prepare('SELECT id, title, host_id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
+  // Explicit deletion: export the transcript to cold storage immediately before the
+  // live rows are removed, so it stays retrievable on its normal 5-year clock.
+  await archiveForExplicitDeletion('round', req.params.id);
   await db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
   await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
   await db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
@@ -5979,6 +6446,8 @@ app.post('/api/rounds/:id/delete', requireAuth, async (req, res) => {
   const round = await db.prepare('SELECT host_id FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
   if (round.host_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can delete this Round.' });
+  // Explicit deletion: export to cold storage immediately, same as the admin path.
+  await archiveForExplicitDeletion('round', req.params.id);
   await db.prepare('DELETE FROM messages WHERE round_id = ?').run(req.params.id);
   await db.prepare('DELETE FROM memberships WHERE round_id = ?').run(req.params.id);
   await db.prepare('DELETE FROM rounds WHERE id = ?').run(req.params.id);
@@ -6852,6 +7321,19 @@ initDb()
     // Only the scheduled 24h interval forces a guaranteed fresh pull.
     setTimeout(() => { ingestExternalEvents().catch(err => console.log('[events] initial ingest failed:', err.message)); }, 20000);
     setInterval(() => { ingestExternalEvents({ force: true }).catch(err => console.log('[events] scheduled ingest failed:', err.message)); }, 24 * 60 * 60 * 1000);
+
+    // ---- Chat data retention pipeline ----
+    // Job (archive + Job A/export): nightly sweep finds newly-eligible chats,
+    // archives them, and exports them to cold storage; also retries failed exports.
+    setTimeout(() => { runArchiveSweep().catch(err => console.log('[retention] initial archive sweep failed:', err.message)); }, 30000);
+    setInterval(() => { runArchiveSweep().catch(err => console.log('[retention] archive sweep failed:', err.message)); }, 24 * 60 * 60 * 1000);
+    // Job B (prune): a later, separate run — only touches chats with a confirmed
+    // export, so it never races the export step above.
+    setTimeout(() => { runPruneSweep().catch(err => console.log('[retention] initial prune sweep failed:', err.message)); }, 6 * 60 * 60 * 1000);
+    setInterval(() => { runPruneSweep().catch(err => console.log('[retention] prune sweep failed:', err.message)); }, 24 * 60 * 60 * 1000);
+    // Permanent deletion: per-item 5-year clock, checked once a day.
+    setTimeout(() => { runDeletionSweep().catch(err => console.log('[retention] initial deletion sweep failed:', err.message)); }, 12 * 60 * 60 * 1000);
+    setInterval(() => { runDeletionSweep().catch(err => console.log('[retention] deletion sweep failed:', err.message)); }, 24 * 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to initialize the database. Is DATABASE_URL correct?');
