@@ -5054,6 +5054,21 @@ function ticketmasterCountries() {
   return TM_DEFAULT_COUNTRIES;
 }
 
+// Which country the country loop starts from, rotated by one every call. US (first in
+// TM_DEFAULT_COUNTRIES) always wins any request-quota contention when the list is walked
+// in the same order every run — whichever country was cut off by a 429 today is right
+// back at the same disadvantaged spot tomorrow. Rotating the start means that if quota
+// ever does run out mid-run, it's a different country's turn to be last, not always the
+// same ones — coverage evens out across runs instead of the tail of the list being
+// permanently starved.
+let tmCountryRotationOffset = 0;
+function rotateCountries(ccs) {
+  if (!ccs.length) return ccs;
+  const offset = tmCountryRotationOffset % ccs.length;
+  tmCountryRotationOffset = (tmCountryRotationOffset + 1) % ccs.length;
+  return ccs.slice(offset).concat(ccs.slice(0, offset));
+}
+
 // Pages through Ticketmaster's catalog for EACH configured country, in weekly slices
 // (rather than one huge date range) so a single slow/failed page never loses the whole
 // window, and caps pages per slice so one ingest run can't run away against the API's
@@ -5062,7 +5077,7 @@ async function fetchTicketmaster(apiKey, label, countries) {
   if (!apiKey) return { events: [], error: 'No API key configured for this source.' };
   const events = [];
   let lastError = null, callCount = 0;
-  const ccs = (countries && countries.length) ? countries : ticketmasterCountries();
+  const ccs = rotateCountries((countries && countries.length) ? countries.slice() : ticketmasterCountries());
   // Item 6 fix — the OLD code sliced the whole year into 53 weekly windows and paged each
   // one per country (≈1,500 API calls per run), which torched the 5,000/day quota after a
   // couple of manager actions. Ticketmaster lets us request the entire display window in a
@@ -5076,6 +5091,12 @@ async function fetchTicketmaster(apiKey, label, countries) {
   const MAX_CALLS_PER_RUN = 300;
   const startDateTime = new Date(Date.now() - 6 * 3600 * 1000).toISOString().split('.')[0] + 'Z';
   const endDateTime = new Date(Date.now() + EVENT_INGEST_WINDOW_DAYS * 86400000).toISOString().split('.')[0] + 'Z';
+  // A 429 on one country used to abort the ENTIRE run via `break outer`, silently dropping
+  // every country still left in the list for that run (not just the one that hit the
+  // limit) — that's what made whole regions vanish. Now a 429 just moves on to the next
+  // country, same as any other per-country error; skippedByRateLimit is tracked so it's
+  // at least visible in the logs which countries, if any, got cut short by quota.
+  const skippedByRateLimit = [];
   outer:
   for (const cc of ccs) {
     for (let page = 0; page < MAX_PAGES_PER_COUNTRY; page++) {
@@ -5088,10 +5109,8 @@ async function fetchTicketmaster(apiKey, label, countries) {
         let detail = r.statusText;
         try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
         lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''} (country ${cc})`;
-        // A 429 (rate/quota) means stop the entire run immediately — hammering further
-        // only digs the quota hole deeper.
-        if (r.status === 429) break outer;
-        break; // otherwise just move to the next country
+        if (r.status === 429) { skippedByRateLimit.push(cc); await new Promise(res => setTimeout(res, 250)); }
+        break; // move to the next country either way
       }
       const data = await r.json();
       const evs = (data._embedded && data._embedded.events) || [];
@@ -5101,7 +5120,8 @@ async function fetchTicketmaster(apiKey, label, countries) {
       await new Promise(res => setTimeout(res, 250)); // be gentle on the rate limit
     }
   }
-  console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries, got ${events.length} events`);
+  console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries, got ${events.length} events`
+    + (skippedByRateLimit.length ? `; rate-limited on: ${skippedByRateLimit.join(', ')}` : ''));
   return { events, error: events.length === 0 ? lastError : null };
 }
 // Back-compat alias — older callers referenced fetchTicketmasterUS.
@@ -6041,6 +6061,7 @@ async function ingestOneSource(s, opts) {
   }
 }
 let eventIngestRunning = false;
+let envTicketmasterLastIngestAt = 0; // cooldown tracker for the env-var Ticketmaster fallback (no event_sources row to store it on)
 async function ingestExternalEvents(opts) {
   opts = opts || {};
   if (eventIngestRunning) return; // don't overlap a manual "refresh now" with the scheduled run
@@ -6054,13 +6075,25 @@ async function ingestExternalEvents(opts) {
       await ingestOneSource(s, opts); // cooldown-gated unless opts.force
     }
     // env-var fallback key, for deployments that set it instead of using the Manager panel.
-    // Only runs on a forced/scheduled sweep, never on incidental triggers, and is itself a
-    // single fetchTicketmaster call set (now quota-safe).
+    // This path has no event_sources row of its own, so it never got the same 20h cooldown
+    // manager-configured sources get — every call to ingestExternalEvents (including the
+    // admin's "Refresh now" button, which passes no force flag) used to kick off a full
+    // worldwide Ticketmaster pull with zero rate limiting between them. Repeated refreshes
+    // plus the daily scheduled run could burn through the day's quota fast, which is exactly
+    // what tends to produce the 429s the rotation/skip logic above has to deal with. Gated
+    // the same way ingestOneSource gates manager sources now: skip unless forced or the
+    // cooldown has elapsed.
     if (process.env.TICKETMASTER_API_KEY && !sources.some(s => s.provider === 'ticketmaster')) {
-      try {
-        const result = await fetchTicketmaster(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
-        for (const e of (result.events || [])) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
-      } catch (err) {}
+      const ENV_TM_COOLDOWN_MS = 20 * 3600 * 1000;
+      if (opts.force || (now() - envTicketmasterLastIngestAt) >= ENV_TM_COOLDOWN_MS) {
+        envTicketmasterLastIngestAt = now();
+        try {
+          const result = await fetchTicketmaster(process.env.TICKETMASTER_API_KEY, 'Ticketmaster');
+          for (const e of (result.events || [])) { if (!e.starts_at || e.starts_at <= cutoff) await upsertExternalEvent(e); }
+        } catch (err) {}
+      } else {
+        console.log(`[events] skipping env-var Ticketmaster fallback — ingested ${Math.round((now()-envTicketmasterLastIngestAt)/3600000)}h ago, within cooldown`);
+      }
     }
     // Trim: drop non-community events that are now in the past or have fallen outside
     // the display window. IMPORTANT: keep events with NO date (starts_at IS NULL) — many
