@@ -1277,7 +1277,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.40';
+const APP_VERSION='1.41';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2095,7 +2095,11 @@ tog.checked=(getLocPref()==='granted');
 }
 async function loadHome(){
 try{
-const data=await api('/api/rounds');
+// Fetch worldwide (country filtering happens client-side in filteredRounds(), driven
+// by currentCountryFilter) — without international=1 here the server would silently
+// default to the user's own profile country, which is what made "Reset filters" only
+// ever show rounds/events from home turf no matter what the filter panel said.
+const data=await api('/api/rounds?international=1');
 allRounds=data.rounds;
 const mine=(me&&me.interests&&me.interests.length)?me.interests:[];
 const emap=Object.fromEntries(CATEGORIES.map(c=>[c.n,c.e]));
@@ -2853,6 +2857,7 @@ const miles=maxDistKm*0.621371;
 q+='&maxDistance='+encodeURIComponent(miles.toFixed(2));
 }
 if(currentCountryFilter)q+='&country='+encodeURIComponent(codeForCountry(currentCountryFilter));
+else q+='&international=1'; // no country picked in the filter panel — show every country, not just the user's default one
 if(currentStateFilter)q+='&state='+encodeURIComponent(currentStateFilter);
 if(currentCityFilter)q+='&city='+encodeURIComponent(currentCityFilter);
 if(currentProviderFilter)q+='&source='+encodeURIComponent(currentProviderFilter);
