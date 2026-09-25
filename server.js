@@ -742,6 +742,23 @@ await db.exec(`
 // --- Helpers ---
 const id = () => crypto.randomUUID();
 const now = () => Date.now();
+// Runs fn over items with at most `limit` in flight at once. Used to speed up event-source
+// ingest (Ticketmaster refresh, etc.) where hundreds/thousands of independent DB writes or
+// HTTP calls were previously awaited one at a time — that serial round-tripping, not any
+// single slow step, is what made a "Refresh now" feel like it took forever.
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const cur = idx++;
+      results[cur] = await fn(items[cur], cur);
+    }
+  }
+  const n = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: n }, worker));
+  return results;
+}
 
 function makeToken(user) {
   return jwt.sign({ uid: user.id, name: user.name }, JWT_SECRET, { expiresIn: '30d' });
@@ -5097,29 +5114,36 @@ async function fetchTicketmaster(apiKey, label, countries) {
   // country, same as any other per-country error; skippedByRateLimit is tracked so it's
   // at least visible in the logs which countries, if any, got cut short by quota.
   const skippedByRateLimit = [];
-  outer:
-  for (const cc of ccs) {
+  // The countries used to be walked one at a time — with ~44 in the default list, that's
+  // ~44+ sequential network round trips to Ticketmaster before a manual "Refresh now" ever
+  // got a response, even though every country's pages are independent of every other
+  // country's. Fetching several countries at once (bounded, so it stays gentle on the API
+  // and the shared call cap below) cuts that wall-clock time roughly in proportion to the
+  // concurrency. Pages *within* one country still run in order, same as before, since page
+  // N's totalPages comes from page N-1's response.
+  const COUNTRY_CONCURRENCY = 8;
+  await mapLimit(ccs, COUNTRY_CONCURRENCY, async (cc) => {
     for (let page = 0; page < MAX_PAGES_PER_COUNTRY; page++) {
-      if (callCount >= MAX_CALLS_PER_RUN) { lastError = lastError || 'Reached per-run request cap.'; break outer; }
+      if (callCount >= MAX_CALLS_PER_RUN) { lastError = lastError || 'Reached per-run request cap.'; return; }
       const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=${encodeURIComponent(cc)}&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
       let r;
       callCount++;
-      try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; break; }
+      try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; return; }
       if (!r.ok) {
         let detail = r.statusText;
         try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
         lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''} (country ${cc})`;
         if (r.status === 429) { skippedByRateLimit.push(cc); await new Promise(res => setTimeout(res, 250)); }
-        break; // move to the next country either way
+        return; // move to the next country either way
       }
       const data = await r.json();
       const evs = (data._embedded && data._embedded.events) || [];
       for (const e of evs) events.push(normalizeTicketmasterEvent(e, label, cc));
       const totalPages = (data.page && data.page.totalPages) || 1;
-      if (page + 1 >= totalPages || evs.length === 0) break;
+      if (page + 1 >= totalPages || evs.length === 0) return;
       await new Promise(res => setTimeout(res, 250)); // be gentle on the rate limit
     }
-  }
+  });
   console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries, got ${events.length} events`
     + (skippedByRateLimit.length ? `; rate-limited on: ${skippedByRateLimit.join(', ')}` : ''));
   return { events, error: events.length === 0 ? lastError : null };
@@ -6017,11 +6041,23 @@ async function ingestOneSource(s, opts) {
     // instead of at 0,0 (the Atlantic "null island").
     const srcDefaultLoc = (s.default_location || '').trim();
     const srcDefaultCC = (s.default_country || '').trim();
+    // Split into "already has coordinates" (the common case for Ticketmaster, which
+    // supplies venue lat/lng for nearly every event) vs. "needs geocoding". The first
+    // group has no external API to be gentle with, so its DB upserts — previously awaited
+    // one at a time, which for a large source meant thousands of sequential network round
+    // trips to the database — now run several at once. The geocoding group is untouched:
+    // still one lookup at a time, same 60-per-run cap, same pacing against the geocoder's
+    // own rate limit.
+    const withCoords = [], needsGeo = [];
     for (const e of evs) {
       if (e.starts_at && e.starts_at > cutoff) continue; // outside the display window — skip storing it
       // If the event has no location of its own, inherit the source's default location.
       if (!e.place && !e.city && !e.state && srcDefaultLoc) { e.place = srcDefaultLoc; if (!e.country && srcDefaultCC) e.country = srcDefaultCC; }
-      if ((e.lat == null || e.lng == null) && geocoded < 60) {
+      if (e.lat == null || e.lng == null) needsGeo.push(e); else withCoords.push(e);
+    }
+    await mapLimit(withCoords, 20, async (e) => { await upsertExternalEvent(e); kept++; });
+    for (const e of needsGeo) {
+      if (geocoded < 60) {
         // Prefer the full address string the scraper extracted from the site (venue,
         // street, city, region, country); fall back to piecing parts together. This is
         // what lets events geocode to their REAL location worldwide with no manual setup.
