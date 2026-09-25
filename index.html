@@ -1277,7 +1277,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.41';
+const APP_VERSION='1.42';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -4427,7 +4427,7 @@ if(c.is_group&&c.avatar){av='<div class="cav" style="overflow:hidden;padding:0">
 else if(c.is_group){av='<div class="cav">👥</div>';}
 else if(c.avatar){const ini=(c.title||'?')[0].toUpperCase();av='<div class="cav" style="overflow:hidden;padding:0"><img src="'+esc(c.avatar)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.parentNode.textContent=\''+ini+'\'"></div>';}
 else{av='<div class="cav">'+(c.title||'?')[0].toUpperCase()+'</div>';}
-const prev=c.last?((c.last.mine?'You: ':'')+esc(c.last.body||'')):'Tap to start chatting';
+const prev=c.last?((c.last.mine?'You: ':'')+friendlyNotifBody(c.last.body||'')):'Tap to start chatting';
 const unread=c.unread?'<span style="background:var(--coral);color:#fff;border-radius:10px;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px">'+c.unread+'</span>':'';
 const star='<span onclick="toggleChatFav(\''+c.id+'\',event)" style="margin-left:6px;cursor:pointer;font-size:14px;color:'+(isChatFav(c.id)?'#F59E0B':'#c8c8d4')+'">'+(isChatFav(c.id)?'★':'☆')+'</span>';
 const tag=c.is_group?'<span class="chat-kind-tag">Group</span>':'<span class="chat-kind-tag">Friend</span>';
@@ -4725,9 +4725,9 @@ try{
 const data=await api('/api/search/messages?q='+encodeURIComponent(q));
 const roundHits=(data.rounds||[]).map(h=>{
 const av=h.round_photo?'<div class="cav cav-photo"><img src="'+esc(h.round_photo)+'" alt="" loading="lazy"><span class="cc-emoji-badge">'+(h.round_emoji||'✨')+'</span></div>':'<div class="cav">'+(h.round_emoji||'✨')+'</div>';
-return '<div class="chat-item" onclick="openThreadById(\''+h.round_id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(h.round_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>';
+return '<div class="chat-item" onclick="openThreadById(\''+h.round_id+'\')">'+av+'<div class="ct"><div class="cn"><b>'+esc(h.round_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+friendlyNotifBody(h.body||'')+'</div></div></div>';
 });
-const dmHits=(data.conversations||[]).map(h=>'<div class="chat-item" onclick="openDm(\''+h.conv_id+'\')"><div class="cav">💬</div><div class="ct"><div class="cn"><b>'+esc(h.conv_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+esc(h.body)+'</div></div></div>');
+const dmHits=(data.conversations||[]).map(h=>'<div class="chat-item" onclick="openDm(\''+h.conv_id+'\')"><div class="cav">💬</div><div class="ct"><div class="cn"><b>'+esc(h.conv_title)+'</b></div><div class="prev">'+esc(h.sender)+': '+friendlyNotifBody(h.body||'')+'</div></div></div>');
 const all=roundHits.concat(dmHits);
 if(!all.length){box.innerHTML='';return;}
 box.innerHTML='<h4 style="margin:14px 22px 8px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">'+t('Messages')+'</h4>'+all.join('');
@@ -6693,6 +6693,7 @@ function friendlyNotifBody(body){
   if(/^\[\[locstop\]\]/.test(body))return '📍 Location sharing ended';
   if(/^\[\[contact:/.test(body)){const m=body.match(/\[\[contact:[^\|]*\|([^\|]*)\|/);return '👤 Shared a contact'+(m&&m[1]?' — '+esc(m[1]):'');}
   if(/^\[\[moment:/.test(body)){const rest=body.replace(/^\[\[moment:[^\]]*\]\]\s*/,'');return '☀️ Replied to a daily update'+(rest?': '+esc(rest.slice(0,60)):'');}
+  if(/^\[\[wrapup:/.test(body)){const m=body.match(/^\[\[wrapup:[^\|]*\|([^\]]*)\]\]$/);let title='';try{title=m?decodeURIComponent(m[1]):'';}catch(e){}return '🎉 '+(title||'Round')+' wrapped';}
   if(/^📄 /.test(body))return esc(body); // document label already friendly
   return esc(body);
 }

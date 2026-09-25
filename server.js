@@ -3441,7 +3441,10 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
       id: c.id, is_group: !!c.is_group, title,
       members: others,
       avatar: c.is_group ? (c.avatar || '') : (others[0] ? (others[0].avatar || '') : ''),
-      last: last ? { body: last.kind === 'gif' ? '📷 GIF' : last.body, created_at: last.created_at, mine: last.user_id === req.user.id } : null,
+      last: last ? { body: last.kind === 'gif' ? '📷 GIF'
+          : last.kind === 'image' ? (last.body || '📷 Photo')
+          : last.kind === 'video' ? (last.body || '🎥 Video')
+          : last.body, created_at: last.created_at, mine: last.user_id === req.user.id } : null,
       unread
     });
   }
