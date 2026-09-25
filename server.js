@@ -665,6 +665,16 @@ await db.exec(`
   -- already sent keeps its own 5-year clock, so we never cascade-delete messages here.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_notice TEXT;
+
+  -- ===== Event wrap-up: posted to a Round's chat once its event_at passes =====
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS wrapup_sent_at BIGINT;
+  CREATE TABLE IF NOT EXISTS round_wrapup_votes (
+    round_id   TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    vote       TEXT NOT NULL, -- 'up' | 'down'
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (round_id, user_id)
+  );
 `);
 
   // Seed the admin/owner account
@@ -1770,23 +1780,35 @@ async function archiveChat(chatType, chatId, reason) {
   } else {
     await db.prepare(`UPDATE ${table} SET archived_at = ?, archive_reason = ? WHERE id = ?`).run(now(), reason, chatId);
   }
-  // Notify affected users, once.
+  // Notify affected users, once — with an actual recap instead of a bare "archived"
+  // notice, so archiving reads as a keepsake rather than a disappearance.
   try {
     let userIds = [];
+    let notifTitle = 'A chat was archived';
+    let notifBody = 'This chat has been moved to your archive — it stays readable but no longer active.';
     if (chatType === 'round') {
       const members = await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(chatId);
       userIds = members.map(m => m.user_id);
+      const r = await db.prepare('SELECT title FROM rounds WHERE id = ?').get(chatId);
+      const c = await db.prepare("SELECT COUNT(*) c, COUNT(*) FILTER (WHERE kind IN ('image','video') AND media_url IS NOT NULL) media FROM messages WHERE round_id = ? AND deleted = 0").get(chatId);
+      notifTitle = '📦 ' + (r ? r.title : 'A Round') + ' was archived';
+      notifBody = `${Number(c && c.c) || 0} messages` + ((c && Number(c.media)) ? `, ${c.media} photos/videos` : '') + ' — tap to revisit anytime.';
     } else if (chatType === 'conversation') {
       const members = await db.prepare('SELECT user_id FROM conversation_members WHERE conv_id = ?').all(chatId);
       userIds = members.map(m => m.user_id);
+      const conv = await db.prepare('SELECT title FROM conversations WHERE id = ?').get(chatId);
+      const c = await db.prepare("SELECT COUNT(*) c, COUNT(*) FILTER (WHERE kind IN ('image','video','gif') AND media_url IS NOT NULL) media FROM dm_messages WHERE conv_id = ? AND deleted = 0").get(chatId);
+      notifTitle = '📦 ' + ((conv && conv.title) ? conv.title : 'A chat') + ' was archived';
+      notifBody = `${Number(c && c.c) || 0} messages` + ((c && Number(c.media)) ? `, ${c.media} photos/videos` : '') + ' — tap to revisit anytime.';
     } else if (chatType === 'moment') {
       const m = await db.prepare('SELECT user_id FROM moments WHERE id = ?').get(chatId);
       userIds = m ? [m.user_id] : [];
+      notifTitle = 'Your daily update was archived';
+      notifBody = "It's saved to your history — tap to look back anytime.";
     }
     for (const uid of userIds) {
       await db.prepare('INSERT INTO notifications (id,user_id,type,title,body,link,read,created_at) VALUES (?,?,?,?,?,?,0,?)')
-        .run(id(), uid, 'chat_archived', 'A chat was archived',
-          'This chat has been moved to your archive — it stays readable but no longer active.', '', now());
+        .run(id(), uid, 'chat_archived', notifTitle, notifBody, '', now());
     }
   } catch (e) { console.error('[retention] archive notification failed:', e.message); }
   // Export immediately, per the brief ("nightly sweep, or immediately for explicit deletions" —
@@ -1909,6 +1931,52 @@ async function runDeletionSweep() {
       }
     }
   } catch (e) { console.error('[retention] deletion sweep failed:', e.message); }
+}
+
+// ---- Event wrap-up: posted to a Round's chat once its event_at passes ----
+const SYSTEM_USER_ID = 'sys_showupp';
+async function ensureSystemUser() {
+  await db.prepare('INSERT INTO users (id,email,pass_hash,name,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
+    .run(SYSTEM_USER_ID, 'system@showupp.invalid', crypto.randomUUID(), 'ShowUpp', now());
+}
+async function postRoundSystemMessage(roundId, body) {
+  const record = { id: id(), round_id: roundId, user_id: SYSTEM_USER_ID, body, created_at: now() };
+  await db.prepare('INSERT INTO messages (id,round_id,user_id,body,created_at,kind) VALUES (?,?,?,?,?,?)')
+    .run(record.id, record.round_id, record.user_id, record.body, record.created_at, 'text');
+  try {
+    const outbound = JSON.stringify({
+      type: 'message', roundId,
+      message: { id: record.id, body, created_at: record.created_at, user_id: SYSTEM_USER_ID, sender: 'ShowUpp',
+        reply_to: null, reply_preview: null, kind: 'text', media_url: null, ephemeral: false, reactions: {} }
+    });
+    wss.clients.forEach(c => { if (c.readyState === 1 && c.rooms && c.rooms.has(roundId)) c.send(outbound); });
+  } catch (e) { /* no connected clients yet at boot — fine */ }
+  return record;
+}
+
+// Fires once, right when a Round's event_at passes (well before the 7-day archive
+// grace period even starts) — while everyone's still likely to have the chat top of
+// mind. Posts a wrap-up card with a one-tap reaction and a one-tap "plan another".
+async function runEventWrapupSweep() {
+  try {
+    await ensureSystemUser();
+    const due = await db.prepare(
+      'SELECT id, title, photo FROM rounds WHERE event_at IS NOT NULL AND event_at <= ? AND wrapup_sent_at IS NULL'
+    ).all(now());
+    for (const r of due) {
+      const memberCount = Number((await db.prepare('SELECT COUNT(*) c FROM memberships WHERE round_id = ?').get(r.id)).c) || 0;
+      if (memberCount > 0) {
+        const cardBody = `[[wrapup:${r.id}|${encodeURIComponent(r.title || 'Round')}]]`;
+        await postRoundSystemMessage(r.id, cardBody);
+        const members = await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(r.id);
+        for (const m of members) {
+          await pushNotif(m.user_id, 'round', (r.title || 'Round') + ' just wrapped 🎉',
+            'Drop a photo, or plan the next one.', 'round:' + r.id, r.photo || null);
+        }
+      }
+      await db.prepare('UPDATE rounds SET wrapup_sent_at = ? WHERE id = ?').run(now(), r.id);
+    }
+  } catch (e) { console.error('[wrapup] sweep failed:', e.message); }
 }
 
 // Explicit deletion (host deletes a Round, someone deletes a conversation, etc.)
@@ -4495,7 +4563,8 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
     WHERE COALESCE(r.hidden_from_discovery, 0) = 0
       AND COALESCE(r.on_hold, 0) = 0
       AND r.archived_at IS NULL
-      AND (r.event_at IS NULL OR r.event_at >= ?)
+      AND (r.event_at IS NULL OR r.event_at >= ?
+           OR (r.recurrence IN ('weekly','biweekly','monthly') AND (r.recurrence_end IS NULL OR r.recurrence_end >= ?)))
       ${withCountry ? countryClause : ''}
       ${distClause}
     ${orderClause}
@@ -4503,7 +4572,7 @@ app.get('/api/rounds', requireAuth, async (req, res) => {
   `).all(
     req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, // base SELECT
     ...distOrderParams,                                                          // SELECT calc_distance
-    todayFloor,
+    todayFloor, todayFloor,
     ...(withCountry ? countryParams : []),
     ...distParams,
     pageSize, page * pageSize
@@ -6566,10 +6635,22 @@ app.post('/api/rounds/:id/delete', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// A Round is "over" (can't be joined) once its meeting date has passed and there's
+// no recurring meeting still going: a one-time Round is over the moment event_at
+// passes; a recurring one only once its recurrence_end has also passed (an
+// undated/ongoing recurrence — no recurrence_end — never ends this way).
+function roundHasEnded(round) {
+  if (!round.event_at || round.event_at >= now()) return false;
+  const isRecurring = ['weekly', 'biweekly', 'monthly'].includes(round.recurrence);
+  if (!isRecurring) return true;
+  return !!(round.recurrence_end && round.recurrence_end < now());
+}
+
 app.post('/api/rounds/:id/join', requireAuth, async (req, res) => {
-  const round = await db.prepare('SELECT id, host_id, requires_approval, on_hold FROM rounds WHERE id = ?').get(req.params.id);
+  const round = await db.prepare('SELECT id, host_id, requires_approval, on_hold, event_at, recurrence, recurrence_end FROM rounds WHERE id = ?').get(req.params.id);
   if (!round) return res.status(404).json({ error: 'That Round no longer exists.' });
   if (round.on_hold) return res.status(403).json({ error: 'This Round is temporarily on hold.' });
+  if (roundHasEnded(round)) return res.status(403).json({ error: 'This Round already met — there are no more meetings to join.' });
   // Already a member? Nothing to do.
   const already = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (already) return res.json({ ok: true, status: 'joined' });
@@ -6586,6 +6667,49 @@ app.post('/api/rounds/:id/join', requireAuth, async (req, res) => {
   await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at,commitment) VALUES (?,?,?,?) ON CONFLICT DO NOTHING')
     .run(req.params.id, req.user.id, now(), commitment);
   res.json({ ok: true, status: 'joined' });
+});
+
+// One-tap reaction on a Round's wrap-up card (👍/👎). Idempotent — re-tapping just
+// changes the vote, same as a poll.
+app.post('/api/rounds/:id/wrapup-vote', requireAuth, async (req, res) => {
+  const { vote } = req.body || {};
+  if (!['up', 'down'].includes(vote)) return res.status(400).json({ error: 'Invalid vote.' });
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!member) return res.status(403).json({ error: 'Not a member of this Round.' });
+  await db.prepare(
+    'INSERT INTO round_wrapup_votes (round_id,user_id,vote,created_at) VALUES (?,?,?,?) ON CONFLICT (round_id,user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = EXCLUDED.created_at'
+  ).run(req.params.id, req.user.id, vote, now());
+  res.json({ ok: true });
+});
+
+// "Plan another" — one tap from the wrap-up card clones the Round (same title,
+// category, blurb, location, link) with the tapper as host and the whole previous
+// group auto-added, so nobody has to re-invite anyone. event_at is left unset — the
+// new host picks the date from there.
+app.post('/api/rounds/:id/plan-again', requireAuth, async (req, res) => {
+  const orig = await db.prepare('SELECT * FROM rounds WHERE id = ?').get(req.params.id);
+  if (!orig) return res.status(404).json({ error: 'That Round no longer exists.' });
+  const member = await db.prepare('SELECT 1 FROM memberships WHERE round_id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!member && orig.host_id !== req.user.id) return res.status(403).json({ error: 'Only members of this Round can plan another.' });
+  const newRound = {
+    id: id(), title: orig.title, emoji: orig.emoji, category: orig.category, blurb: orig.blurb,
+    host_id: req.user.id, created_at: now(), lat: orig.lat, lng: orig.lng, place: orig.place,
+    country: orig.country, photo: orig.photo, link: orig.link, event_at: null,
+    requires_approval: 0, recurrence: 'none', is_online: orig.is_online, meeting_url: orig.meeting_url,
+    ends_at: null, recurrence_end: null
+  };
+  await db.prepare(`INSERT INTO rounds (id,title,emoji,category,blurb,host_id,created_at,lat,lng,place,country,photo,link,event_at,requires_approval,recurrence,is_online,meeting_url,ends_at,recurrence_end)
+    VALUES (@id,@title,@emoji,@category,@blurb,@host_id,@created_at,@lat,@lng,@place,@country,@photo,@link,@event_at,@requires_approval,@recurrence,@is_online,@meeting_url,@ends_at,@recurrence_end)`).run(newRound);
+  await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(newRound.id, req.user.id, now());
+  const prevMembers = await db.prepare('SELECT user_id FROM memberships WHERE round_id = ?').all(req.params.id);
+  const tapper = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+  for (const m of prevMembers) {
+    if (m.user_id === req.user.id) continue;
+    await db.prepare('INSERT INTO memberships (round_id,user_id,joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(newRound.id, m.user_id, now());
+    await pushNotif(m.user_id, 'round', (tapper ? tapper.name : 'Someone') + ' is planning another ' + (orig.title || 'Round'),
+      "You're in — tap to help pick a new date.", 'round:' + newRound.id, orig.photo || null);
+  }
+  res.json({ ok: true, roundId: newRound.id });
 });
 
 // Item 17: list pending join requests for a Round (host only).
@@ -6712,7 +6836,18 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
     if (m.kind === 'eventcard' && m.poll_data) { try { item.card = JSON.parse(m.poll_data); } catch (e) {} }
     out.push(item);
   }
-  res.json({ messages: out });
+  // Grace-period heads-up: if the event has passed and the chat isn't archived yet,
+  // tell the client how many days remain so it can show a "this archives soon" banner
+  // instead of the chat just vanishing from the list with no warning.
+  let archiveInfo = null;
+  const rmeta = await db.prepare('SELECT event_at, archived_at FROM rounds WHERE id = ?').get(req.params.id);
+  if (rmeta && rmeta.event_at && !rmeta.archived_at) {
+    const archivesAt = rmeta.event_at + ROUND_GRACE_MS;
+    if (archivesAt > now()) {
+      archiveInfo = { archivesAt, daysLeft: Math.max(1, Math.ceil((archivesAt - now()) / (24 * 60 * 60 * 1000))) };
+    }
+  }
+  res.json({ messages: out, archiveInfo });
 });
 
 // Round-chat poll create (parity with DM polls). Broadcasts to the round room.
@@ -7480,6 +7615,10 @@ initDb()
     // Permanent deletion: per-item 5-year clock, checked once a day.
     setTimeout(() => { runDeletionSweep().catch(err => console.log('[retention] initial deletion sweep failed:', err.message)); }, 12 * 60 * 60 * 1000);
     setInterval(() => { runDeletionSweep().catch(err => console.log('[retention] deletion sweep failed:', err.message)); }, 24 * 60 * 60 * 1000);
+    // Event wrap-up: check frequently (every 15 min) so the wrap-up card lands soon
+    // after the event actually ends, not up to a day late.
+    setTimeout(() => { runEventWrapupSweep().catch(err => console.log('[wrapup] initial sweep failed:', err.message)); }, 15000);
+    setInterval(() => { runEventWrapupSweep().catch(err => console.log('[wrapup] sweep failed:', err.message)); }, 15 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to initialize the database. Is DATABASE_URL correct?');
