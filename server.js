@@ -1685,7 +1685,8 @@ app.post('/api/me/delete', requireAuth, async (req, res) => {
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const RETENTION_YEARS = 5;
 const ROUND_GRACE_MS = 7 * 24 * 60 * 60 * 1000;      // event Rounds: 7 days after the event
-const INACTIVITY_MS = 90 * 24 * 60 * 60 * 1000;       // ongoing Rounds / DMs / groups: 90 days idle
+const INACTIVITY_MS = 90 * 24 * 60 * 60 * 1000;       // ongoing Rounds / group chats: 90 days idle
+const FRIEND_DM_INACTIVITY_MS = 180 * 24 * 60 * 60 * 1000; // 1:1 friend DMs: 6 months idle
 
 function chatTable(chatType) {
   if (chatType === 'round') return 'rounds';
@@ -1841,16 +1842,17 @@ async function runArchiveSweep() {
       else if (idleSince < t - INACTIVITY_MS) await archiveChat('round', r.id, 'inactive_90d');
     }
 
-    // DMs / group chats: 90 days of inactivity (all participants), or empty.
-    const convos = await db.prepare('SELECT id FROM conversations WHERE archived_at IS NULL').all();
+    // 1:1 friend DMs: 6 months of inactivity. Group chats: 90 days, unchanged.
+    const convos = await db.prepare('SELECT id, is_group, created_at FROM conversations WHERE archived_at IS NULL').all();
     for (const c of convos) {
       const last = await db.prepare('SELECT MAX(created_at) AS m FROM dm_messages WHERE conv_id = ?').get(c.id);
       const lastActivity = (last && last.m) ? Number(last.m) : null;
       const memberCount = Number((await db.prepare('SELECT COUNT(*) c FROM conversation_members WHERE conv_id = ?').get(c.id)).c) || 0;
-      const created = (await db.prepare('SELECT created_at FROM conversations WHERE id = ?').get(c.id)).created_at;
-      const idleSince = lastActivity || created;
+      const idleSince = lastActivity || c.created_at;
+      const isFriendDm = !c.is_group;
+      const threshold = isFriendDm ? FRIEND_DM_INACTIVITY_MS : INACTIVITY_MS;
       if (memberCount === 0) await archiveChat('conversation', c.id, 'all_participants_left');
-      else if (idleSince < t - INACTIVITY_MS) await archiveChat('conversation', c.id, 'inactive_90d');
+      else if (idleSince < t - threshold) await archiveChat('conversation', c.id, isFriendDm ? 'inactive_6mo' : 'inactive_90d');
     }
 
     // Daily updates/moments: on their existing 24h expiry, export instead of purge.
@@ -6836,18 +6838,7 @@ app.get('/api/rounds/:id/messages', requireAuth, async (req, res) => {
     if (m.kind === 'eventcard' && m.poll_data) { try { item.card = JSON.parse(m.poll_data); } catch (e) {} }
     out.push(item);
   }
-  // Grace-period heads-up: if the event has passed and the chat isn't archived yet,
-  // tell the client how many days remain so it can show a "this archives soon" banner
-  // instead of the chat just vanishing from the list with no warning.
-  let archiveInfo = null;
-  const rmeta = await db.prepare('SELECT event_at, archived_at FROM rounds WHERE id = ?').get(req.params.id);
-  if (rmeta && rmeta.event_at && !rmeta.archived_at) {
-    const archivesAt = rmeta.event_at + ROUND_GRACE_MS;
-    if (archivesAt > now()) {
-      archiveInfo = { archivesAt, daysLeft: Math.max(1, Math.ceil((archivesAt - now()) / (24 * 60 * 60 * 1000))) };
-    }
-  }
-  res.json({ messages: out, archiveInfo });
+  res.json({ messages: out });
 });
 
 // Round-chat poll create (parity with DM polls). Broadcasts to the round room.
