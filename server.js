@@ -5322,10 +5322,27 @@ async function fetchEventbrite(token, label) {
       return { events: [], error: 'Eventbrite auth failed (HTTP ' + orgRes.status + (d ? ' - ' + d : '') + '). Make sure you pasted a Private token from Account -> Developer -> API keys.' };
     }
     const orgs = ((await orgRes.json()).organizations) || [];
-    if (!orgs.length) {
-      lastError = 'Your Eventbrite token works, but its account has no organizations with events. Publish an event under this account, or use the org that owns your events.';
-    }
     for (const org of orgs.slice(0, 8)) { await pullOrgEvents(org.id); }
+    // Fallback: some tokens expose events under the older owned_events endpoint even when
+    // the organizations list looks empty. Try it before giving up.
+    if (!events.length) {
+      try {
+        let url = 'https://www.eventbriteapi.com/v3/users/me/owned_events/?status=live&order_by=start_asc&expand=venue,logo&page_size=200';
+        let guard = 0;
+        while (url && guard < 6) {
+          const r = await fetch(url, H);
+          if (!r.ok) break;
+          const data = await r.json();
+          for (const e of (data.events || [])) { if (!seen.has(e.id)) { seen.add(e.id); events.push(normalizeEventbriteEvent(e, label)); } }
+          url = (data.pagination && data.pagination.has_more_items && data.pagination.continuation)
+            ? ('https://www.eventbriteapi.com/v3/users/me/owned_events/?status=live&order_by=start_asc&expand=venue,logo&page_size=200&continuation=' + data.pagination.continuation) : null;
+          guard++; await new Promise(res => setTimeout(res, 150));
+        }
+      } catch (e) {}
+    }
+    if (!events.length) {
+      lastError = 'Eventbrite\u2019s API only returns events your token\u2019s own account organizes — it can no longer search all public Eventbrite events. This account currently organizes no live events. To pull events here, either publish/organize them under this Eventbrite account, or paste a token from the account that owns the events you want.';
+    }
   } catch (err) { lastError = 'Network error: ' + err.message; }
   return { events, error: events.length === 0 ? (lastError || 'No live events found on the connected Eventbrite account.') : null };
 }
@@ -5496,6 +5513,87 @@ async function fetchGenericApiEvents(s) {
   const events = arr.map(e => normalizeGenericApiEvent(e, s)).filter(Boolean);
   return { events, error: events.length ? null : 'Found an events list, but could not read any titles from it.' };
 }
+// Google Events via SerpApi. Google Events search needs a query, so we sweep a set of
+// "events in <place>" queries — the source's default location if set, otherwise a spread
+// of major world cities — and page through each. Returns normalized events with coords
+// where SerpApi provides them (it usually includes a venue address we can geocode).
+const SERPAPI_DEFAULT_QUERIES = [
+  'events in New York', 'events in Los Angeles', 'events in Chicago', 'events in Miami',
+  'events in Toronto', 'events in Mexico City', 'events in London', 'events in Paris',
+  'events in Berlin', 'events in Madrid', 'events in Rome', 'events in Amsterdam',
+  'events in Tokyo', 'events in Sydney', 'events in São Paulo', 'events in Buenos Aires',
+  'events in Santo Domingo', 'events in Miami Beach', 'events in Austin', 'events in Seattle'
+];
+async function fetchSerpApiEvents(apiKey, label, opts) {
+  if (!apiKey) return { events: [], error: 'No SerpApi key configured. Get one free at serpapi.com.' };
+  opts = opts || {};
+  const events = []; const seen = new Set(); let lastError = null; let calls = 0;
+  const MAX_CALLS = parseInt(process.env.SERPAPI_MAX_CALLS || '80', 10); // free tier is 250/mo — stay modest
+  const PAGES_PER_QUERY = parseInt(process.env.SERPAPI_PAGES || '2', 10); // ~10 events/page
+  const queries = (opts.queries && opts.queries.length) ? opts.queries : SERPAPI_DEFAULT_QUERIES;
+  for (const q of queries) {
+    for (let page = 0; page < PAGES_PER_QUERY; page++) {
+      if (calls >= MAX_CALLS) break;
+      const url = 'https://serpapi.com/search.json?engine=google_events&q=' + encodeURIComponent(q)
+        + '&start=' + (page * 10) + '&api_key=' + encodeURIComponent(apiKey);
+      calls++;
+      let r;
+      try { r = await fetch(url); } catch (e) { lastError = 'Network error: ' + e.message; break; }
+      if (!r.ok) {
+        let d = r.statusText; try { const b = await r.json(); d = (b && (b.error)) || d; } catch (e) {}
+        lastError = 'SerpApi HTTP ' + r.status + (d ? ' — ' + d : '');
+        // 401 = bad key; stop entirely. Other errors: skip this query.
+        if (r.status === 401) return { events: [], error: 'SerpApi rejected the key (HTTP 401). Check the key at serpapi.com → API Key.' };
+        break;
+      }
+      let data; try { data = await r.json(); } catch (e) { break; }
+      const rows = data.events_results || [];
+      if (!rows.length) break;
+      for (const e of rows) {
+        const norm = normalizeSerpApiEvent(e, label);
+        if (norm && !seen.has(norm.id)) { seen.add(norm.id); events.push(norm); }
+      }
+      await new Promise(res => setTimeout(res, 120));
+    }
+    if (calls >= MAX_CALLS) break;
+  }
+  return { events, error: events.length ? null : (lastError || 'SerpApi returned no events.') };
+}
+function normalizeSerpApiEvent(e, label) {
+  if (!e || !e.title) return null;
+  const crypto = require('crypto');
+  const addrArr = Array.isArray(e.address) ? e.address : (e.address ? [e.address] : []);
+  const venue = (e.venue && e.venue.name) || '';
+  const fullAddr = [venue, ...addrArr].filter(Boolean).join(', ');
+  // Start time: SerpApi gives date.start_date (e.g. "Dec 5") and sometimes a when string.
+  let starts = null;
+  if (e.date) {
+    const cand = e.date.when || e.date.start_date || '';
+    const parsed = Date.parse(cand);
+    if (!isNaN(parsed)) starts = parsed;
+    else { const p2 = Date.parse(cand + ' ' + new Date().getFullYear()); if (!isNaN(p2)) starts = p2; }
+  }
+  const gps = (e.event_location_map && e.event_location_map.gps_coordinates) || e.gps_coordinates || null;
+  const lat = gps && gps.latitude != null ? Number(gps.latitude) : null;
+  const lng = gps && gps.longitude != null ? Number(gps.longitude) : null;
+  const { category, emoji } = classifyByText(e.title + ' ' + (e.description || ''));
+  const hash = crypto.createHash('md5').update((e.link || '') + '|' + e.title + '|' + (fullAddr || '')).digest('hex').slice(0, 16);
+  return {
+    id: 'sa_' + hash, source: 'serpapi', source_id: hash,
+    title: String(e.title).slice(0, 200),
+    description: String(e.description || '').slice(0, 1000),
+    category, emoji,
+    photo: e.image || e.thumbnail || null,
+    link: e.link || null,
+    place: venue || (addrArr[0] || ''),
+    city: '', state: '',
+    geo_address: fullAddr,
+    lat: (typeof lat === 'number' && !isNaN(lat)) ? lat : null,
+    lng: (typeof lng === 'number' && !isNaN(lng)) ? lng : null,
+    starts_at: starts, ends_at: null,
+    source_label: label || 'Google Events', country: null
+  };
+}
 const EVENT_PROVIDERS = {
   ticketmaster: async (s) => fetchTicketmaster(s.api_key, s.label),
   // Paste-a-key location-based providers. Each takes the key the manager enters and
@@ -5503,11 +5601,8 @@ const EVENT_PROVIDERS = {
   seatgeek: async (s) => fetchSeatGeek(s.api_key, s.label),
   eventbrite: async (s) => fetchEventbrite(s.api_key, s.label),
   predicthq: async (s) => fetchPredictHQ(s.api_key, s.label),
-  // Item 1 — a manager's own/arbitrary event API. Works the same as the providers above
-  // from the manager's side: paste an account label + the API's endpoint URL (and a key,
-  // only if that API needs one) and it pulls automatically from then on. See
-  // fetchGenericApiEvents below for how it makes sense of whatever JSON shape comes back
-  // without requiring the manager to describe the schema.
+  // Google Events via SerpApi — aggregated worldwide events. Paste your SerpApi key.
+  serpapi: async (s) => fetchSerpApiEvents(s.api_key, s.label),
   custom_api: async (s) => fetchGenericApiEvents(s)
 };
 // Providers that read a plain website (no API). Kept separate because they take a URL
@@ -6589,8 +6684,7 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
     const rows = await db.prepare('SELECT id, provider, label, api_key, url, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
     const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
     const floor = now() - 6 * 3600 * 1000;
-    // Count live events per source in ONE grouped query instead of a full-table COUNT scan
-    // per source (which timed out on a large events table -> "Something went wrong").
+    // ONE grouped query instead of a per-source full-table COUNT scan (that timed out -> errors).
     let counts = {};
     try {
       const grouped = await db.prepare(`SELECT source, COUNT(*) AS n, MAX(created_at) AS latest FROM events WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?)) GROUP BY source`).all(floor, cutoff);

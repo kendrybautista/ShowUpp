@@ -1282,7 +1282,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.49';
+const APP_VERSION='1.50';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2819,10 +2819,7 @@ async function loadAllEventPagesForMap(){
 if(_loadingAllEventPages)return; _loadingAllEventPages=true;
 try{
 let nextPage=1, guard=0;
-// Load ALL events for the map (not just the first ~2000). With worldwide providers the
-// catalog is large, so we page through everything — up to 500 pages × 50 = 25,000 events —
-// fetching several pages at once for speed and re-rendering the cluster layer per batch.
-const MAX_MAP_PAGES=500;
+const MAX_MAP_PAGES=500; // load all events for the map (up to 500 × 200 = 100k)
 while(eventsHasMore && guard<MAX_MAP_PAGES){
 if(currentView!=='map')break; // navigated away — stop fetching pages nobody will see
 const batchPages=[];
@@ -2836,6 +2833,8 @@ if(batch.length){ gotAny=true; batch.forEach(e=>{ if(!seen.has(e.id)){allEvents.
 if(r.hasMore)anyMore=true;
 });
 eventsHasMore=anyMore;
+// Render once per BATCH of pages, not once per page — rebuilding the marker-cluster
+// layer up to 40 times per load was the other big chunk of the slowness.
 if(currentView==='map')renderEvents();
 if(!gotAny)break;
 }
@@ -9038,7 +9037,7 @@ toast('Round deleted');
 loadAdminRounds(document.getElementById('adminRoundSearch').value);
 }catch(e){toast(e.message);}
 }
-const EVENT_PROVIDER_LABELS={ticketmaster:'Ticketmaster',seatgeek:'SeatGeek',eventbrite:'Eventbrite',predicthq:'PredictHQ',custom_api:'Custom API — your own endpoint',website:'Website — auto-read an events page (no API)'};
+const EVENT_PROVIDER_LABELS={ticketmaster:'Ticketmaster',seatgeek:'SeatGeek',eventbrite:'Eventbrite',predicthq:'PredictHQ',serpapi:'Google Events (SerpApi)',custom_api:'Custom API — your own endpoint',website:'Website — auto-read an events page (no API)'};
 function esProviderChanged(){
 const v=document.getElementById('esProvider').value;
 const isManual=v==='__manual__';
@@ -9057,7 +9056,7 @@ const urlInput=document.getElementById('esUrl');
 if(urlInput)urlInput.placeholder=isCustomApi?'https://api.theirsite.com/events':'https://theirsite.com/events';
 const keyInput=document.getElementById('esApiKey');
 if(keyInput){
-const ph={ticketmaster:'Paste your Ticketmaster API key',seatgeek:'Paste your SeatGeek client ID',eventbrite:'Paste your Eventbrite private token',predicthq:'Paste your PredictHQ access token',custom_api:'API key (optional — only if their API requires one)'};
+const ph={ticketmaster:'Paste your Ticketmaster API key',seatgeek:'Paste your SeatGeek client ID',eventbrite:'Paste your Eventbrite private token',predicthq:'Paste your PredictHQ access token',serpapi:'Paste your SerpApi key',custom_api:'API key (optional — only if their API requires one)'};
 keyInput.placeholder=isManual?'API key (optional — leave blank for a manual source)':(ph[v]||'Paste the API key');
 }
 const hint=document.getElementById('esKeyHint');
@@ -9066,7 +9065,8 @@ const where={
 ticketmaster:'Free key at developer.ticketmaster.com → “Get your API key”.',
 seatgeek:'Free client ID at seatgeek.com/account/develop.',
 eventbrite:'Create a private token at eventbrite.com → Account → Developer → API keys.',
-predicthq:'Create an access token at control.predicthq.com → API Tools → API Tokens.'
+predicthq:'Create an access token at control.predicthq.com → API Tools → API Tokens.',
+serpapi:'Free key (250 searches/mo) at serpapi.com → sign up → “Your API Key”. Pulls Google Events worldwide.'
 };
 hint.textContent=where[v]||'';
 hint.style.display=(where[v]&&!isWebsite&&!isManual)?'block':'none';
