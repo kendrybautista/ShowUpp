@@ -241,7 +241,6 @@ background:radial-gradient(circle at 50% 35%,#2a2350,#14112e 70%,#0b0918);color:
 #s-admin input,#s-admin select,#s-admin textarea{max-width:100%}
 #s-admin canvas{max-width:100%!important;height:auto}
 #s-admin .circ-tab{flex:0 0 auto}
-#adm-tab-users,#adm-tab-rounds,#adm-tab-sources,#adm-tab-reports,#adm-tab-metrics,#adm-tab-retention{white-space:nowrap}
 .fixed-head{flex:none;background:transparent;z-index:20;padding-top:2px;position:relative}
 .hdr-logo{width:34px;height:34px;border-radius:10px;object-fit:contain;flex:none;box-shadow:0 2px 8px rgba(20,20,45,.15)}
 .topbar-3{display:flex;align-items:center;justify-content:space-between;padding:6px 18px 8px;gap:10px}
@@ -1283,7 +1282,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.48';
+const APP_VERSION='1.49';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -2820,10 +2819,14 @@ async function loadAllEventPagesForMap(){
 if(_loadingAllEventPages)return; _loadingAllEventPages=true;
 try{
 let nextPage=1, guard=0;
-while(eventsHasMore && guard<40){ // 40 pages × 50 = up to 2000 events, plenty for a map
+// Load ALL events for the map (not just the first ~2000). With worldwide providers the
+// catalog is large, so we page through everything — up to 500 pages × 50 = 25,000 events —
+// fetching several pages at once for speed and re-rendering the cluster layer per batch.
+const MAX_MAP_PAGES=500;
+while(eventsHasMore && guard<MAX_MAP_PAGES){
 if(currentView!=='map')break; // navigated away — stop fetching pages nobody will see
 const batchPages=[];
-for(let i=0;i<EVENT_MAP_PAGE_CONCURRENCY && guard<40;i++,nextPage++,guard++)batchPages.push(nextPage);
+for(let i=0;i<EVENT_MAP_PAGE_CONCURRENCY && guard<MAX_MAP_PAGES;i++,nextPage++,guard++)batchPages.push(nextPage);
 const results=await Promise.all(batchPages.map(p=>fetchEventsPage(p).catch(()=>({events:[],hasMore:false}))));
 const seen=new Set(allEvents.map(e=>e.id));
 let gotAny=false, anyMore=false;
@@ -2833,8 +2836,6 @@ if(batch.length){ gotAny=true; batch.forEach(e=>{ if(!seen.has(e.id)){allEvents.
 if(r.hasMore)anyMore=true;
 });
 eventsHasMore=anyMore;
-// Render once per BATCH of pages, not once per page — rebuilding the marker-cluster
-// layer up to 40 times per load was the other big chunk of the slowness.
 if(currentView==='map')renderEvents();
 if(!gotAny)break;
 }
@@ -2847,7 +2848,7 @@ let q='/api/events/categories';
 if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
 return api(q).catch(()=>({categories:[]}));
 }
-const EVENTS_PAGE_SIZE=50; // server's max page size — fewer round trips through the nationwide feed
+const EVENTS_PAGE_SIZE=200; // server's max page size — fewer round trips through the worldwide feed
 function fetchEventsPage(page){
 let q='/api/events?page='+page+'&pageSize='+EVENTS_PAGE_SIZE;
 if(userLoc)q+='&lat='+userLoc.lat+'&lng='+userLoc.lng;

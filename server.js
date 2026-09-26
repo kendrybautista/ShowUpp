@@ -5154,7 +5154,7 @@ async function fetchTicketmaster(apiKey, label, countries) {
   const pageSize = 200;
   const MAX_PAGES_PER_SLICE = 5; // Ticketmaster refuses paging past page*size ≈ 1,000 results
   const MIN_SLICE_DAYS = 2;      // stop splitting a date range once it's this narrow, even if still >1,000 results
-  const MAX_SLICE_DEPTH = 10;    // bounds any one country to at most 2^10 = 1024 slices
+  const MAX_SLICE_DEPTH = 9;     // bounds any one country to at most 2^9 = 512 slices
   // Getting EVERY event for EVERY country (not just the first ~1,000 per country) means
   // big markets now cost several queries instead of one, so the total budget has to be much
   // higher than before. Ticketmaster's standard key quota is 5,000 calls/day — this leaves
@@ -5162,9 +5162,10 @@ async function fetchTicketmaster(apiKey, label, countries) {
   // refreshes). Raise TICKETMASTER_MAX_CALLS if this key's quota is higher and you want a
   // wider safety margin, or lower it if 5,000/day isn't actually available to this key.
   const MAX_CALLS_PER_RUN = parseInt(process.env.TICKETMASTER_MAX_CALLS || '8000', 10);
-  // FAIRNESS: each country gets its own call budget so a huge market (US) can't devour the
-  // whole run and starve every other country — the bug that left only US events showing.
   const PER_COUNTRY_CALLS = parseInt(process.env.TICKETMASTER_PER_COUNTRY_CALLS || '600', 10);
+  // How fast this is allowed to go: concurrent in-flight requests and requests/second.
+  // Defaults match Ticketmaster's documented Discovery API limits; override per-key if
+  // yours is different (e.g. a partner key with a higher rate).
   const gate = createRateGate(
     parseInt(process.env.TICKETMASTER_CONCURRENCY || '12', 10),
     parseInt(process.env.TICKETMASTER_RPS || '9', 10)
@@ -6221,7 +6222,7 @@ app.get('/api/events', requireAuth, async (req, res) => {
   const category = req.query.category || null;
   const hasLoc = !isNaN(lat) && !isNaN(lng);
   const page = Math.max(0, parseInt(req.query.page) || 0);
-  const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize) || 25));
+  const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize) || 25));
   const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
 
   // ---- Date-range ("when") filter — mirrors the app's Today / This week / This month chips.
@@ -6589,17 +6590,10 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
     const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
     const floor = now() - 6 * 3600 * 1000;
     // Count live events per source in ONE grouped query instead of a full-table COUNT scan
-    // per source. With a large events table the per-source scans were slow enough to time
-    // out the request — which surfaced in the UI as "Something went wrong" / "Please log in
-    // again". One aggregate query keeps this fast no matter how many events are cached.
+    // per source (which timed out on a large events table -> "Something went wrong").
     let counts = {};
     try {
-      const grouped = await db.prepare(`
-        SELECT source, COUNT(*) AS n, MAX(created_at) AS latest
-        FROM events
-        WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
-        GROUP BY source
-      `).all(floor, cutoff);
+      const grouped = await db.prepare(`SELECT source, COUNT(*) AS n, MAX(created_at) AS latest FROM events WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?)) GROUP BY source`).all(floor, cutoff);
       for (const g of grouped) counts[g.source] = { n: Number(g.n) || 0, latest: g.latest ? Number(g.latest) : null };
     } catch (e) { counts = {}; }
     const masked = rows.map(r => {
@@ -6608,13 +6602,7 @@ app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) 
       const isManual = !EVENT_PROVIDERS[r.provider] && !isWebsite;
       const srcKey = isWebsite ? (WEBSITE_PROVIDER + ':' + r.id) : r.provider;
       const c = counts[srcKey] || { n: 0, latest: null };
-      return {
-        ...r,
-        api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
-        isManual, isWebsite, isCustomApi,
-        live_events: c.n,
-        last_event_added: c.latest
-      };
+      return { ...r, api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '', isManual, isWebsite, isCustomApi, live_events: c.n, last_event_added: c.latest };
     });
     res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), ingestWindowDays: EVENT_INGEST_WINDOW_DAYS });
   } catch (err) {
