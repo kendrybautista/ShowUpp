@@ -522,6 +522,9 @@ await db.exec(`
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS media TEXT;
   -- Item 2: per-post visibility. 'friends' (default) = friends only; 'public' = friends + followers.
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS visibility TEXT DEFAULT 'friends';
+  -- A daily update can attach a Round or event the user plans to attend, to boost turnout.
+  ALTER TABLE moments ADD COLUMN IF NOT EXISTS attach_type TEXT;
+  ALTER TABLE moments ADD COLUMN IF NOT EXISTS attach_id TEXT;
 
   -- Item 1: one-directional following (no approval). follower_id follows followee_id.
   CREATE TABLE IF NOT EXISTS follows (
@@ -2954,23 +2957,60 @@ app.post('/api/moments', requireAuth, async (req, res) => {
   // legacy single-photo support
   const cleanPhoto = (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null;
   if (cleanPhoto && !cleanMedia.length) cleanMedia.push({ type: 'image', data: cleanPhoto });
-  if (!cleanText.trim() && !cleanMedia.length) return res.status(400).json({ error: 'Write something or add a photo/video.' });
+  const _hasAttach = (req.body && req.body.attach && req.body.attach.id);
+  if (!cleanText.trim() && !cleanMedia.length && !_hasAttach) return res.status(400).json({ error: 'Write something, add a photo/video, or attach a plan.' });
   const since = now() - MOMENT_TTL;
   const count = Number((await db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since)).c) || 0;
   if (count >= MOMENT_DAILY_MAX) return res.status(429).json({ error: "You've reached the limit of 10 posts in 24 hours. Try again later." });
   const firstPhoto = cleanMedia.find(x => x.type === 'image');
+  // Optional attached Round/event the user plans to attend.
+  const at = (req.body && req.body.attach) || null;
+  let attach_type = null, attach_id = null;
+  if (at && (at.type === 'round' || at.type === 'event') && at.id) { attach_type = at.type; attach_id = String(at.id).slice(0, 80); }
   const m = {
     id: id(), user_id: req.user.id, text: cleanText,
     photo: firstPhoto ? firstPhoto.data : null,
     media: JSON.stringify(cleanMedia),
     visibility: ((req.body && req.body.visibility) === 'public') ? 'public' : 'friends',
+    attach_type, attach_id,
     created_at: now(), expires_at: now() + MOMENT_TTL
   };
-  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,visibility,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@visibility,@created_at,@expires_at)').run(m);
+  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,visibility,attach_type,attach_id,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@visibility,@attach_type,@attach_id,@created_at,@expires_at)').run(m);
   const remaining = MOMENT_DAILY_MAX - (count + 1);
   res.json({ moment: m, remaining });
 });
 // Get my own active moments
+// Item 2: things the user can attach to a daily update — Rounds they've joined + upcoming
+// events they've RSVP'd/saved. Kept simple: joined rounds + saved events with a future date.
+app.get('/api/moments/attachable', requireAuth, async (req, res) => {
+  const out = [];
+  try {
+    const rounds = await db.prepare(`SELECT r.id, r.title, r.emoji, r.category, r.place, r.photo, r.event_at
+      FROM memberships m JOIN rounds r ON r.id = m.round_id WHERE m.user_id = ? ORDER BY (r.event_at IS NULL), r.event_at ASC LIMIT 30`).all(req.user.id);
+    for (const r of rounds) out.push({ type: 'round', id: r.id, title: r.title, emoji: r.emoji || '🟣', place: r.place || '', photo: r.photo || null, when: r.event_at || null, category: r.category || '' });
+  } catch (e) {}
+  try {
+    const evs = await db.prepare(`SELECT e.id, e.title, e.emoji, e.place, e.photo, e.starts_at, e.category
+      FROM saved_events v JOIN events e ON e.id = v.event_id WHERE v.user_id = ? AND (e.starts_at IS NULL OR e.starts_at > ?) ORDER BY (e.starts_at IS NULL), e.starts_at ASC LIMIT 30`).all(req.user.id, now() - 6 * 3600 * 1000);
+    for (const e of (evs || [])) out.push({ type: 'event', id: e.id, title: e.title, emoji: e.emoji || '🎟️', place: e.place || '', photo: e.photo || null, when: e.starts_at || null, category: e.category || '' });
+  } catch (e) {}
+  res.json({ items: out });
+});
+// Summary of a Round or event attached to a daily update.
+app.get('/api/plan/:type/:id', requireAuth, async (req, res) => {
+  const { type, id: pid } = req.params;
+  try {
+    if (type === 'round') {
+      const r = await db.prepare('SELECT id,title,emoji,category,blurb,place,photo,event_at,ends_at,is_online,link FROM rounds WHERE id = ?').get(pid);
+      if (!r) return res.status(404).json({ error: 'Not found' });
+      const mc = Number((await db.prepare('SELECT COUNT(*) c FROM memberships WHERE round_id = ?').get(pid)).c) || 0;
+      return res.json({ ok: true, type, id: r.id, title: r.title, emoji: r.emoji || '🟣', category: r.category || '', desc: r.blurb || '', place: r.place || '', photo: r.photo || null, when: r.event_at || null, ends_at: r.ends_at || null, is_online: !!r.is_online, members: mc });
+    }
+    const e = await db.prepare('SELECT id,title,emoji,category,description,place,photo,starts_at,link FROM events WHERE id = ?').get(pid);
+    if (!e) return res.status(404).json({ error: 'Not found' });
+    return res.json({ ok: true, type: 'event', id: e.id, title: e.title, emoji: e.emoji || '🎟️', category: e.category || '', desc: e.description || '', place: e.place || '', photo: e.photo || null, when: e.starts_at || null, link: e.link || null });
+  } catch (err) { res.status(500).json({ error: 'Could not load plan.' }); }
+});
 app.get('/api/moments/mine', requireAuth, async (req, res) => {
   await pruneMoments();
   const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
