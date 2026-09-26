@@ -1282,7 +1282,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.53';
+const APP_VERSION='1.54';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -1782,6 +1782,7 @@ window._notifPoll=setInterval(updateNotifBadge,30000);
 go('s-home');
 handleDeepLink();
 setTimeout(()=>{try{maybePromptVibe();}catch(e){}},2600);
+setTimeout(()=>{try{maybePromptVibeRefresh();}catch(e){}},4200);
 setTimeout(()=>{try{maybePromptRoulette();}catch(e){}},5200);
 }
 function pickAvatar(){document.getElementById('avatarInput').click();}
@@ -4926,7 +4927,63 @@ av.onclick=function(){ if(pic) openAvatarViewer(pic,who,false); };
 })();
 renderDmMsgs(data.messages);applyChatBg();
 updateNotifBadge();
+// Feature 3: for a fresh 1-on-1 chat, seed a vibe-based icebreaker prompt.
+try{
+  const isGroup=data.conversation.is_group;
+  const peer=data.conversation.members&&data.conversation.members[0];
+  if(!isGroup && peer && (data.messages||[]).length<2){ maybeShowIcebreaker(peer.id, peer.name); }
+}catch(e){}
 }catch(e){document.getElementById('dmMsgs').innerHTML='<p style="text-align:center;color:var(--muted);font-size:13px;margin:auto">'+e.message+'</p>';}
+}
+// Feature 3: build a warm icebreaker from two people's shared vibe answers and show it
+// as a tappable card at the top of a new 1-on-1 chat.
+const VIBE_ICEBREAKERS={
+  5:["You both love {label} hangs — what's the most {adj} one you've had lately?"],
+  6:["You both talk about {label} — what's something you never get tired of discussing?"],
+  7:["You've got the same {label} humor — what's made you laugh way too hard recently?"],
+  10:["You both bond over {label} — got a good story about that?"],
+  0:["You both love a {label} Saturday — what's your go-to?"],
+  11:["You're both {label} about new experiences — what's next on your list?"]
+};
+async function maybeShowIcebreaker(peerId,peerName){
+  let mine=window._vibeMyAnswers, theirs=null;
+  try{
+    if(!mine){ const d=await api('/api/vibe/me'); mine=(d&&d.vibe&&d.vibe.answers)||null; window._vibeMyAnswers=mine; }
+    const pd=await api('/api/users/'+peerId+'/vibe').catch(()=>null);
+    theirs=pd&&pd.answers||null;
+  }catch(e){}
+  if(!mine||!theirs)return;
+  // Find a shared answer on a fun question and build a prompt.
+  let prompt='';
+  const order=[7,5,10,6,0,11];
+  for(const q of order){
+    const a=mine[q]||mine[String(q)], b=theirs[q]||theirs[String(q)];
+    if(Array.isArray(a)&&Array.isArray(b)){
+      const shared=a.filter(x=>b.includes(x));
+      if(shared.length){
+        const opt=VIBE_QUESTIONS[q].opts[shared[0]];
+        const label=opt?opt[1].toLowerCase().replace(/ &.*/,''):'';
+        const tpl=(VIBE_ICEBREAKERS[q]||[])[0];
+        if(tpl){ prompt=tpl.replace('{label}',label).replace('{adj}','memorable'); break; }
+      }
+    }
+  }
+  if(!prompt)return;
+  const box=document.getElementById('dmMsgs');
+  if(!box || box.querySelector('.icebreaker-card'))return;
+  const card=document.createElement('div');
+  card.className='icebreaker-card';
+  card.style.cssText='margin:10px auto 6px;max-width:300px;background:linear-gradient(135deg,#FFF1E8,#FFE7F1 55%,#F0ECFF);border:1px solid rgba(124,131,255,.25);border-radius:16px;padding:13px 15px;text-align:center';
+  card.innerHTML='<div style="font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#B25C7E;margin-bottom:5px">✨ Icebreaker</div>'
+    +'<div style="font-size:13.5px;color:var(--night);line-height:1.45;margin-bottom:10px">'+esc(prompt)+'</div>'
+    +'<button onclick="useIcebreaker(this)" data-prompt="'+esc(prompt)+'" style="background:var(--coral);color:#fff;border:none;padding:8px 16px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer">Use this 💬</button>';
+  box.insertBefore(card, box.firstChild);
+}
+function useIcebreaker(btn){
+  const p=btn.getAttribute('data-prompt')||'';
+  const inp=document.getElementById('dmInput');
+  if(inp){ inp.value=p; inp.focus(); }
+  const card=btn.closest('.icebreaker-card'); if(card)card.remove();
 }
 function closeDm(){if(ws&&ws.readyState===1&&activeConv)ws.send(JSON.stringify({type:'leaveDm',convId:activeConv}));activeConv=null;dmReplyingTo=null;document.getElementById('dmReplyBar').style.display='none';go('s-chats');switchChatTab('direct');}
 let dmMsgCache={};
@@ -7798,6 +7855,34 @@ if(typeof translatePage==='function')translatePage(sheet);
 try{ localStorage.setItem(vibeNudgeKey(),String(Date.now())); }catch(e){}
 }
 function closeVibeNudge(){ const s=document.getElementById('vibeNudgeSheet'); if(s)s.classList.remove('open'); }
+// Feature 4: for people who FINISHED the Vibe Check a while ago, gently suggest a refresh
+// so the engine feels alive ("your vibe may have evolved"). Once every 60 days at most.
+const VIBE_REFRESH_MSGS=[
+  {t:"Has your vibe evolved? ✨",b:"It's been a while since your Vibe Check. People change — retake it in 60 seconds so your matches stay spot-on."},
+  {t:"Time for a vibe refresh?",b:"Your social style may have shifted since you last took the Vibe Check. A quick retake keeps your matches sharp."}
+];
+function vibeRefreshKey(){ return 'su_vibe_refresh_'+(me&&me.id?me.id:'anon'); }
+function vibeTakenKey(){ return 'su_vibe_taken_'+(me&&me.id?me.id:'anon'); }
+async function maybePromptVibeRefresh(){
+  if(!me)return;
+  // Only for people who've completed it.
+  let done=0; try{ const d=await api('/api/vibe/me'); done=d.answeredCount||0; }catch(e){ return; }
+  if(done<VIBE_QUESTION_COUNT)return; // not fully done → the other nudge handles them
+  // Don't double-nudge: skip if the incomplete-nudge just showed, and respect a 60-day gap.
+  const SIXTY=60*24*60*60*1000, NINETY=90*24*60*60*1000;
+  let lastRefresh=0, taken=0;
+  try{ lastRefresh=parseInt(localStorage.getItem(vibeRefreshKey())||'0',10)||0; }catch(e){}
+  try{ taken=parseInt(localStorage.getItem(vibeTakenKey())||'0',10)||0; }catch(e){}
+  if(lastRefresh && (Date.now()-lastRefresh)<SIXTY)return;
+  // If we have a "taken" timestamp and it's recent (<90d), don't nudge yet.
+  if(taken && (Date.now()-taken)<NINETY)return;
+  const msg=VIBE_REFRESH_MSGS[Math.floor(Math.random()*VIBE_REFRESH_MSGS.length)];
+  const tt=document.getElementById('vibeNudgeTitle'); if(tt)tt.textContent=t(msg.t);
+  const bb=document.getElementById('vibeNudgeBody'); if(bb)bb.textContent=t(msg.b);
+  const sheet=document.getElementById('vibeNudgeSheet');
+  if(sheet){ sheet.classList.add('open'); if(typeof translatePage==='function')translatePage(sheet); }
+  try{ localStorage.setItem(vibeRefreshKey(),String(Date.now())); }catch(e){}
+}
 let _rouletteInviteCycle=null; // cycle we intend to show for, once fetched
 function rouletteNeverKey(){ return 'su_roulette_never_'+(me&&me.id?me.id:'anon'); }
 function rouletteSeenKey(){ return 'su_roulette_seen_'+(me&&me.id?me.id:'anon'); }
@@ -8031,7 +8116,7 @@ const arch=VIBE_ARCHETYPES.find(a=>a.key===d.myArchetype)||computeArchetype(d.my
 const _radOpts=[10,25,50,100,'Anywhere'];
 const _radLabel=(vibeRadius>=500?'Anywhere':(milesLabel?milesLabel(vibeRadius*1.60934):vibeRadius+' mi'));
 let html='<div class="vibe-radius" style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:0 2px 14px"><div style="font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📍 Match within</div><div style="display:flex;gap:6px;flex-wrap:wrap">'+_radOpts.map(function(o){var val=(o==='Anywhere')?500:o;var on=(o==='Anywhere'?vibeRadius>=500:vibeRadius===o);var lbl=(o==='Anywhere')?'Anywhere 🌍':(o+' mi');return '<div onclick="setVibeRadius('+val+')" style="flex:1;min-width:60px;text-align:center;padding:8px 6px;border-radius:10px;font-size:12.5px;font-weight:700;cursor:pointer;border:1.5px solid '+(on?'var(--coral)':'var(--line)')+';background:'+(on?'var(--coral)':'transparent')+';color:'+(on?'#fff':'var(--night)')+'">'+lbl+'</div>';}).join('')+'</div></div>';
-html+='<div class="vibe-archetype"><div class="va-emoji">'+arch.emoji+'</div><div class="va-label">'+arch.label+'</div><div class="va-sub">'+arch.sub+'</div></div>';
+html+='<div class="vibe-archetype"><div class="va-emoji">'+arch.emoji+'</div><div class="va-label">'+arch.label+'</div><div class="va-sub">'+arch.sub+'</div><button onclick="showVibeShareCard(\''+arch.key+'\')" style="margin-top:12px;background:rgba(255,255,255,.25);border:1.5px solid rgba(255,255,255,.5);color:#fff;padding:9px 18px;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer">📸 Share my vibe</button></div>';
 if(!d.matches.length){
 html+='<div class="vibe-empty"><div class="ve-emoji">🌱</div><h2>No 80%+ matches in range… yet</h2><p>Your people may not have taken the Vibe Check yet. We\'ll keep looking as more folks nearby join in. Invite a friend to grow the pool!</p>'
 +'<button class="btn btn-mango" onclick="go(\'s-home\')">Explore Rounds meanwhile</button></div>';
@@ -8039,6 +8124,10 @@ body.innerHTML=html;
 return;
 }
 html+='<div style="text-align:center;font-size:13.5px;color:var(--muted);margin:2px 2px 14px">✨ '+d.matches.length+' '+(d.matches.length===1?'person':'people')+' nearby vibe like you (80%+ match)</div>';
+window._vibeMatches=d.matches; window._vibeMyAnswers=d.myAnswers;
+try{ localStorage.setItem(vibeTakenKey(),String(Date.now())); }catch(e){}
+// Feature 2: group chemistry — suggest a balanced crew from the matches.
+try{ html+=vibeCrewSuggestionHTML(d.matches, d.myArchetype); }catch(e){}
 html+=d.matches.map((m,idx)=>vibeMatchCardHTML(m,d.myAnswers,idx)).join('');
 html+='<div class="vibe-skip" style="margin-top:6px" onclick="startVibeQuiz(true)">↺ Retake the Vibe Check</div>';
 body.innerHTML=html;
@@ -8047,6 +8136,45 @@ document.querySelector('#s-vibe .scroll').scrollTop=0;
 requestAnimationFrame(()=>{document.querySelectorAll('#s-vibe .vr-fg').forEach(el=>{el.style.strokeDashoffset=el.dataset.off;});});
 }
 function setVibeRadius(mi){ vibeRadius=mi; showVibeMatches(); }
+// Feature 2: group chemistry. From the current matches, pick a small balanced crew —
+// people whose archetypes complement each other (a mix, not clones) — and offer to start
+// a group with them. This is the "we found a crew whose vibes fit together" moment.
+function vibeCrewSuggestionHTML(matches, myArch){
+  const pool=(matches||[]).filter(m=>m.status!=='friend'&&m.archetype);
+  if(pool.length<3)return ''; // need a few people to form a balanced crew
+  // Greedy pick: maximize archetype diversity, favoring higher scores.
+  const sorted=pool.slice().sort((a,b)=>(b.score||0)-(a.score||0));
+  const picked=[]; const usedArch=new Set(myArch?[myArch]:[]);
+  for(const m of sorted){ if(picked.length>=4)break; if(!usedArch.has(m.archetype)){ picked.push(m); usedArch.add(m.archetype); } }
+  // Top up to at least 3 if diversity was thin.
+  if(picked.length<3){ for(const m of sorted){ if(picked.length>=3)break; if(!picked.includes(m))picked.push(m); } }
+  if(picked.length<3)return '';
+  window._vibeCrewPick=picked.map(m=>({id:m.id,name:m.name}));
+  const avatars=picked.map(m=>{
+    const av=m.avatar?'<img src="'+esc(m.avatar)+'" style="width:100%;height:100%;object-fit:cover">':esc((m.name||'?')[0].toUpperCase());
+    return '<div style="width:44px;height:44px;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:17px;border:2px solid var(--card);margin-left:-10px">'+av+'</div>';
+  }).join('');
+  const roles=picked.map(m=>{const a=VIBE_ARCHETYPES.find(x=>x.key===m.archetype);return a?a.emoji:'✨';}).join(' ');
+  return '<div style="background:linear-gradient(135deg,#EEF0FF,#F6ECFF);border:1px solid #E2E0FA;border-radius:18px;padding:16px;margin:0 2px 16px">'
+    +'<div style="font-size:12px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#5B5FEF;margin-bottom:6px">✨ A crew that fits</div>'
+    +'<div style="font-size:14px;color:var(--night);line-height:1.45;margin-bottom:10px">We found <b>'+picked.length+' people</b> whose vibes balance each other out '+roles+' — a mix that tends to click as a group.</div>'
+    +'<div style="display:flex;align-items:center;padding-left:10px;margin-bottom:12px">'+avatars+'</div>'
+    +'<button onclick="startVibeCrew()" style="width:100%;background:linear-gradient(135deg,#7C83FF,#A78BFA);color:#fff;border:none;padding:13px;border-radius:13px;font-weight:800;font-size:14px;cursor:pointer">Start a group with them 🎉</button></div>';
+}
+async function startVibeCrew(){
+  const pick=window._vibeCrewPick||[];
+  if(pick.length<2){ toast('Not enough people for a crew yet.'); return; }
+  // Reuse the new-group flow: create a group chat seeded with these people.
+  try{
+    const ids=pick.map(p=>p.id);
+    const title=(me&&me.name?me.name.split(' ')[0]+"'s crew":'Your crew');
+    const r=await api('/api/conversations/group','POST',{title,memberIds:ids});
+    if(r&&r.conversationId){
+      toast('Crew group created 🎉');
+      openDm(r.conversationId);
+    }else{ toast('Could not create the group.'); }
+  }catch(e){ toast(e.message||'Could not create the group.'); }
+}
 function vibeMatchCardHTML(m,myAns,idx){
 const av=m.avatar?'<img class="vm-av" src="'+esc(m.avatar)+'">':'<div class="vm-av">'+esc((m.name||'?').charAt(0).toUpperCase())+'</div>';
 const C=2*Math.PI*26; // r=26
@@ -8058,12 +8186,15 @@ const ring='<div class="vibe-ring"><svg width="60" height="60" viewBox="0 0 60 6
 +'</svg><div class="vr-num">'+m.score+'<small>MATCH</small></div></div>';
 const chips=vibeSharedChips(myAns,m.answers,3);
 const chipsHtml=chips.length?('<div class="vibe-chips">'+chips.map(c=>'<span class="vibe-chip">'+c+'</span>').join('')+'</div>'):'';
+// Feature 1: the human "why you click" line.
+const whyTxt=vibeWhyClick(myAns,m.answers,m.name);
+const whyHtml=whyTxt?('<div class="vibe-why" style="background:linear-gradient(135deg,rgba(124,131,255,.1),rgba(255,111,97,.08));border:1px solid rgba(124,131,255,.2);border-radius:12px;padding:9px 11px;margin:8px 0 2px;font-size:12.5px;color:var(--night);line-height:1.4">💫 '+esc(whyTxt)+'</div>'):'';
 const nm=(m.name||'Someone').replace(/'/g,"\\'");
 let actions;
 if(m.status==='friend'){ actions='<div class="vm-actions"><button class="btn" style="background:#2e9e5b;color:#fff;border:none" disabled>✓ Already friends</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
 else if(m.status==='pending'){ actions='<div class="vm-actions"><button class="btn" style="background:var(--line);color:var(--muted);border:none" disabled>Request sent ✓</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
 else if(m.status==='incoming'){ actions='<div class="vm-actions"><button class="btn btn-mango" onclick="vibeQuickAccept(\''+m.id+'\',this)">Accept request 🎉</button><button class="vibe-btn-ghost" onclick="vibeDeclineRequest(\''+m.id+'\',this)">Decline</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button></div>'; }
-else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this)">✨ Connect</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'; }
+else { actions='<div class="vm-actions"><button class="btn btn-mango" onclick="openVibeRequest(\''+m.id+'\',\''+nm+'\','+(m.score||0)+',this,'+idx+')">✨ Connect</button><button class="vibe-btn-ghost" onclick="openPublicProfile(\''+m.id+'\')">View</button><button class="vibe-btn-ghost" onclick="vibeIgnore(\''+m.id+'\',this)">Ignore</button></div>'; }
 const archLine=m.archetype?('<div class="vm-meta">'+ (VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.emoji||'✨') +' '+(VIBE_ARCHETYPES.find(a=>a.key===m.archetype)?.label||'')+'</div>'):'';
 return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
 +'<div class="vm-top">'
@@ -8072,7 +8203,7 @@ return '<div class="vibe-match" style="animation-delay:'+(idx*70)+'ms">'
 +'<div class="vm-meta">📍 '+esc(m.city||'nearby')+' '+distTxt+'</div>'+archLine+'</div>'
 +'</div>'
 +ring+'</div>'
-+chipsHtml+actions+'</div>';
++whyHtml+chipsHtml+actions+'</div>';
 }
 function vibeSharedChips(mine,theirs,n){
 if(!mine||!theirs)return [];
@@ -8085,6 +8216,118 @@ if(shared.length){ const opt=VIBE_QUESTIONS[q].opts[shared[0]]; if(opt)chips.pus
 }
 return chips;
 }
+// Feature 1: a warm, human "why you two click" sentence built from the strongest shared
+// answers. Question index → a natural fragment describing what a shared answer means.
+const VIBE_WHY_FRAGMENTS={
+0:"love the same kind of Saturday",1:"run on the same social battery",2:"show up the same way at a gathering",
+3:"plan (or don't) the same way",4:"like the same size of group",5:"want the same hangout vibe",
+6:"talk about the same things",7:"share a sense of humor",8:"show you care in the same way",
+9:"handle tension the same way",10:"bond over the same things",11:"feel the same about new experiences",
+12:"make plans in a similar way",13:"look for the same things in a friend",14:"want the same thing out of ShowUpp"
+};
+// Feature 5: a beautiful, shareable "vibe card" (Spotify-Wrapped style) rendered to a
+// canvas so it can be shared via the Web Share API or downloaded as an image.
+async function showVibeShareCard(archKey){
+  const arch=VIBE_ARCHETYPES.find(a=>a.key===archKey)||VIBE_ARCHETYPES[0];
+  const W=1080,H=1350;
+  const c=document.createElement('canvas');c.width=W;c.height=H;
+  const ctx=c.getContext('2d');
+  // Background gradient (on-brand).
+  const g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'#7C83FF');g.addColorStop(.55,'#A78BFA');g.addColorStop(1,'#FF6F61');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // Soft glow circle behind the emoji.
+  ctx.fillStyle='rgba(255,255,255,.16)';ctx.beginPath();ctx.arc(W/2,430,230,0,Math.PI*2);ctx.fill();
+  ctx.textAlign='center';
+  // Emoji.
+  ctx.font='200px serif';ctx.fillText(arch.emoji,W/2,500);
+  // "MY SHOWUPP VIBE" kicker.
+  ctx.fillStyle='rgba(255,255,255,.85)';ctx.font='bold 34px system-ui,sans-serif';
+  ctx.fillText('MY SHOWUPP VIBE',W/2,660);
+  // Archetype label (wrap-safe).
+  ctx.fillStyle='#fff';ctx.font='bold 78px Georgia,serif';
+  wrapText(ctx,arch.label,W/2,760,W-160,84);
+  // Sub description.
+  ctx.fillStyle='rgba(255,255,255,.92)';ctx.font='36px system-ui,sans-serif';
+  wrapText(ctx,arch.sub,W/2,900,W-220,50);
+  // Footer brand.
+  ctx.fillStyle='rgba(255,255,255,.95)';ctx.font='bold 44px system-ui,sans-serif';
+  ctx.fillText('✨ ShowUpp',W/2,H-90);
+  ctx.font='30px system-ui,sans-serif';ctx.fillStyle='rgba(255,255,255,.75)';
+  ctx.fillText('Find your people.',W/2,H-45);
+  // Present it in a sheet with Share + Download.
+  const url=c.toDataURL('image/png');
+  let sheet=document.getElementById('vibeShareSheet');
+  if(!sheet){ sheet=document.createElement('div'); sheet.id='vibeShareSheet'; sheet.className='sheet'; sheet.onclick=function(e){if(e.target===sheet)sheet.classList.remove('open');}; document.querySelector('.phone').appendChild(sheet); }
+  sheet.innerHTML='<div class="sheet-inner"><div class="grabber"></div><h3>Your vibe card ✨</h3>'
+    +'<img src="'+url+'" style="width:100%;border-radius:18px;margin:6px 0 14px;box-shadow:0 8px 28px rgba(0,0,0,.2)">'
+    +'<button class="btn btn-mango" style="width:100%;margin-bottom:8px" onclick="shareVibeImage()">Share</button>'
+    +'<button class="btn" style="width:100%;background:var(--bone);color:var(--night)" onclick="downloadVibeImage()">Download</button>'
+    +'<div class="report-opt" style="text-align:center;color:var(--muted)" onclick="document.getElementById(\'vibeShareSheet\').classList.remove(\'open\')">Close</div></div>';
+  window._vibeCardDataUrl=url;
+  sheet.classList.add('open');
+}
+function wrapText(ctx,text,x,y,maxW,lh){
+  const words=String(text||'').split(' ');let line='',yy=y;
+  for(let i=0;i<words.length;i++){
+    const test=line+words[i]+' ';
+    if(ctx.measureText(test).width>maxW && line){ ctx.fillText(line.trim(),x,yy); line=words[i]+' '; yy+=lh; }
+    else line=test;
+  }
+  ctx.fillText(line.trim(),x,yy);
+}
+async function shareVibeImage(){
+  const url=window._vibeCardDataUrl; if(!url)return;
+  try{
+    const blob=await (await fetch(url)).blob();
+    const file=new File([blob],'showupp-vibe.png',{type:'image/png'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:'My ShowUpp vibe',text:'This is my ShowUpp vibe ✨ Find yours!'});
+    }else{ downloadVibeImage(); }
+  }catch(e){ /* user cancelled or unsupported */ }
+}
+function downloadVibeImage(){
+  const url=window._vibeCardDataUrl; if(!url)return;
+  const a=document.createElement('a');a.href=url;a.download='showupp-vibe.png';document.body.appendChild(a);a.click();a.remove();
+  toast('Saved your vibe card 📸');
+}
+// Feature 1: warm "why you two click" sentence.
+function vibeWhyClick(mine,theirs,name){
+  name=(name||'you two');
+  if(!mine||!theirs)return '';
+  // Collect shared traits with their human option label + the fragment for that question.
+  const hits=[];
+  for(let q=0;q<VIBE_QUESTIONS.length;q++){
+    const a=mine[q]||mine[String(q)], b=theirs[q]||theirs[String(q)];
+    if(!Array.isArray(a)||!Array.isArray(b))continue;
+    const shared=a.filter(x=>b.includes(x));
+    if(shared.length){
+      const opt=VIBE_QUESTIONS[q].opts[shared[0]];
+      hits.push({q,frag:VIBE_WHY_FRAGMENTS[q]||'',label:opt?opt[1].toLowerCase():'',emoji:opt?opt[0]:''});
+    }
+  }
+  if(!hits.length)return "You're a strong overall match — worth a hello. 👋";
+  // Prefer the most "personality-defining" questions first (vibe, humor, convo, bonding, care).
+  const priority=[5,7,6,10,8,2,1,3,13];
+  hits.sort((a,b)=>{const pa=priority.indexOf(a.q),pb=priority.indexOf(b.q);return (pa<0?99:pa)-(pb<0?99:pb);});
+  const top=hits.slice(0,2);
+  // Build: "You both love cozy & low-key hangs and share a goofy sense of humor."
+  const parts=top.map(h=>{
+    if(h.q===5)return 'love '+h.label+' hangs';
+    if(h.q===7)return 'share a '+h.label.replace(' & ',', ')+' sense of humor';
+    if(h.q===6)return 'talk about '+h.label;
+    if(h.q===10)return 'bond over '+h.label;
+    if(h.q===8)return 'both show you care by '+h.label;
+    if(h.q===0)return 'love a '+h.label+' Saturday';
+    if(h.q===1)return h.frag;
+    return h.frag;
+  });
+  let sentence='You both '+parts[0];
+  if(parts.length>1)sentence+=' and '+parts[1];
+  sentence+='.';
+  return sentence;
+}
+
 const VIBE_MSG_TEMPLATES=[
 "Hey {name}! ShowUpp says we're a {score}% vibe match ✨ Figured I'd say hi — always up for meeting people on the same wavelength.",
 "Hi {name}! We matched {score}% on the Vibe Check 🙌 Seems like we'd get along — want to be friends?",
@@ -8096,10 +8339,16 @@ function pickVibeMsg(name,score){
 const tpl=VIBE_MSG_TEMPLATES[Math.floor(Math.random()*VIBE_MSG_TEMPLATES.length)];
 return tpl.replace('{name}',name||'there').replace('{score}',score||'high');
 }
-function openVibeRequest(uid,name,score,btn){
+function openVibeRequest(uid,name,score,btn,idx){
 vibeReqTarget={uid,btn};
 const ta=document.getElementById('vibeReqMsg');
-if(ta)ta.value=pickVibeMsg(name,score);
+// Feature 1: lead the request with the human "why you two click" line, then a friendly opener.
+let why='';
+try{ const m=(window._vibeMatches||[])[idx]; if(m)why=vibeWhyClick(window._vibeMyAnswers,m.answers,name); }catch(e){}
+if(ta){
+  const opener=pickVibeMsg(name,score);
+  ta.value = why ? ('💫 '+why+'\n\n'+opener) : opener;
+}
 const h=document.getElementById('vibeReqName'); if(h)h.textContent='Connect with '+(name||'this person');
 document.getElementById('vibeReqSheet').classList.add('open');
 }

@@ -2353,6 +2353,13 @@ app.get('/api/vibe/me', requireAuth, async (req, res) => {
   const vibe = parseVibe(me && me.vibe_answers);
   res.json({ vibe: vibe || null, answeredCount: answeredCount(vibe), total: VIBE_QUESTION_COUNT });
 });
+// Feature 3: a peer's vibe answers (only shared answers matter for icebreakers). Allowed
+// between friends, or for anyone the requester can already see in matches.
+app.get('/api/users/:id/vibe', requireAuth, async (req, res) => {
+  const u = await db.prepare('SELECT vibe_answers FROM users WHERE id = ?').get(req.params.id);
+  const vibe = parseVibe(u && u.vibe_answers);
+  res.json({ answers: (vibe && vibe.answers) || null });
+});
 
 // The matcher: up to 5 people >= 80% within 25 miles.
 // Shared matcher used by /matches (top 5 >=80%) and /suggested (broader feed).
