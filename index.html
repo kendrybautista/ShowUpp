@@ -1287,7 +1287,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.57';
+const APP_VERSION='1.58';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -3387,6 +3387,7 @@ const diag=document.getElementById('mapEmptyDiag');
 if(diag)diag.style.display='none';
 }
 let roundsEventsLayer=null;
+let _lastEventPlotSig=null;
 function plotEventsOnRoundsMap(list){
 if(!leafletMap)return;
 if(!roundsEventsLayer){
@@ -3395,6 +3396,11 @@ roundsEventsLayer=(typeof L.markerClusterGroup==='function')
 : L.layerGroup();
 leafletMap.addLayer(roundsEventsLayer);
 }
+// Perf: building thousands of Leaflet markers is expensive. Skip the full re-plot when the
+// exact same set of events is already on the map (a lightweight signature check).
+const sig=(list||[]).length+':'+((list&&list.length)?(list[0].id+'|'+list[list.length-1].id):'')+':'+((list||[]).filter(e=>e.lat!=null).length);
+if(sig===_lastEventPlotSig){ return; }
+_lastEventPlotSig=sig;
 roundsEventsLayer.clearLayers();
 const markers=[];const needGeo=[];
 (list||[]).forEach(e=>{
@@ -3449,7 +3455,7 @@ if(roundsEventsLayer.addLayer)roundsEventsLayer.addLayer(mk);
 added++;
 }
 }
-function clearEventsFromRoundsMap(){ if(roundsEventsLayer)roundsEventsLayer.clearLayers(); }
+function clearEventsFromRoundsMap(){ if(roundsEventsLayer)roundsEventsLayer.clearLayers(); _lastEventPlotSig=null; }
 function syncSharedMapLayers(){
 if(!leafletMap)return;
 const showEvents=(homeSection==='both'||homeSection==='events');
