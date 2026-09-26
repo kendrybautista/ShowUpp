@@ -236,8 +236,6 @@ background:radial-gradient(circle at 50% 35%,#2a2350,#14112e 70%,#0b0918);color:
 .rsp-glow{position:absolute;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(124,131,255,.35),transparent 70%);animation:rspPulse 2.4s ease-in-out infinite;pointer-events:none}
 @keyframes rspPulse{0%,100%{transform:scale(.9);opacity:.5}50%{transform:scale(1.15);opacity:.85}}
 .scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
-/* Manager panel: keep everything inside the box, vertical scroll only. Wide/overflowing
-   grids and inputs were causing the whole panel to slide left/right. */
 #s-admin .scroll{overflow-x:hidden}
 #s-admin *{box-sizing:border-box;max-width:100%}
 #s-admin input,#s-admin select,#s-admin textarea{max-width:100%}
@@ -1285,7 +1283,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.47';
+const APP_VERSION='1.48';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}

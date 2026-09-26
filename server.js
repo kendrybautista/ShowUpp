@@ -594,6 +594,7 @@ await db.exec(`
   -- range and a lat/lng bounding box, so both need to be fast on a large table.
   CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
   CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(lat, lng);
+  CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
 
   -- ===== Chat data retention (archive -> export -> prune -> delete) =====
   -- Every chat surface (event Rounds, ongoing Rounds, DMs/groups via conversations,
@@ -5152,18 +5153,18 @@ async function fetchTicketmaster(apiKey, label, countries) {
   const ccs = rotateCountries((countries && countries.length) ? countries.slice() : ticketmasterCountries());
   const pageSize = 200;
   const MAX_PAGES_PER_SLICE = 5; // Ticketmaster refuses paging past page*size ≈ 1,000 results
-  const MIN_SLICE_DAYS = 2;      // stop splitting a date range once it's this narrow
+  const MIN_SLICE_DAYS = 2;      // stop splitting a date range once it's this narrow, even if still >1,000 results
   const MAX_SLICE_DEPTH = 10;    // bounds any one country to at most 2^10 = 1024 slices
-  // Overall safety cap for the whole run (across all countries).
+  // Getting EVERY event for EVERY country (not just the first ~1,000 per country) means
+  // big markets now cost several queries instead of one, so the total budget has to be much
+  // higher than before. Ticketmaster's standard key quota is 5,000 calls/day — this leaves
+  // some headroom for the rest of the day (the nightly job, other sources, other manual
+  // refreshes). Raise TICKETMASTER_MAX_CALLS if this key's quota is higher and you want a
+  // wider safety margin, or lower it if 5,000/day isn't actually available to this key.
   const MAX_CALLS_PER_RUN = parseInt(process.env.TICKETMASTER_MAX_CALLS || '8000', 10);
-  // FAIRNESS: give EACH country its own call budget so a huge market (US) can't devour the
+  // FAIRNESS: each country gets its own call budget so a huge market (US) can't devour the
   // whole run and starve every other country — the bug that left only US events showing.
-  // Big markets still get plenty (enough to page ~tens of thousands of events via slicing);
-  // smaller ones need far fewer. Tune with TICKETMASTER_PER_COUNTRY_CALLS.
   const PER_COUNTRY_CALLS = parseInt(process.env.TICKETMASTER_PER_COUNTRY_CALLS || '600', 10);
-  // Throughput: more concurrency + a higher request rate = far faster. Ticketmaster's
-  // documented default is 5 rps / 5000 per day, but many keys tolerate more; these are
-  // env-overridable so you can push them up for your key.
   const gate = createRateGate(
     parseInt(process.env.TICKETMASTER_CONCURRENCY || '12', 10),
     parseInt(process.env.TICKETMASTER_RPS || '9', 10)
@@ -5178,7 +5179,6 @@ async function fetchTicketmaster(apiKey, label, countries) {
     for (let page = 0; page < MAX_PAGES_PER_SLICE; page++) {
       if (capHit) return;
       if (callCount >= MAX_CALLS_PER_RUN) { capHit = true; lastError = lastError || 'Reached per-run request cap.'; return; }
-      // Per-country fairness cap — once a country has used its share, move on so others run.
       if ((perCountryCalls[cc] || 0) >= PER_COUNTRY_CALLS) { skipped.push(cc); return; }
       const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=${encodeURIComponent(cc)}&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${iso(startMs)}&endDateTime=${iso(endMs)}`;
       callCount++; perCountryCalls[cc] = (perCountryCalls[cc] || 0) + 1;
@@ -5200,6 +5200,9 @@ async function fetchTicketmaster(apiKey, label, countries) {
       for (const e of evs) events.push(normalizeTicketmasterEvent(e, label, cc));
       const totalElements = (data.page && data.page.totalElements) || evs.length;
       const totalPages = (data.page && data.page.totalPages) || 1;
+      // The first page tells us whether this slice's real catalog is bigger than a single
+      // query can page through. If so, and there's still room to divide the date range
+      // further, split it in two and recurse instead of truncating at ~1,000 results.
       if (page === 0 && totalElements > pageSize * MAX_PAGES_PER_SLICE && depth < MAX_SLICE_DEPTH && (endMs - startMs) > MIN_SLICE_DAYS * 86400000) {
         const mid = startMs + Math.floor((endMs - startMs) / 2);
         await Promise.all([fetchSlice(cc, startMs, mid, depth + 1), fetchSlice(cc, mid, endMs, depth + 1)]);
@@ -5208,12 +5211,9 @@ async function fetchTicketmaster(apiKey, label, countries) {
       if (page + 1 >= totalPages || evs.length === 0) return;
     }
   }
-  // Run ALL countries concurrently; the shared rate-gate keeps total throughput within limits
-  // while the per-country budgets keep coverage fair and worldwide.
   await Promise.all(ccs.map(cc => fetchSlice(cc, windowStartMs, windowEndMs, 0)));
-  const countriesWithEvents = new Set(events.map(e => e.country)).size;
-  console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries (${countriesWithEvents} returned events), got ${events.length} events`
-    + (skipped.length ? `; hit per-country cap on: ${[...new Set(skipped)].join(', ')}` : '')
+  console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries, got ${events.length} events`
+    + (skipped.length ? `; rate-limited on: ${[...new Set(skipped)].join(', ')}` : '')
     + (capHit ? '; hit per-run call cap' : ''));
   return { events, error: events.length === 0 ? lastError : null };
 }
@@ -6584,29 +6584,43 @@ app.post('/api/events/:id/delete', requireAuth, async (req, res) => {
 // EVENT_PROVIDERS (see "Other / manual" in the form) is flagged isManual: true — it's
 // never auto-fetched, and the panel offers an "add event" form for it instead.
 app.get('/api/admin/event-sources', requireAuth, requireAdmin, async (req, res) => {
-  const rows = await db.prepare('SELECT id, provider, label, api_key, url, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
-  const masked = [];
-  const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
-  for (const r of rows) {
-    const isWebsite = (r.provider === WEBSITE_PROVIDER);
-    const isCustomApi = (r.provider === 'custom_api');
-    const isManual = !EVENT_PROVIDERS[r.provider] && !isWebsite;
-    // Website events are namespaced per source ('website:<id>'); API providers use the
-    // provider key as the event source. Count against the right key.
-    const srcKey = isWebsite ? (WEBSITE_PROVIDER + ':' + r.id) : r.provider;
-    const evRow = await db.prepare(`
-      SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM events
-      WHERE source = ? AND approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
-    `).get(srcKey, now() - 6 * 3600 * 1000, cutoff);
-    masked.push({
-      ...r,
-      api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
-      isManual, isWebsite, isCustomApi,
-      live_events: evRow ? Number(evRow.n) || 0 : 0,
-      last_event_added: evRow && evRow.latest ? Number(evRow.latest) : null
+  try {
+    const rows = await db.prepare('SELECT id, provider, label, api_key, url, enabled, created_at, last_ingest_at, last_error, last_fetched_count FROM event_sources ORDER BY created_at DESC').all();
+    const cutoff = now() + EVENT_INGEST_WINDOW_DAYS * 24 * 3600 * 1000;
+    const floor = now() - 6 * 3600 * 1000;
+    // Count live events per source in ONE grouped query instead of a full-table COUNT scan
+    // per source. With a large events table the per-source scans were slow enough to time
+    // out the request — which surfaced in the UI as "Something went wrong" / "Please log in
+    // again". One aggregate query keeps this fast no matter how many events are cached.
+    let counts = {};
+    try {
+      const grouped = await db.prepare(`
+        SELECT source, COUNT(*) AS n, MAX(created_at) AS latest
+        FROM events
+        WHERE approved = 1 AND (starts_at IS NULL OR (starts_at > ? AND starts_at <= ?))
+        GROUP BY source
+      `).all(floor, cutoff);
+      for (const g of grouped) counts[g.source] = { n: Number(g.n) || 0, latest: g.latest ? Number(g.latest) : null };
+    } catch (e) { counts = {}; }
+    const masked = rows.map(r => {
+      const isWebsite = (r.provider === WEBSITE_PROVIDER);
+      const isCustomApi = (r.provider === 'custom_api');
+      const isManual = !EVENT_PROVIDERS[r.provider] && !isWebsite;
+      const srcKey = isWebsite ? (WEBSITE_PROVIDER + ':' + r.id) : r.provider;
+      const c = counts[srcKey] || { n: 0, latest: null };
+      return {
+        ...r,
+        api_key: r.api_key ? '••••••••' + String(r.api_key).slice(-4) : '',
+        isManual, isWebsite, isCustomApi,
+        live_events: c.n,
+        last_event_added: c.latest
+      };
     });
+    res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), ingestWindowDays: EVENT_INGEST_WINDOW_DAYS });
+  } catch (err) {
+    console.error('[events] event-sources list failed', err && err.message);
+    res.status(500).json({ error: 'Could not load event accounts. Please try again.' });
   }
-  res.json({ sources: masked, availableProviders: Object.keys(EVENT_PROVIDERS), ingestWindowDays: EVENT_INGEST_WINDOW_DAYS });
 });
 
 // Add a new event-account. `provider` can be a registered auto-fetch provider (e.g.
