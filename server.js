@@ -286,6 +286,7 @@ await db.exec(`
   -- Friendship Engine ("Vibe Check"): stores the user's questionnaire answers as JSON.
   -- Shape: {"answers":{"0":[1,3],"1":[0],...},"archetype":"...","updated_at":1234567890}
   ALTER TABLE users ADD COLUMN IF NOT EXISTS vibe_answers TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS vibe_radius INTEGER;
   -- Item 17: hosts can require approval for random users to join their Round.
   ALTER TABLE rounds ADD COLUMN IF NOT EXISTS requires_approval INTEGER DEFAULT 0;
   -- Pending join requests for approval-gated Rounds.
@@ -2587,10 +2588,20 @@ app.get('/api/vibe/matches', requireAuth, async (req, res) => {
     const opts = {};
     if (!isNaN(lat) && !isNaN(lng)) { opts.lat = lat; opts.lng = lng; }
     opts._liveThreshold = await vibeThreshold();
+    // Item 2: user-chosen match radius (miles). Clamp; persist so it sticks.
+    let _rad = parseInt(req.query.radius, 10);
+    if (!isNaN(_rad)) {
+      _rad = Math.max(5, Math.min(500, _rad));
+      opts.radius = _rad;
+      try { await db.prepare('UPDATE users SET vibe_radius = ? WHERE id = ?').run(_rad, req.user.id); } catch (e) {}
+    } else {
+      const _u = await db.prepare('SELECT vibe_radius FROM users WHERE id = ?').get(req.user.id);
+      if (_u && _u.vibe_radius) opts.radius = _u.vibe_radius;
+    }
     const r = await computeVibeMatches(req.user.id, opts);
     if (!r.ready) return res.json({ ready: false, reason: 'incomplete', answeredCount: answeredCount(r.myVibe), total: VIBE_QUESTION_COUNT });
     res.json({
-      ready: true, threshold: opts._liveThreshold, radius: VIBE_RADIUS_MI,
+      ready: true, threshold: opts._liveThreshold, radius: opts.radius || VIBE_RADIUS_MI,
       myAnswers: r.myVibe.answers, myArchetype: r.myVibe.archetype || '',
       poolSize: r.poolSize, matches: r.matches.slice(0, VIBE_MAX_RESULTS)
     });
@@ -5540,9 +5551,13 @@ async function fetchSerpApiEvents(apiKey, label, opts) {
       let r;
       try { r = await fetch(url); } catch (e) { lastError = 'Network error: ' + e.message; break; }
       if (!r.ok) {
-        let d = r.statusText; try { const b = await r.json(); d = (b && (b.error)) || d; } catch (e) {}
+        let d = r.statusText; try { const b = await r.json(); d = (b && b.error) || d; } catch (e) {}
+        // A 400 "Unsupported search engine" from SerpApi means the account's PLAN doesn't
+        // include the Google Events engine — it's not on the free tier. Surface that clearly.
+        if (r.status === 400 && /unsupported/i.test(String(d)) && /engine/i.test(String(d))) {
+          return { events: [], error: 'SerpApi\u2019s Google Events engine isn\u2019t available on your plan. The free tier only includes basic Google Search — Google Events requires a paid SerpApi plan. Upgrade at serpapi.com/pricing, or use Ticketmaster / SeatGeek for free worldwide events.' };
+        }
         lastError = 'SerpApi HTTP ' + r.status + (d ? ' — ' + d : '');
-        // 401 = bad key; stop entirely. Other errors: skip this query.
         if (r.status === 401) return { events: [], error: 'SerpApi rejected the key (HTTP 401). Check the key at serpapi.com → API Key.' };
         break;
       }

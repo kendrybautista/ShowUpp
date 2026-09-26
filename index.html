@@ -1282,7 +1282,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.52';
+const APP_VERSION='1.53';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -8010,6 +8010,7 @@ try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} if(user
 setTimeout(()=>{clearInterval(tick);showVibeMatches();},1600);
 document.getElementById('vibeRetake').style.display='block';
 }
+let vibeRadius=25; // Item 2: user-chosen Vibe Check match radius (miles)
 async function showVibeMatches(){
 vibeState.mode='view';
 document.getElementById('vibeRetake').style.display='block';
@@ -8017,7 +8018,7 @@ const body=document.getElementById('vibeBody');
 body.innerHTML='<div class="vibe-analyze"><div class="va-ring"></div><h2>Finding your people…</h2></div>';
 let q='/api/vibe/matches';
 try{ if(!userLoc){const loc=await requestLocation();if(loc)userLoc=loc;} }catch(e){}
-if(userLoc)q+='?lat='+userLoc.lat+'&lng='+userLoc.lng;
+const _params=[]; if(userLoc){_params.push('lat='+userLoc.lat);_params.push('lng='+userLoc.lng);} _params.push('radius='+vibeRadius); q+='?'+_params.join('&');
 let d;
 try{ d=await api(q); }catch(e){ body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">😕</div><h2>Something went wrong</h2><p>'+esc(e.message)+'</p><button class="btn btn-mango" onclick="showVibeMatches()">Try again</button></div>'; return; }
 if(!d.ready){
@@ -8025,15 +8026,19 @@ body.innerHTML='<div class="vibe-empty"><div class="ve-emoji">📝</div><h2>Let\
 if(typeof translatePage==='function')translatePage(body);
 return;
 }
+if(d.radius)vibeRadius=d.radius;
 const arch=VIBE_ARCHETYPES.find(a=>a.key===d.myArchetype)||computeArchetype(d.myAnswers||{});
-let html='<div class="vibe-archetype"><div class="va-emoji">'+arch.emoji+'</div><div class="va-label">'+arch.label+'</div><div class="va-sub">'+arch.sub+'</div></div>';
+const _radOpts=[10,25,50,100,'Anywhere'];
+const _radLabel=(vibeRadius>=500?'Anywhere':(milesLabel?milesLabel(vibeRadius*1.60934):vibeRadius+' mi'));
+let html='<div class="vibe-radius" style="background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:0 2px 14px"><div style="font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📍 Match within</div><div style="display:flex;gap:6px;flex-wrap:wrap">'+_radOpts.map(function(o){var val=(o==='Anywhere')?500:o;var on=(o==='Anywhere'?vibeRadius>=500:vibeRadius===o);var lbl=(o==='Anywhere')?'Anywhere 🌍':(o+' mi');return '<div onclick="setVibeRadius('+val+')" style="flex:1;min-width:60px;text-align:center;padding:8px 6px;border-radius:10px;font-size:12.5px;font-weight:700;cursor:pointer;border:1.5px solid '+(on?'var(--coral)':'var(--line)')+';background:'+(on?'var(--coral)':'transparent')+';color:'+(on?'#fff':'var(--night)')+'">'+lbl+'</div>';}).join('')+'</div></div>';
+html+='<div class="vibe-archetype"><div class="va-emoji">'+arch.emoji+'</div><div class="va-label">'+arch.label+'</div><div class="va-sub">'+arch.sub+'</div></div>';
 if(!d.matches.length){
-html+='<div class="vibe-empty"><div class="ve-emoji">🌱</div><h2>No 80%+ matches within 25 miles… yet</h2><p>Your people may not have taken the Vibe Check yet. We\'ll keep looking as more folks nearby join in. Invite a friend to grow the pool!</p>'
+html+='<div class="vibe-empty"><div class="ve-emoji">🌱</div><h2>No 80%+ matches in range… yet</h2><p>Your people may not have taken the Vibe Check yet. We\'ll keep looking as more folks nearby join in. Invite a friend to grow the pool!</p>'
 +'<button class="btn btn-mango" onclick="go(\'s-home\')">Explore Rounds meanwhile</button></div>';
 body.innerHTML=html;
 return;
 }
-html+='<div style="text-align:center;font-size:13.5px;color:var(--muted);margin:2px 2px 14px">✨ '+d.matches.length+' '+(d.matches.length===1?'person':'people')+' nearby vibe like you (80%+ match, within 25 mi)</div>';
+html+='<div style="text-align:center;font-size:13.5px;color:var(--muted);margin:2px 2px 14px">✨ '+d.matches.length+' '+(d.matches.length===1?'person':'people')+' nearby vibe like you (80%+ match)</div>';
 html+=d.matches.map((m,idx)=>vibeMatchCardHTML(m,d.myAnswers,idx)).join('');
 html+='<div class="vibe-skip" style="margin-top:6px" onclick="startVibeQuiz(true)">↺ Retake the Vibe Check</div>';
 body.innerHTML=html;
@@ -8041,6 +8046,7 @@ if(typeof translatePage==='function')translatePage(body);
 document.querySelector('#s-vibe .scroll').scrollTop=0;
 requestAnimationFrame(()=>{document.querySelectorAll('#s-vibe .vr-fg').forEach(el=>{el.style.strokeDashoffset=el.dataset.off;});});
 }
+function setVibeRadius(mi){ vibeRadius=mi; showVibeMatches(); }
 function vibeMatchCardHTML(m,myAns,idx){
 const av=m.avatar?'<img class="vm-av" src="'+esc(m.avatar)+'">':'<div class="vm-av">'+esc((m.name||'?').charAt(0).toUpperCase())+'</div>';
 const C=2*Math.PI*26; // r=26
