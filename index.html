@@ -1277,7 +1277,7 @@ document.addEventListener('click',function(e){
 if(!e.target.closest('.country-picker'))document.querySelectorAll('.cp-menu.open').forEach(m=>m.classList.remove('open'));
 });
 const API=location.origin;
-const APP_VERSION='1.44';
+const APP_VERSION='1.45';
 function saveToken(tok,remember){
 try{
 if(remember){localStorage.setItem('su_token',tok);sessionStorage.removeItem('su_token');localStorage.setItem('su_remember','1');}
@@ -9065,9 +9065,9 @@ hint.textContent=where[v]||'';
 hint.style.display=(where[v]&&!isWebsite&&!isManual)?'block':'none';
 }
 }
-async function loadAdminEventSources(){
+async function loadAdminEventSources(silent){
 const box=document.getElementById('adminSourcesList');
-box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+t('Loading…')+'</p>';
+if(!silent)box.innerHTML='<p style="color:var(--muted);font-size:13.5px;padding:14px 2px">'+t('Loading…')+'</p>';
 try{
 const data=await api('/api/admin/event-sources');
 window._admSources=data.sources||[];
@@ -9104,7 +9104,10 @@ liveLine+=' · last added '+when;
 }
 const errorLine=hasError?'<div style="font-size:11.5px;color:#d94b3b;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">'+esc(s.last_error)+'</div>':'';
 const addBtn=s.isManual?'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admOpenAddEvent(\''+s.id+'\',\''+esc(s.label).replace(/'/g,"")+'\')">+ Add event</span>':'';
-const refreshBtn=s.isManual?'':'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admRefreshEventSource(\''+s.id+'\')" id="admRefreshBtn-'+s.id+'">↻ Refresh</span>';
+const isRefreshing=window._admRefreshInProgress&&window._admRefreshInProgress.has(s.id);
+const refreshBtn=s.isManual?'':(isRefreshing
+  ?'<span style="font-size:12.5px;font-weight:700;color:var(--muted)" id="admRefreshBtn-'+s.id+'">↻ Refreshing…</span>'
+  :'<span style="font-size:12.5px;font-weight:700;color:var(--coral);cursor:pointer" onclick="admRefreshEventSource(\''+s.id+'\')" id="admRefreshBtn-'+s.id+'">↻ Refresh</span>');
 const editBtn='<span style="font-size:12.5px;font-weight:700;color:var(--night);cursor:pointer" onclick="admOpenEditSource(\''+s.id+'\')">Edit</span>';
 return '<div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)">'
 +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
@@ -9158,13 +9161,40 @@ try{await api('/api/admin/event-sources/'+sid+'/delete','POST',{});toast('Accoun
 catch(e){toast(e.message);}
 }
 async function admRefreshEventSource(sid){
-const btn=document.getElementById('admRefreshBtn-'+sid);
-if(btn){btn.textContent='↻ Refreshing…';btn.style.pointerEvents='none';}
+// A worldwide pull now runs in the background (see the server route) since it can take
+// a few minutes — pace-limited by Ticketmaster's own rate limit, not by anything we can
+// speed up further without a higher-tier key. Poll the source list instead of waiting on
+// one long request, and stop as soon as this account's last_ingest_at actually changes.
+if(!window._admRefreshInProgress)window._admRefreshInProgress=new Set();
+if(window._admRefreshInProgress.has(sid))return; // already refreshing — ignore a second click
+const before=(window._admSources||[]).find(s=>s.id===sid);
+const prevIngestAt=before?before.last_ingest_at:null;
+window._admRefreshInProgress.add(sid);
+loadAdminEventSources(true);
 try{
-const r=await api('/api/admin/event-sources/'+sid+'/refresh','POST',{});
-toast('Pulled '+r.kept+' event'+(r.kept===1?'':'s')+' from this account 🎟️');
-}catch(e){toast(e.message);}
-finally{loadAdminEventSources();}
+await api('/api/admin/event-sources/'+sid+'/refresh','POST',{});
+toast('Refresh started — worldwide pulls can take a few minutes. This list updates automatically 🎟️');
+}catch(e){
+toast(e.message);
+window._admRefreshInProgress.delete(sid);
+loadAdminEventSources(true);
+return;
+}
+let tries=0;
+const poll=setInterval(async ()=>{
+tries++;
+await loadAdminEventSources(true);
+const cur=(window._admSources||[]).find(s=>s.id===sid);
+const finished=cur&&cur.last_ingest_at&&cur.last_ingest_at!==prevIngestAt;
+if(finished||tries>=40){ // ~40×10s ≈ 6.5 minutes, generous for a full worldwide pull
+clearInterval(poll);
+window._admRefreshInProgress.delete(sid);
+loadAdminEventSources(true);
+if(finished){
+toast(cur.last_error?('Refresh finished with an error: '+cur.last_error):('Refreshed — pulled '+(cur.last_fetched_count||0)+' event'+(cur.last_fetched_count===1?'':'s')+' from this account 🎟️'));
+}
+}
+},10000);
 }
 function admOpenEditSource(sid){
 const box=document.getElementById('admSrcEdit-'+sid);

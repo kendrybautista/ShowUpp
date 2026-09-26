@@ -5086,66 +5086,132 @@ function rotateCountries(ccs) {
   return ccs.slice(offset).concat(ccs.slice(0, offset));
 }
 
-// Pages through Ticketmaster's catalog for EACH configured country, in weekly slices
-// (rather than one huge date range) so a single slow/failed page never loses the whole
-// window, and caps pages per slice so one ingest run can't run away against the API's
-// rate limit. Returns { events, error }.
+// Shared limiter for one fetchTicketmaster run: bounds how many requests are ever
+// actually in flight AND paces them to roughly Ticketmaster's documented ~5-requests/second
+// burst limit. Without this, firing several countries (or, below, several date-slices of
+// the same big country) at once with no shared pacing is exactly what tripped Ticketmaster's
+// rate limiter and made it look like the pull "stopped" partway through — the first wave of
+// countries got through, then every country after that failed its very first request and
+// contributed zero events, even though the run reported plenty of call budget left.
+function createRateGate(concurrency, perSecond) {
+  let active = 0;
+  const queue = [];
+  let nextSlot = Date.now();
+  const gapMs = 1000 / perSecond;
+  function pump() {
+    while (active < concurrency && queue.length) {
+      active++;
+      const resolve = queue.shift();
+      const t = Date.now();
+      nextSlot = Math.max(nextSlot + gapMs, t);
+      setTimeout(resolve, Math.max(0, nextSlot - t));
+    }
+  }
+  return {
+    acquire() { return new Promise(resolve => { queue.push(resolve); pump(); }); },
+    release() { active--; pump(); }
+  };
+}
+// Fetches one URL through the shared gate, retrying a 429 with backoff (honoring
+// Retry-After when Ticketmaster sends one) instead of giving up on the whole country the
+// instant one request gets rate-limited.
+async function tmFetchWithRetry(gate, url) {
+  const MAX_RETRIES = 4;
+  for (let attempt = 0; ; attempt++) {
+    await gate.acquire();
+    let r, netErr = null;
+    try { r = await fetch(url); } catch (err) { netErr = err; }
+    gate.release();
+    if (netErr) {
+      if (attempt >= MAX_RETRIES) throw new Error(`Network error: ${netErr.message}`);
+      await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
+      continue;
+    }
+    if (r.status === 429) {
+      if (attempt >= MAX_RETRIES) { const e = new Error('Rate limited.'); e.code = 429; throw e; }
+      const retryAfterS = parseInt(r.headers.get('retry-after') || '0', 10);
+      await new Promise(res => setTimeout(res, Math.max(retryAfterS * 1000, 700 * (attempt + 1))));
+      continue;
+    }
+    return r;
+  }
+}
+// Pages through Ticketmaster's catalog for every configured country, worldwide. Each
+// country starts as a single date-range query; if that country's real catalog is bigger
+// than Ticketmaster will let one query page through (~1,000 results — page*size beyond
+// that is refused), the date range is recursively split in half and each half is fetched
+// the same way, so a huge market like the US doesn't get silently truncated at page 5 while
+// small markets still cost only one call. All actual HTTP calls — across every country and
+// every slice — share one rate gate, so this stays fast (as parallel as Ticketmaster's rate
+// limit allows) without the bursts that were dropping most countries after the first wave.
+// Returns { events, error }.
 async function fetchTicketmaster(apiKey, label, countries) {
   if (!apiKey) return { events: [], error: 'No API key configured for this source.' };
   const events = [];
   let lastError = null, callCount = 0;
   const ccs = rotateCountries((countries && countries.length) ? countries.slice() : ticketmasterCountries());
-  // Item 6 fix — the OLD code sliced the whole year into 53 weekly windows and paged each
-  // one per country (≈1,500 API calls per run), which torched the 5,000/day quota after a
-  // couple of manager actions. Ticketmaster lets us request the entire display window in a
-  // SINGLE date range and simply page through the results, so we do that instead: one date
-  // range per country, capped at MAX_PAGES pages. That's ~a few dozen calls per full run.
   const pageSize = 200;
-  // A hard ceiling on total requests per run, shared across all countries, so no
-  // configuration (however large the country list) can blow the daily quota. Ticketmaster
-  // also refuses paging past ~1,000 results (page*size), so 5 pages × 200 = the real max.
-  const MAX_PAGES_PER_COUNTRY = 5;
-  const MAX_CALLS_PER_RUN = 300;
-  const startDateTime = new Date(Date.now() - 6 * 3600 * 1000).toISOString().split('.')[0] + 'Z';
-  const endDateTime = new Date(Date.now() + EVENT_INGEST_WINDOW_DAYS * 86400000).toISOString().split('.')[0] + 'Z';
-  // A 429 on one country used to abort the ENTIRE run via `break outer`, silently dropping
-  // every country still left in the list for that run (not just the one that hit the
-  // limit) — that's what made whole regions vanish. Now a 429 just moves on to the next
-  // country, same as any other per-country error; skippedByRateLimit is tracked so it's
-  // at least visible in the logs which countries, if any, got cut short by quota.
-  const skippedByRateLimit = [];
-  // The countries used to be walked one at a time — with ~44 in the default list, that's
-  // ~44+ sequential network round trips to Ticketmaster before a manual "Refresh now" ever
-  // got a response, even though every country's pages are independent of every other
-  // country's. Fetching several countries at once (bounded, so it stays gentle on the API
-  // and the shared call cap below) cuts that wall-clock time roughly in proportion to the
-  // concurrency. Pages *within* one country still run in order, same as before, since page
-  // N's totalPages comes from page N-1's response.
-  const COUNTRY_CONCURRENCY = 8;
-  await mapLimit(ccs, COUNTRY_CONCURRENCY, async (cc) => {
-    for (let page = 0; page < MAX_PAGES_PER_COUNTRY; page++) {
-      if (callCount >= MAX_CALLS_PER_RUN) { lastError = lastError || 'Reached per-run request cap.'; return; }
-      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=${encodeURIComponent(cc)}&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${startDateTime}&endDateTime=${endDateTime}`;
-      let r;
+  const MAX_PAGES_PER_SLICE = 5; // Ticketmaster refuses paging past page*size ≈ 1,000 results
+  const MIN_SLICE_DAYS = 2;      // stop splitting a date range once it's this narrow, even if still >1,000 results
+  const MAX_SLICE_DEPTH = 9;     // bounds any one country to at most 2^9 = 512 slices
+  // Getting EVERY event for EVERY country (not just the first ~1,000 per country) means
+  // big markets now cost several queries instead of one, so the total budget has to be much
+  // higher than before. Ticketmaster's standard key quota is 5,000 calls/day — this leaves
+  // some headroom for the rest of the day (the nightly job, other sources, other manual
+  // refreshes). Raise TICKETMASTER_MAX_CALLS if this key's quota is higher and you want a
+  // wider safety margin, or lower it if 5,000/day isn't actually available to this key.
+  const MAX_CALLS_PER_RUN = parseInt(process.env.TICKETMASTER_MAX_CALLS || '4000', 10);
+  // How fast this is allowed to go: concurrent in-flight requests and requests/second.
+  // Defaults match Ticketmaster's documented Discovery API limits; override per-key if
+  // yours is different (e.g. a partner key with a higher rate).
+  const gate = createRateGate(
+    parseInt(process.env.TICKETMASTER_CONCURRENCY || '6', 10),
+    parseInt(process.env.TICKETMASTER_RPS || '5', 10)
+  );
+  const windowStartMs = Date.now() - 6 * 3600 * 1000;
+  const windowEndMs = Date.now() + EVENT_INGEST_WINDOW_DAYS * 86400000;
+  const iso = ms => new Date(ms).toISOString().split('.')[0] + 'Z';
+  const skipped = [];
+  let capHit = false;
+  async function fetchSlice(cc, startMs, endMs, depth) {
+    for (let page = 0; page < MAX_PAGES_PER_SLICE; page++) {
+      if (capHit) return;
+      if (callCount >= MAX_CALLS_PER_RUN) { capHit = true; lastError = lastError || 'Reached per-run request cap.'; return; }
+      const url = `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(apiKey)}&countryCode=${encodeURIComponent(cc)}&size=${pageSize}&page=${page}&sort=date,asc&startDateTime=${iso(startMs)}&endDateTime=${iso(endMs)}`;
       callCount++;
-      try { r = await fetch(url); } catch (err) { lastError = `Network error: ${err.message}`; return; }
+      let r;
+      try { r = await tmFetchWithRetry(gate, url); }
+      catch (err) {
+        if (err.code === 429) { skipped.push(cc); lastError = `Ticketmaster rate limit (country ${cc})`; }
+        else lastError = err.message;
+        return;
+      }
       if (!r.ok) {
         let detail = r.statusText;
         try { const body = await r.json(); detail = (body.fault && body.fault.faultstring) || (body.errors && body.errors[0] && body.errors[0].detail) || detail; } catch (e) {}
         lastError = `Ticketmaster returned HTTP ${r.status}${detail ? ' — ' + detail : ''} (country ${cc})`;
-        if (r.status === 429) { skippedByRateLimit.push(cc); await new Promise(res => setTimeout(res, 250)); }
-        return; // move to the next country either way
+        return;
       }
       const data = await r.json();
       const evs = (data._embedded && data._embedded.events) || [];
       for (const e of evs) events.push(normalizeTicketmasterEvent(e, label, cc));
+      const totalElements = (data.page && data.page.totalElements) || evs.length;
       const totalPages = (data.page && data.page.totalPages) || 1;
+      // The first page tells us whether this slice's real catalog is bigger than a single
+      // query can page through. If so, and there's still room to divide the date range
+      // further, split it in two and recurse instead of truncating at ~1,000 results.
+      if (page === 0 && totalElements > pageSize * MAX_PAGES_PER_SLICE && depth < MAX_SLICE_DEPTH && (endMs - startMs) > MIN_SLICE_DAYS * 86400000) {
+        const mid = startMs + Math.floor((endMs - startMs) / 2);
+        await Promise.all([fetchSlice(cc, startMs, mid, depth + 1), fetchSlice(cc, mid, endMs, depth + 1)]);
+        return;
+      }
       if (page + 1 >= totalPages || evs.length === 0) return;
-      await new Promise(res => setTimeout(res, 250)); // be gentle on the rate limit
     }
-  });
+  }
+  await Promise.all(ccs.map(cc => fetchSlice(cc, windowStartMs, windowEndMs, 0)));
   console.log(`[events] Ticketmaster fetch used ${callCount} API call(s) across ${ccs.length} countries, got ${events.length} events`
-    + (skippedByRateLimit.length ? `; rate-limited on: ${skippedByRateLimit.join(', ')}` : ''));
+    + (skipped.length ? `; rate-limited on: ${[...new Set(skipped)].join(', ')}` : '')
+    + (capHit ? '; hit per-run call cap' : ''));
   return { events, error: events.length === 0 ? lastError : null };
 }
 // Back-compat alias — older callers referenced fetchTicketmasterUS.
@@ -6605,12 +6671,17 @@ app.post('/api/admin/event-sources/:id/update', requireAuth, requireAdmin, async
 // Pull a fresh batch for just this one account, on demand — separate from the
 // all-sources "refresh" below, so a manager doesn't have to re-fetch every other
 // connected account just to check on one that looks stalled or was just edited.
+// Runs in the background rather than blocking the response: a genuine worldwide
+// Ticketmaster pull is paced by Ticketmaster's own rate limit (see fetchTicketmaster)
+// and can take a few minutes even at full speed, which risks the request itself timing
+// out at a proxy/platform level long before the ingest finishes. The manager sees the
+// result — pulled count, any error — on the account's row (last_ingest_at / last_error /
+// last_fetched_count) once it completes; loadAdminEventSources() polls for that.
 app.post('/api/admin/event-sources/:id/refresh', requireAuth, requireAdmin, async (req, res) => {
   const src = await db.prepare('SELECT * FROM event_sources WHERE id = ?').get(req.params.id);
   if (!src) return res.status(404).json({ error: 'Not found.' });
-  const result = await ingestOneSource(src, { force: true });
-  if (!result.ok) return res.status(400).json({ error: result.error || 'Refresh failed.' });
-  res.json({ ok: true, kept: result.kept, total: result.total });
+  ingestOneSource(src, { force: true }).catch(err => console.log('[events] manual single-source refresh failed', err.message));
+  res.json({ ok: true, started: true });
 });
 
 // Toggle an account on/off without deleting its saved key. Item 9 — when a source is
