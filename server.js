@@ -41,6 +41,51 @@ const SUPERVISOR_PASSWORD = process.env.SUPERVISOR_PASSWORD || 'supervisor123';
 // --- Database setup (Neon Postgres) ---
 // All data lives in Neon, separate from the app host, so it survives restarts/deploys.
 const db = require('./db-pg');
+// ===== At-rest field encryption (AES-256-GCM) =====
+// Sensitive personal fields are encrypted before being written to the DB and decrypted only
+// when the server reads them. The key lives in the server env (DATA_ENC_KEY), never in the
+// DB, so a database breach exposes only ciphertext. The server holds the key, so ShowUpp
+// retains decryption ability for safety investigations and valid legal requests.
+const _cryptoLib = require('crypto');
+const ENC_PREFIX = 'enc:v1:';
+let _encKey = null;
+(function initEncKey(){
+  const raw = process.env.DATA_ENC_KEY || '';
+  if (raw){ _encKey = _cryptoLib.createHash('sha256').update(String(raw)).digest(); console.log('[enc] field encryption ENABLED'); }
+  else { console.log('[enc] DATA_ENC_KEY not set — sensitive fields stored as plaintext. Set DATA_ENC_KEY to enable at-rest encryption.'); }
+})();
+function encField(plain){
+  if (plain == null || plain === '') return plain;
+  if (!_encKey) return plain;
+  try {
+    const s = String(plain);
+    if (s.startsWith(ENC_PREFIX)) return s;
+    const iv = _cryptoLib.randomBytes(12);
+    const cipher = _cryptoLib.createCipheriv('aes-256-gcm', _encKey, iv);
+    const ct = Buffer.concat([cipher.update(s, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return ENC_PREFIX + iv.toString('base64') + ':' + tag.toString('base64') + ':' + ct.toString('base64');
+  } catch (e){ return plain; }
+}
+function decField(stored){
+  if (stored == null || stored === '') return stored;
+  const s = String(stored);
+  if (!s.startsWith(ENC_PREFIX)) return s;
+  if (!_encKey) return '';
+  try {
+    const p = s.slice(ENC_PREFIX.length).split(':');
+    const decipher = _cryptoLib.createDecipheriv('aes-256-gcm', _encKey, Buffer.from(p[0],'base64'));
+    decipher.setAuthTag(Buffer.from(p[1],'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(p[2],'base64')), decipher.final()]).toString('utf8');
+  } catch (e){ return ''; }
+}
+// Deterministic blind index for encrypted phone lookups (login/forgot-email). Digits only.
+function phoneHash(digits){
+  const d = String(digits||'').replace(/[^0-9]/g,'');
+  if (!d) return '';
+  const keyMaterial = _encKey || Buffer.from('showupp-phone-index');
+  return _cryptoLib.createHmac('sha256', keyMaterial).update(d).digest('hex');
+}
 // Item 4: enforce a strong password — upper, lower, number, special char, min 8.
 function passwordProblem(pw) {
   pw = String(pw || '');
@@ -273,6 +318,9 @@ await db.exec(`
   ALTER TABLE users ADD COLUMN IF NOT EXISTS show_languages INTEGER DEFAULT 1;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS show_origin INTEGER DEFAULT 1;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+  -- Blind index for encrypted phone lookups: a deterministic HMAC so we can still find a
+  -- user by phone (login / forgot-email) without storing the number in searchable plaintext.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_hash TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS incognito INTEGER DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts INTEGER DEFAULT 1;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS gallery TEXT;
@@ -1056,7 +1104,8 @@ app.post('/api/signup', async (req, res) => {
     email: email.toLowerCase(),
     pass_hash: bcrypt.hashSync(String(password), 10),
     name: String(name).trim(),
-    phone: phone ? String(phone).replace(/[^0-9+ ]/g, '').trim().slice(0, 24) : '',
+    phone: phone ? encField(String(phone).replace(/[^0-9+ ]/g, '').trim().slice(0, 24)) : '',
+    phone_hash: phone ? phoneHash(phone) : '',
     city: city || '',
     origin: origin || '',
     interests: JSON.stringify(Array.isArray(interests) ? interests : []),
@@ -1065,11 +1114,11 @@ app.post('/api/signup', async (req, res) => {
     gender: gender ? String(gender).slice(0, 40) : '',
     created_at: now()
   };
-  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,city,origin,interests,lang,dob,gender,created_at)
-              VALUES (@id,@email,@pass_hash,@name,@phone,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
+  await db.prepare(`INSERT INTO users (id,email,pass_hash,name,phone,phone_hash,city,origin,interests,lang,dob,gender,created_at)
+              VALUES (@id,@email,@pass_hash,@name,@phone,@phone_hash,@city,@origin,@interests,@lang,@dob,@gender,@created_at)`).run(user);
   await logAccountEvent('created', user);
 
-  res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: user.phone } });
+  res.json({ token: makeToken(user), user: { ...publicUser(user), email: user.email, phone: decField(user.phone) } });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -1083,7 +1132,7 @@ app.post('/api/login', async (req, res) => {
   // Try email, then username, then phone
   let row = await db.prepare('SELECT * FROM users WHERE email = ?').get(lower);
   if (!row) row = await db.prepare('SELECT * FROM users WHERE username = ?').get(lower.replace(/^@/, ''));
-  if (!row && digits.length >= 6) row = await db.prepare('SELECT * FROM users WHERE phone = ?').get(digits);
+  if (!row && digits.length >= 6) row = await db.prepare('SELECT * FROM users WHERE phone_hash = ?').get(phoneHash(digits));
   if (!row || !bcrypt.compareSync(String(password), row.pass_hash)) {
     return res.status(401).json({ error: 'Wrong login or password.' });
   }
@@ -1091,7 +1140,7 @@ app.post('/api/login', async (req, res) => {
   // reason and a countdown instead of blocking sign-in entirely. Check for expiry first
   // in case the suspension window has already passed since their last visit.
   await maybeAutoReactivate(row);
-  res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
+  res.json({ token: makeToken(row), user: { ...publicUser(row), email: row.email || '', phone: decField(row.phone) || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
     suspended: !!row.suspended, suspendedReason: row.suspended_reason || '', suspendedAt: row.suspended_at != null ? Number(row.suspended_at) : null, suspendedUntil: row.suspended_until != null ? Number(row.suspended_until) : null } });
 });
 
@@ -1146,7 +1195,7 @@ app.post('/api/auth/google', async (req, res) => {
     }
     return res.json({
       token: makeToken(row),
-      user: { ...publicUser(row), email: row.email || '', phone: row.phone || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
+      user: { ...publicUser(row), email: row.email || '', phone: decField(row.phone) || '', incognito: !!row.incognito, readReceipts: row.read_receipts !== 0,
         suspended: !!row.suspended, suspendedReason: row.suspended_reason || '', suspendedAt: row.suspended_at != null ? Number(row.suspended_at) : null, suspendedUntil: row.suspended_until != null ? Number(row.suspended_until) : null },
       isNew: false
     });
@@ -1191,7 +1240,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
   // (e.g. relationship/bio set after login), which would blank fields on refresh.
   const full = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) || req.user;
   await maybeAutoReactivate(full);
-  res.json({ user: { ...publicUser(full), email: full.email || '', phone: full.phone || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0,
+  res.json({ user: { ...publicUser(full), email: full.email || '', phone: decField(full.phone) || '', incognito: !!full.incognito, readReceipts: full.read_receipts !== 0,
     dob: full.dob || '', age: ageFromDob(full.dob), gender: full.gender || '', showAge: !!full.show_age,
     languages: full.languages || '', originCountryName: full.origin_country || '', originFlag: full.origin_country ? countryFlagEmoji(full.origin_country) : '', showLanguages: full.show_languages !== 0, showOrigin: full.show_origin !== 0,
     suspended: !!full.suspended, suspendedReason: full.suspended_reason || '', suspendedAt: full.suspended_at != null ? Number(full.suspended_at) : null, suspendedUntil: full.suspended_until != null ? Number(full.suspended_until) : null } });
@@ -1436,14 +1485,14 @@ app.post('/api/me/secure-change', requireAuth, async (req, res) => {
     await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
   } else if (field === 'phone') {
     const phone = val.replace(/[^0-9+]/g, '').slice(0, 20);
-    await db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
+    await db.prepare('UPDATE users SET phone = ?, phone_hash = ? WHERE id = ?').run(encField(phone), phoneHash(phone), req.user.id);
   } else if (field === 'password') {
     { const pe = passwordProblem(val); if (pe) return res.status(400).json({ error: pe }); }
     const hash = bcrypt.hashSync(val, 10);
     await db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, req.user.id);
   }
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '' } });
+  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: decField(updated.phone) || '' } });
 });
 
 // ---- Forgot email: look up a (masked) email by username or phone ----
@@ -1454,7 +1503,7 @@ app.post('/api/forgot-email', async (req, res) => {
   const lower = identifier.toLowerCase().replace(/^@/, '');
   const digits = identifier.replace(/[^0-9+]/g, '');
   let row = await db.prepare('SELECT email FROM users WHERE username = ?').get(lower);
-  if (!row && digits.length >= 6) row = await db.prepare('SELECT email FROM users WHERE phone = ?').get(digits);
+  if (!row && digits.length >= 6) row = await db.prepare('SELECT email FROM users WHERE phone_hash = ?').get(phoneHash(digits));
   if (!row) return res.status(404).json({ error: 'No account found with that username or phone.' });
   // mask the email: keep first char + domain
   const em = row.email || '';
@@ -1636,7 +1685,7 @@ app.post('/api/me/update', requireAuth, async (req, res) => {
     req.user.id
   );
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: updated.phone || '',
+  res.json({ user: { ...publicUser(updated), email: updated.email || '', phone: decField(updated.phone) || '',
     dob: updated.dob || '', age: ageFromDob(updated.dob), gender: updated.gender || '', showAge: !!updated.show_age,
     languages: updated.languages || '', originCountryName: updated.origin_country || '', originFlag: updated.origin_country ? countryFlagEmoji(updated.origin_country) : '', showLanguages: updated.show_languages !== 0, showOrigin: updated.show_origin !== 0 } });
 });
