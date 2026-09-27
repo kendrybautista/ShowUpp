@@ -522,9 +522,6 @@ await db.exec(`
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS media TEXT;
   -- Item 2: per-post visibility. 'friends' (default) = friends only; 'public' = friends + followers.
   ALTER TABLE moments ADD COLUMN IF NOT EXISTS visibility TEXT DEFAULT 'friends';
-  -- A daily update can attach a Round or event the user plans to attend, to boost turnout.
-  ALTER TABLE moments ADD COLUMN IF NOT EXISTS attach_type TEXT;
-  ALTER TABLE moments ADD COLUMN IF NOT EXISTS attach_id TEXT;
 
   -- Item 1: one-directional following (no approval). follower_id follows followee_id.
   CREATE TABLE IF NOT EXISTS follows (
@@ -647,17 +644,6 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
   CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(lat, lng);
   CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
-  -- Perf: indexes for the hottest lookups (feeds, reactions, follows, membership).
-  CREATE INDEX IF NOT EXISTS idx_moments_user_exp ON moments(user_id, expires_at);
-  CREATE INDEX IF NOT EXISTS idx_moment_reactions_moment ON moment_reactions(moment_id);
-  CREATE INDEX IF NOT EXISTS idx_moment_reactions_reactor ON moment_reactions(reactor_id);
-  CREATE INDEX IF NOT EXISTS idx_friendships_user ON friendships(user_id);
-  CREATE INDEX IF NOT EXISTS idx_blocks_user ON blocks(user_id);
-  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
-  CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id);
-  CREATE INDEX IF NOT EXISTS idx_memberships_round ON memberships(round_id);
-  CREATE INDEX IF NOT EXISTS idx_moment_views_moment ON moment_views(moment_id);
-  CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read);
 
   -- ===== Chat data retention (archive -> export -> prune -> delete) =====
   -- Every chat surface (event Rounds, ongoing Rounds, DMs/groups via conversations,
@@ -942,22 +928,10 @@ const ALLOWED_WHILE_SUSPENDED = new Set(['/api/me', '/api/suspension/contact-adm
 
 // --- App ---
 const app = express();
-// Perf: gzip all responses (shrinks the ~1.2MB HTML to ~200KB over the wire, and
-// compresses every JSON payload). Lazily required so the app still boots if the package
-// isn't installed — run `npm install compression` to enable it.
-try { const compression = require('compression'); app.use(compression()); console.log('[perf] gzip compression ENABLED'); }
-catch (e) { console.log('[perf] compression not installed — run `npm install compression` for faster loads.'); }
 app.use(express.json({ limit: '16mb' }));
 // Serve the front-end (index.html, assets/, etc.) from the repo root,
 // which is where these files actually live.
-// Perf: let browsers cache static assets (index.html revalidates; assets cache 1 day).
-app.use(express.static(__dirname, {
-  etag: true,
-  setHeaders: (res, path) => {
-    if (/\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf|mp4|gif)$/i.test(path)) res.setHeader('Cache-Control', 'public, max-age=86400');
-    else res.setHeader('Cache-Control', 'no-cache');
-  }
-}));
+app.use(express.static(__dirname));
 
 // ===== Item 4: Web Push (PWA notifications + app badge) =====
 // Lazily require web-push so the app still boots if the package isn't installed yet.
@@ -1305,11 +1279,9 @@ app.post('/api/suspension/contact-admin', requireAuth, async (req, res) => {
 app.get('/api/friends/presence', requireAuth, async (req, res) => {
   const friendIds = (await db.prepare('SELECT friend_id AS fid FROM friendships WHERE user_id = ?').all(req.user.id)).map(r => r.fid);
   const presence = {};
-  if (friendIds.length) {
-    const ph = friendIds.map(() => '?').join(',');
-    const rows = await db.prepare(`SELECT id, incognito FROM users WHERE id IN (${ph})`).all(...friendIds);
-    const incog = {}; rows.forEach(u => { incog[u.id] = !!u.incognito; });
-    for (const fid of friendIds) presence[fid] = incog[fid] ? false : isUserOnline(fid);
+  for (const fid of friendIds) {
+    const u = await db.prepare('SELECT incognito FROM users WHERE id = ?').get(fid);
+    presence[fid] = (u && u.incognito) ? false : isUserOnline(fid);
   }
   res.json({ presence });
 });
@@ -2950,13 +2922,8 @@ app.post('/api/crew/create', requireAuth, async (req, res) => {
 // ---- Moments: temporary 24h profile posts ----
 const MOMENT_TTL = 24 * 3600 * 1000; // 24 hours
 const MOMENT_DAILY_MAX = 10;
-let _lastMomentPrune = 0;
 async function pruneMoments() {
-  // Perf: this runs from several hot endpoints; only actually sweep every ~2 minutes.
-  const nowTs = now();
-  if (nowTs - _lastMomentPrune < 120000) return;
-  _lastMomentPrune = nowTs;
-  const expired = await db.prepare('SELECT id FROM moments WHERE archived_at IS NULL AND expires_at < ?').all(nowTs);
+  const expired = await db.prepare('SELECT id FROM moments WHERE archived_at IS NULL AND expires_at < ?').all(now());
   for (const m of expired) await archiveChat('moment', m.id, 'expired_24h');
 }
 // Create a moment
@@ -2982,60 +2949,23 @@ app.post('/api/moments', requireAuth, async (req, res) => {
   // legacy single-photo support
   const cleanPhoto = (photo && String(photo).startsWith('data:image')) ? String(photo).slice(0, 3000000) : null;
   if (cleanPhoto && !cleanMedia.length) cleanMedia.push({ type: 'image', data: cleanPhoto });
-  const _hasAttach = (req.body && req.body.attach && req.body.attach.id);
-  if (!cleanText.trim() && !cleanMedia.length && !_hasAttach) return res.status(400).json({ error: 'Write something, add a photo/video, or attach a plan.' });
+  if (!cleanText.trim() && !cleanMedia.length) return res.status(400).json({ error: 'Write something or add a photo/video.' });
   const since = now() - MOMENT_TTL;
   const count = Number((await db.prepare('SELECT COUNT(*) c FROM moments WHERE user_id = ? AND created_at > ?').get(req.user.id, since)).c) || 0;
   if (count >= MOMENT_DAILY_MAX) return res.status(429).json({ error: "You've reached the limit of 10 posts in 24 hours. Try again later." });
   const firstPhoto = cleanMedia.find(x => x.type === 'image');
-  // Optional attached Round/event the user plans to attend.
-  const at = (req.body && req.body.attach) || null;
-  let attach_type = null, attach_id = null;
-  if (at && (at.type === 'round' || at.type === 'event') && at.id) { attach_type = at.type; attach_id = String(at.id).slice(0, 80); }
   const m = {
     id: id(), user_id: req.user.id, text: cleanText,
     photo: firstPhoto ? firstPhoto.data : null,
     media: JSON.stringify(cleanMedia),
     visibility: ((req.body && req.body.visibility) === 'public') ? 'public' : 'friends',
-    attach_type, attach_id,
     created_at: now(), expires_at: now() + MOMENT_TTL
   };
-  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,visibility,attach_type,attach_id,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@visibility,@attach_type,@attach_id,@created_at,@expires_at)').run(m);
+  await db.prepare('INSERT INTO moments (id,user_id,text,photo,media,visibility,created_at,expires_at) VALUES (@id,@user_id,@text,@photo,@media,@visibility,@created_at,@expires_at)').run(m);
   const remaining = MOMENT_DAILY_MAX - (count + 1);
   res.json({ moment: m, remaining });
 });
 // Get my own active moments
-// Item 2: things the user can attach to a daily update — Rounds they've joined + upcoming
-// events they've RSVP'd/saved. Kept simple: joined rounds + saved events with a future date.
-app.get('/api/moments/attachable', requireAuth, async (req, res) => {
-  const out = [];
-  try {
-    const rounds = await db.prepare(`SELECT r.id, r.title, r.emoji, r.category, r.place, r.photo, r.event_at
-      FROM memberships m JOIN rounds r ON r.id = m.round_id WHERE m.user_id = ? ORDER BY (r.event_at IS NULL), r.event_at ASC LIMIT 30`).all(req.user.id);
-    for (const r of rounds) out.push({ type: 'round', id: r.id, title: r.title, emoji: r.emoji || '🟣', place: r.place || '', photo: r.photo || null, when: r.event_at || null, category: r.category || '' });
-  } catch (e) {}
-  try {
-    const evs = await db.prepare(`SELECT e.id, e.title, e.emoji, e.place, e.photo, e.starts_at, e.category
-      FROM saved_events v JOIN events e ON e.id = v.event_id WHERE v.user_id = ? AND (e.starts_at IS NULL OR e.starts_at > ?) ORDER BY (e.starts_at IS NULL), e.starts_at ASC LIMIT 30`).all(req.user.id, now() - 6 * 3600 * 1000);
-    for (const e of (evs || [])) out.push({ type: 'event', id: e.id, title: e.title, emoji: e.emoji || '🎟️', place: e.place || '', photo: e.photo || null, when: e.starts_at || null, category: e.category || '' });
-  } catch (e) {}
-  res.json({ items: out });
-});
-// Summary of a Round or event attached to a daily update.
-app.get('/api/plan/:type/:id', requireAuth, async (req, res) => {
-  const { type, id: pid } = req.params;
-  try {
-    if (type === 'round') {
-      const r = await db.prepare('SELECT id,title,emoji,category,blurb,place,photo,event_at,ends_at,is_online,link FROM rounds WHERE id = ?').get(pid);
-      if (!r) return res.status(404).json({ error: 'Not found' });
-      const mc = Number((await db.prepare('SELECT COUNT(*) c FROM memberships WHERE round_id = ?').get(pid)).c) || 0;
-      return res.json({ ok: true, type, id: r.id, title: r.title, emoji: r.emoji || '🟣', category: r.category || '', desc: r.blurb || '', place: r.place || '', photo: r.photo || null, when: r.event_at || null, ends_at: r.ends_at || null, is_online: !!r.is_online, members: mc });
-    }
-    const e = await db.prepare('SELECT id,title,emoji,category,description,place,photo,starts_at,link FROM events WHERE id = ?').get(pid);
-    if (!e) return res.status(404).json({ error: 'Not found' });
-    return res.json({ ok: true, type: 'event', id: e.id, title: e.title, emoji: e.emoji || '🎟️', category: e.category || '', desc: e.description || '', place: e.place || '', photo: e.photo || null, when: e.starts_at || null, link: e.link || null });
-  } catch (err) { res.status(500).json({ error: 'Could not load plan.' }); }
-});
 app.get('/api/moments/mine', requireAuth, async (req, res) => {
   await pruneMoments();
   const rows = await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(req.user.id, now());
@@ -3048,49 +2978,30 @@ app.get('/api/moments/mine', requireAuth, async (req, res) => {
 // Powers the "Daily Updates" tab under Circles > Friends.
 app.get('/api/friends/moments', requireAuth, async (req, res) => {
   await pruneMoments();
-  const uid = req.user.id;
-  const friendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(uid);
-  const followRows = await db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(uid);
+  // Friends: see all their posts. People I follow: see their 'public' posts.
+  const friendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(req.user.id);
+  const followRows = await db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(req.user.id);
   const friendIds = new Set(friendRows.map(r => r.friend_id));
-  const followIds = followRows.map(r => r.followee_id).filter(id => !friendIds.has(id));
-  const allIds = [...friendIds, ...followIds];
-  if (!allIds.length) return res.json({ feed: [] });
-  // One query for everyone I've blocked or who blocked me (instead of isBlocked per user).
-  const blockRows = await db.prepare('SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?').all(uid, uid);
-  const blocked = new Set();
-  blockRows.forEach(b => { if (b.user_id === uid) blocked.add(b.blocked_id); if (b.blocked_id === uid) blocked.add(b.user_id); });
-  const visibleIds = allIds.filter(id => !blocked.has(id));
-  if (!visibleIds.length) return res.json({ feed: [] });
-  const ph = visibleIds.map(() => '?').join(',');
-  // One query for all users, one for all live moments.
-  const users = await db.prepare(`SELECT id,name,username,avatar FROM users WHERE id IN (${ph})`).all(...visibleIds);
-  const userMap = {}; users.forEach(u => { userMap[u.id] = u; });
-  const moments = await db.prepare(`SELECT * FROM moments WHERE user_id IN (${ph}) AND expires_at > ? ORDER BY created_at ASC`).all(...visibleIds, now());
-  // Followers only see 'public' posts; friends see all.
-  const visMoments = moments.filter(m => friendIds.has(m.user_id) || m.visibility === 'public');
-  if (!visMoments.length) return res.json({ feed: [] });
-  // One query for MY reactions across all these moments, one for total counts.
-  const momIds = visMoments.map(m => m.id);
-  const mph = momIds.map(() => '?').join(',');
-  const myReacts = {}; const counts = {};
-  try {
-    const mine = await db.prepare(`SELECT moment_id, reaction FROM moment_reactions WHERE reactor_id = ? AND moment_id IN (${mph})`).all(uid, ...momIds);
-    mine.forEach(r => { myReacts[r.moment_id] = r.reaction; });
-    const cnt = await db.prepare(`SELECT moment_id, COUNT(*) c FROM moment_reactions WHERE moment_id IN (${mph}) GROUP BY moment_id`).all(...momIds);
-    cnt.forEach(r => { counts[r.moment_id] = Number(r.c) || 0; });
-  } catch (e) {}
-  // Group moments by user.
-  const byUser = {};
-  for (const mm of visMoments) {
-    mm.my_reaction = myReacts[mm.id] || null;
-    mm.reaction_count = counts[mm.id] || 0;
-    (byUser[mm.user_id] = byUser[mm.user_id] || []).push(mm);
-  }
+  const seenUsers = new Set();
+  const sources = [];
+  friendIds.forEach(fid => { seenUsers.add(fid); sources.push({ id: fid, friend: true }); });
+  followRows.forEach(fr => { if (!seenUsers.has(fr.followee_id)) { seenUsers.add(fr.followee_id); sources.push({ id: fr.followee_id, friend: false }); } });
   const out = [];
-  for (const id of Object.keys(byUser)) {
-    const u = userMap[id]; if (!u) continue;
-    const ms = byUser[id];
-    out.push({ user: u, moments: ms, latest: ms[ms.length - 1].created_at, relation: friendIds.has(id) ? 'friend' : 'following' });
+  for (const src of sources) {
+    if (await isBlocked(req.user.id, src.id)) continue;
+    const u = await db.prepare('SELECT id,name,username,avatar FROM users WHERE id = ?').get(src.id);
+    if (!u) continue;
+    const moments = src.friend
+      ? await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC').all(src.id, now())
+      : await db.prepare("SELECT * FROM moments WHERE user_id = ? AND expires_at > ? AND visibility = 'public' ORDER BY created_at ASC").all(src.id, now());
+    if (moments.length) {
+      for (const mm of moments) {
+        const mine = await db.prepare('SELECT reaction FROM moment_reactions WHERE moment_id = ? AND reactor_id = ?').get(mm.id, req.user.id);
+        mm.my_reaction = mine ? mine.reaction : null;
+        mm.reaction_count = Number((await db.prepare('SELECT COUNT(*) c FROM moment_reactions WHERE moment_id = ?').get(mm.id)).c) || 0;
+      }
+      out.push({ user: u, moments, latest: moments[moments.length - 1].created_at, relation: src.friend ? 'friend' : 'following' });
+    }
   }
   out.sort((a, b) => b.latest - a.latest);
   res.json({ feed: out });
@@ -3127,15 +3038,11 @@ app.get('/api/users/:id/moments', requireAuth, async (req, res) => {
   const rows = isFriend
     ? await db.prepare('SELECT * FROM moments WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC').all(targetId, now())
     : await db.prepare("SELECT * FROM moments WHERE user_id = ? AND expires_at > ? AND visibility = 'public' ORDER BY created_at DESC").all(targetId, now());
-  // Attach reaction info for the viewer — batched (2 queries, not 2 per moment).
-  if (rows.length) {
-    const ids = rows.map(m => m.id); const ph = ids.map(() => '?').join(',');
-    const myReacts = {}, counts = {};
-    try {
-      (await db.prepare(`SELECT moment_id, reaction FROM moment_reactions WHERE reactor_id = ? AND moment_id IN (${ph})`).all(req.user.id, ...ids)).forEach(r => { myReacts[r.moment_id] = r.reaction; });
-      (await db.prepare(`SELECT moment_id, COUNT(*) c FROM moment_reactions WHERE moment_id IN (${ph}) GROUP BY moment_id`).all(...ids)).forEach(r => { counts[r.moment_id] = Number(r.c) || 0; });
-    } catch (e) {}
-    rows.forEach(mm => { mm.my_reaction = myReacts[mm.id] || null; mm.reaction_count = counts[mm.id] || 0; });
+  // Attach reaction info for the viewer.
+  for (const mm of rows) {
+    const mine = await db.prepare('SELECT reaction FROM moment_reactions WHERE moment_id = ? AND reactor_id = ?').get(mm.id, req.user.id);
+    mm.my_reaction = mine ? mine.reaction : null;
+    mm.reaction_count = Number((await db.prepare('SELECT COUNT(*) c FROM moment_reactions WHERE moment_id = ?').get(mm.id)).c) || 0;
   }
   res.json({ moments: rows });
 });
@@ -3261,13 +3168,15 @@ app.get('/api/users/:id/follow-info', requireAuth, async (req, res) => {
 // Lists of a user's followers / who they follow.
 app.get('/api/users/:id/followers', requireAuth, async (req, res) => {
   const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,u.city FROM follows f JOIN users u ON u.id = f.follower_id WHERE f.followee_id = ? ORDER BY f.created_at DESC LIMIT 500`).all(req.params.id);
-  const mineSet = new Set((await db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(req.user.id)).map(r => r.followee_id));
-  res.json({ users: rows.map(u => ({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: mineSet.has(u.id) })) });
+  const out = [];
+  for (const u of rows) { out.push({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: await isFollowing(req.user.id, u.id) }); }
+  res.json({ users: out });
 });
 app.get('/api/users/:id/following', requireAuth, async (req, res) => {
   const rows = await db.prepare(`SELECT u.id,u.name,u.username,u.avatar,u.city FROM follows f JOIN users u ON u.id = f.followee_id WHERE f.follower_id = ? ORDER BY f.created_at DESC LIMIT 500`).all(req.params.id);
-  const mineSet = new Set((await db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(req.user.id)).map(r => r.followee_id));
-  res.json({ users: rows.map(u => ({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: mineSet.has(u.id) })) });
+  const out = [];
+  for (const u of rows) { out.push({ id: u.id, name: u.name, username: u.username || '', avatar: u.avatar || '', city: u.city || '', iFollow: await isFollowing(req.user.id, u.id) }); }
+  res.json({ users: out });
 });
 
 app.post('/api/friends/request', requireAuth, async (req, res) => {
